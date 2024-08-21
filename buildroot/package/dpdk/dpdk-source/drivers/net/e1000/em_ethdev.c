@@ -30,6 +30,11 @@
 
 #define PMD_ROUNDUP(x,y)	(((x) + (y) - 1)/(y) * (y))
 
+/* Bit shift and mask */
+#define EM_4_BIT_WIDTH  (CHAR_BIT / 2)
+#define EM_4_BIT_MASK   RTE_LEN2MASK(EM_4_BIT_WIDTH, uint8_t)
+#define EM_8_BIT_WIDTH  CHAR_BIT
+#define EM_8_BIT_MASK   UINT8_MAX
 
 static int eth_em_configure(struct rte_eth_dev *dev);
 static int eth_em_start(struct rte_eth_dev *dev);
@@ -99,6 +104,16 @@ static int eth_em_default_mac_addr_set(struct rte_eth_dev *dev,
 static int eth_em_set_mc_addr_list(struct rte_eth_dev *dev,
 				   struct rte_ether_addr *mc_addr_set,
 				   uint32_t nb_mc_addr);
+
+static int eth_em_rss_reta_update(struct rte_eth_dev *dev,
+				  struct rte_eth_rss_reta_entry64 *reta_conf,
+				  uint16_t reta_size);
+
+static int eth_em_rss_reta_query(struct rte_eth_dev *dev,
+				 struct rte_eth_rss_reta_entry64 *reta_conf,
+				 uint16_t reta_size);
+
+
 
 #define EM_FC_PAUSE_TIME 0x0680
 #define EM_LINK_UPDATE_CHECK_TIMEOUT  90  /* 9s */
@@ -190,6 +205,10 @@ static const struct eth_dev_ops eth_em_ops = {
 	.set_mc_addr_list     = eth_em_set_mc_addr_list,
 	.rxq_info_get         = em_rxq_info_get,
 	.txq_info_get         = em_txq_info_get,
+	.reta_update		  = eth_em_rss_reta_update,
+	.reta_query		 	  = eth_em_rss_reta_query,
+	.rss_hash_update	  = eth_em_rss_hash_update,
+	.rss_hash_conf_get	  = eth_em_rss_hash_conf_get,
 };
 
 
@@ -234,7 +253,7 @@ eth_em_dev_is_ich8(struct e1000_hw *hw)
 }
 
 static int
-eth_em_dev_init(struct rte_eth_dev *eth_dev)
+eth_em_dev_init(struct rte_eth_dev *eth_dev) //eth_igb_dev_init
 {
 	struct rte_pci_device *pci_dev = RTE_ETH_DEV_TO_PCI(eth_dev);
 	struct rte_intr_handle *intr_handle = &pci_dev->intr_handle;
@@ -344,6 +363,78 @@ static struct rte_pci_driver rte_em_pmd = {
 };
 
 static int
+em_check_mq_mode(struct rte_eth_dev *dev)
+{
+	enum rte_eth_rx_mq_mode rx_mq_mode = dev->data->dev_conf.rxmode.mq_mode;
+	enum rte_eth_tx_mq_mode tx_mq_mode = dev->data->dev_conf.txmode.mq_mode;
+	uint16_t nb_rx_q = dev->data->nb_rx_queues;
+	uint16_t nb_tx_q = dev->data->nb_tx_queues;
+
+	if ((rx_mq_mode & ETH_MQ_RX_DCB_FLAG) ||
+	    tx_mq_mode == ETH_MQ_TX_DCB ||
+	    tx_mq_mode == ETH_MQ_TX_VMDQ_DCB) {
+		PMD_INIT_LOG(ERR, "DCB mode is not supported.");
+		return -EINVAL;
+	}
+	if (RTE_ETH_DEV_SRIOV(dev).active != 0) {
+		/* Check multi-queue mode.
+		 * To no break software we accept ETH_MQ_RX_NONE as this might
+		 * be used to turn off VLAN filter.
+		 */
+
+		if (rx_mq_mode == ETH_MQ_RX_NONE ||
+		    rx_mq_mode == ETH_MQ_RX_VMDQ_ONLY) {
+			dev->data->dev_conf.rxmode.mq_mode = ETH_MQ_RX_VMDQ_ONLY;
+			RTE_ETH_DEV_SRIOV(dev).nb_q_per_pool = 1;
+		} else {
+			/* Only support one queue on VFs.
+			 * RSS together with SRIOV is not supported.
+			 */
+			PMD_INIT_LOG(ERR, "SRIOV is active,"
+					" wrong mq_mode rx %d.",
+					rx_mq_mode);
+			return -EINVAL;
+		}
+		/* TX mode is not used here, so mode might be ignored.*/
+		if (tx_mq_mode != ETH_MQ_TX_VMDQ_ONLY) {
+			/* SRIOV only works in VMDq enable mode */
+			PMD_INIT_LOG(WARNING, "SRIOV is active,"
+					" TX mode %d is not supported. "
+					" Driver will behave as %d mode.",
+					tx_mq_mode, ETH_MQ_TX_VMDQ_ONLY);
+		}
+
+		/* check valid queue number */
+		if ((nb_rx_q > 1) || (nb_tx_q > 1)) {
+			PMD_INIT_LOG(ERR, "SRIOV is active,"
+					" only support one queue on VFs.");
+			return -EINVAL;
+		}
+	} else {
+		/* To no break software that set invalid mode, only display
+		 * warning if invalid mode is used.
+		 */
+		if (rx_mq_mode != ETH_MQ_RX_NONE &&
+		    rx_mq_mode != ETH_MQ_RX_VMDQ_ONLY &&
+		    rx_mq_mode != ETH_MQ_RX_RSS) {
+			/* RSS together with VMDq not supported*/
+			PMD_INIT_LOG(ERR, "RX mode %d is not supported.",
+				     rx_mq_mode);
+			return -EINVAL;
+		}
+
+		if (tx_mq_mode != ETH_MQ_TX_NONE &&
+		    tx_mq_mode != ETH_MQ_TX_VMDQ_ONLY) {
+			PMD_INIT_LOG(WARNING, "TX mode %d is not supported."
+					" Due to txmode is meaningless in this"
+					" driver, just ignore.",
+					tx_mq_mode);
+		}
+	}
+	return 0;
+}
+
+static int
 em_hw_init(struct e1000_hw *hw)
 {
 	int diag;
@@ -433,8 +524,21 @@ eth_em_configure(struct rte_eth_dev *dev)
 {
 	struct e1000_interrupt *intr =
 		E1000_DEV_PRIVATE_TO_INTR(dev->data->dev_private);
+	int ret;
 
 	PMD_INIT_FUNC_TRACE();
+
+	//jm - multi-queue
+	if (dev->data->dev_conf.rxmode.mq_mode & ETH_MQ_RX_RSS_FLAG)
+		dev->data->dev_conf.rxmode.offloads |= DEV_RX_OFFLOAD_RSS_HASH;
+
+	/* multiple queue mode checking */
+	ret = em_check_mq_mode(dev);
+	if (ret != 0) {
+		PMD_DRV_LOG(ERR, "em_check_mq_mode fails with %d.", ret);
+		return ret;
+	}
+
 	intr->flags |= E1000_FLAG_NEED_LINK_UPDATE;
 
 	PMD_INIT_FUNC_TRACE();
@@ -729,8 +833,9 @@ eth_em_stop(struct rte_eth_dev *dev)
 	e1000_reset_hw(hw);
 
 	/* Flush desc rings for i219 */
-	if (hw->mac.type == e1000_pch_spt || hw->mac.type == e1000_pch_cnp)
-		em_flush_desc_rings(dev);
+	// if (hw->mac.type == e1000_pch_spt || hw->mac.type == e1000_pch_cnp)
+	// 	em_flush_desc_rings(dev);
+	//jm - for now, just disable flush option
 
 	if (hw->mac.type >= e1000_82544)
 		E1000_WRITE_REG(hw, E1000_WUC, 0);
@@ -1080,8 +1185,17 @@ eth_em_infos_get(struct rte_eth_dev *dev, struct rte_eth_dev_info *dev_info)
 	 * To avoid it we support just one RX queue for now (no RSS).
 	 */
 
-	dev_info->max_rx_queues = 1;
-	dev_info->max_tx_queues = 1;
+	//jm
+	int max_queues = 4;
+	dev_info->max_rx_queues = max_queues;
+	dev_info->max_tx_queues = max_queues;
+
+	//jm
+	dev_info->hash_key_size = IGB_HKEY_MAX_INDEX * sizeof(uint32_t);
+	dev_info->reta_size = ETH_RSS_RETA_SIZE_128;
+	dev_info->flow_type_rss_offloads = EM_RSS_OFFLOAD_ALL;
+
+	//TODO - jm: don't need to set default_rxconf and default_txconf?
 
 	dev_info->rx_queue_offload_capa = em_get_rx_queue_offloads_capa(dev);
 	dev_info->rx_offload_capa = em_get_rx_port_offloads_capa(dev) |
@@ -1783,6 +1897,83 @@ eth_em_default_mac_addr_set(struct rte_eth_dev *dev,
 	eth_em_rar_clear(dev, 0);
 
 	return eth_em_rar_set(dev, (void *)addr, 0, 0);
+}
+
+static int
+eth_em_rss_reta_update(struct rte_eth_dev *dev,
+				struct rte_eth_rss_reta_entry64 *reta_conf,
+				uint16_t reta_size)
+{
+	uint8_t i, j, mask;
+	uint32_t reta, r;
+	uint16_t idx, shift;
+	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	if (reta_size != ETH_RSS_RETA_SIZE_128) {
+		PMD_DRV_LOG(ERR, "The size of hash lookup table configured "
+			"(%d) doesn't match the number hardware can supported "
+			"(%d)", reta_size, ETH_RSS_RETA_SIZE_128);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < reta_size; i += EM_4_BIT_WIDTH) {
+		idx = i / RTE_RETA_GROUP_SIZE;
+		shift = i % RTE_RETA_GROUP_SIZE;
+		mask = (uint8_t)((reta_conf[idx].mask >> shift) &
+						EM_4_BIT_MASK);
+		if (!mask)
+			continue;
+		if (mask == EM_4_BIT_MASK)
+			r = 0;
+		else
+			r = E1000_READ_REG(hw, E1000_RETA(i >> 2));
+		for (j = 0, reta = 0; j < EM_4_BIT_WIDTH; j++) {
+			if (mask & (0x1 << j))
+				reta |= reta_conf[idx].reta[shift + j] <<
+							(CHAR_BIT * j);
+			else
+				reta |= r & (EM_8_BIT_MASK << (CHAR_BIT * j));
+		}
+		E1000_WRITE_REG(hw, E1000_RETA(i >> 2), reta);
+	}
+
+	return 0;
+}
+
+static int
+eth_em_rss_reta_query(struct rte_eth_dev *dev,
+		       struct rte_eth_rss_reta_entry64 *reta_conf,
+		       uint16_t reta_size)
+{
+	uint8_t i, j, mask;
+	uint32_t reta;
+	uint16_t idx, shift;
+	struct e1000_hw *hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	if (reta_size != ETH_RSS_RETA_SIZE_128) {
+		PMD_DRV_LOG(ERR, "The size of hash lookup table configured "
+			"(%d) doesn't match the number hardware can supported "
+			"(%d)", reta_size, ETH_RSS_RETA_SIZE_128);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < reta_size; i += EM_4_BIT_WIDTH) {
+		idx = i / RTE_RETA_GROUP_SIZE;
+		shift = i % RTE_RETA_GROUP_SIZE;
+		mask = (uint8_t)((reta_conf[idx].mask >> shift) &
+						EM_4_BIT_MASK);
+		if (!mask)
+			continue;
+		reta = E1000_READ_REG(hw, E1000_RETA(i >> 2));
+		for (j = 0; j < EM_4_BIT_WIDTH; j++) {
+			if (mask & (0x1 << j))
+				reta_conf[idx].reta[shift + j] =
+					((reta >> (CHAR_BIT * j)) &
+						EM_8_BIT_MASK);
+		}
+	}
+
+	return 0;
 }
 
 static int

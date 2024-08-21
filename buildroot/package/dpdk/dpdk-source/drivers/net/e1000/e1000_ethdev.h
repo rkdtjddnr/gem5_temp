@@ -91,6 +91,17 @@
 	ETH_RSS_IPV6_TCP_EX | \
 	ETH_RSS_IPV6_UDP_EX)
 
+#define EM_RSS_OFFLOAD_ALL ( \
+	ETH_RSS_IPV4 | \
+	ETH_RSS_NONFRAG_IPV4_TCP | \
+	ETH_RSS_NONFRAG_IPV4_UDP | \
+	ETH_RSS_IPV6 | \
+	ETH_RSS_NONFRAG_IPV6_TCP | \
+	ETH_RSS_NONFRAG_IPV6_UDP | \
+	ETH_RSS_IPV6_EX | \
+	ETH_RSS_IPV6_TCP_EX | \
+	ETH_RSS_IPV6_UDP_EX)
+
 /*
  * The overhead from MTU to max frame size.
  * Considering VLAN so a tag needs to be counted.
@@ -119,8 +130,10 @@
 #define	IGB_RXD_ALIGN	(E1000_ALIGN / sizeof(union e1000_adv_rx_desc))
 #define	IGB_TXD_ALIGN	(E1000_ALIGN / sizeof(union e1000_adv_tx_desc))
 
-#define	EM_RXD_ALIGN	(E1000_ALIGN / sizeof(struct e1000_rx_desc))
-#define	EM_TXD_ALIGN	(E1000_ALIGN / sizeof(struct e1000_data_desc))
+// #define	EM_RXD_ALIGN	(E1000_ALIGN / sizeof(struct e1000_rx_desc))
+// #define	EM_TXD_ALIGN	(E1000_ALIGN / sizeof(struct e1000_data_desc))
+#define	EM_RXD_ALIGN	(E1000_ALIGN / sizeof(union e1000_adv_rx_desc))
+#define	EM_TXD_ALIGN	(E1000_ALIGN / sizeof(union e1000_adv_tx_desc))
 
 #define E1000_MISC_VEC_ID               RTE_INTR_VEC_ZERO_OFFSET
 #define E1000_RX_VEC_START              RTE_INTR_VEC_RXTX_OFFSET
@@ -513,6 +526,12 @@ void em_rxq_info_get(struct rte_eth_dev *dev, uint16_t queue_id,
 void em_txq_info_get(struct rte_eth_dev *dev, uint16_t queue_id,
 	struct rte_eth_txq_info *qinfo);
 
+int eth_em_rss_hash_update(struct rte_eth_dev *dev,
+			    struct rte_eth_rss_conf *rss_conf);
+
+int eth_em_rss_hash_conf_get(struct rte_eth_dev *dev,
+			      struct rte_eth_rss_conf *rss_conf);
+
 void igb_pf_host_uninit(struct rte_eth_dev *dev);
 
 void igb_filterlist_flush(struct rte_eth_dev *dev);
@@ -543,6 +562,6 @@ int igb_action_rss_same(const struct rte_flow_action_rss *comp,
 int igb_config_rss_filter(struct rte_eth_dev *dev,
 			struct igb_rte_flow_rss_conf *conf,
 			bool add);
-void em_flush_desc_rings(struct rte_eth_dev *dev);
+// void em_flush_desc_rings(struct rte_eth_dev *dev); //jm - not used, maybe..
 
 #endif /* _E1000_ETHDEV_H_ */
