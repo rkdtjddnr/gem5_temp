@@ -105,6 +105,7 @@ class ListPlatform(argparse.Action):
 def addNoISAOptions(parser):
     parser.add_argument("--perf-io", type=str, default="False")
     parser.add_argument("--num-nics", type=int, default=1)
+    parser.add_argument("--num-queues", type=int, default=1)
     # For all loadgens:
     parser.add_argument("--num-loadgens", type=int, default=0)
     parser.add_argument("--loadgen-type", type=str, default="Simple")

@@ -2273,6 +2273,7 @@ em_rss_configure(struct rte_eth_dev *dev)
 	 */
 	rss_conf = dev->data->dev_conf.rx_adv_conf.rss_conf;
 	if ((rss_conf.rss_hf & EM_RSS_OFFLOAD_ALL) == 0) {
+		printf("=======DPDK: RSS offload disabled\n");
 		em_rss_disable(dev);
 		return;
 	}
@@ -2418,6 +2419,7 @@ em_dev_mq_rx_configure(struct rte_eth_dev *dev)
 		switch (dev->data->dev_conf.rxmode.mq_mode) {
 			case ETH_MQ_RX_RSS:
 				em_rss_configure(dev);
+				printf("========DPDK - RSS CONFIGURED========\n");
 				break;
 			case ETH_MQ_RX_VMDQ_ONLY:
 				// not supported yet
@@ -2427,6 +2429,7 @@ em_dev_mq_rx_configure(struct rte_eth_dev *dev)
 				/* if mq_mode is none, disable rss mode.*/
 			default:
 				em_rss_disable(dev);
+				printf("========DPDK - RSS DISABLED========\n");
 				break;
 		}
 	}
@@ -2442,6 +2445,7 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 	struct rte_eth_rxmode *rxmode;
 	uint32_t rctl;
 	uint32_t rfctl;
+	uint32_t srrctl;
 	uint32_t rxcsum;
 	uint32_t rctl_bsize;
 	uint16_t i;
@@ -2449,6 +2453,7 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 
 	hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
 	rxmode = &dev->data->dev_conf.rxmode;
+	srrctl = 0;
 
 	/*
 	 * Make sure receives are disabled while setting
@@ -2520,14 +2525,17 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 		E1000_WRITE_REG(hw, E1000_RDBAH(i),
 				(uint32_t)(bus_addr >> 32));
 		E1000_WRITE_REG(hw, E1000_RDBAL(i), (uint32_t)bus_addr);
-
-		E1000_WRITE_REG(hw, E1000_RDH(i), 0);
-		E1000_WRITE_REG(hw, E1000_RDT(i), rxq->nb_rx_desc - 1);
+		printf("========DPDK - WRITE RDBAH[%d] = 0x%x========\n", i, (uint32_t)(bus_addr >> 32));
+		printf("========DPDK - WRITE RDBAL[%d] = 0x%x========\n", i, (uint32_t)bus_addr);
+		
+		srrctl = E1000_SRRCTL_DESCTYPE_ADV_ONEBUF; //set to use ADV_ONEBUF
+		E1000_WRITE_REG(hw, E1000_SRRCTL(i), srrctl);
+		printf("========DPDK - WRITE SRRCTL[%d] = ADV_ONEBUF========\n", i);
 
 		// rxdctl = E1000_READ_REG(hw, E1000_RXDCTL(0));
 		rxdctl = E1000_READ_REG(hw, E1000_RXDCTL(i));
-		rxdctl |= E1000_RXDCTL_QUEUE_ENABLE; // TODO - jm: Have to check, if it is correct - it is from igb_rxtx.c
-		rxdctl &= 0xFE000000; // TODO - jm: why this is FE000000.. it is FFF00000 in igb_rxtx.c
+		rxdctl |= E1000_RXDCTL_QUEUE_ENABLE; // This is not needed, because now gem5 doesn't use this value
+		rxdctl &= 0xFE000000; // because gem5's NIC threshold is 6 bits
 		rxdctl |= rxq->pthresh & 0x3F;
 		rxdctl |= (rxq->hthresh & 0x3F) << 8;
 		rxdctl |= (rxq->wthresh & 0x3F) << 16;
@@ -2615,7 +2623,7 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 	/* Don't store bad packets. */
 	rctl &= ~E1000_RCTL_SBP;
 	/* Legacy descriptor type. */
-	rctl &= ~E1000_RCTL_DTYP_MASK;
+	// rctl &= ~E1000_RCTL_DTYP_MASK;
 
 	/*
 	 * Configure support of jumbo frames, if any.
@@ -2627,6 +2635,17 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 
 	/* Enable Receives. */
 	E1000_WRITE_REG(hw, E1000_RCTL, rctl);
+
+	/*
+	 * Setup the HW Rx Head and Tail Descriptor Pointers.
+	 * This needs to be done after enable.
+	 */
+	for (i = 0; i < dev->data->nb_rx_queues; i++) {
+		E1000_WRITE_REG(hw, E1000_RDH(i), 0);
+		E1000_WRITE_REG(hw, E1000_RDT(i), rxq->nb_rx_desc - 1);
+		printf("========DPDK - WRITE RDH[%d] = 0========\n", i);
+		printf("========DPDK - WRITE RDT[%d] = %d========\n", i, rxq->nb_rx_desc - 1);
+	}
 
 	return 0;
 }

@@ -71,15 +71,23 @@ const uint32_t REG_RDBAH    = 0x02804;
 const uint32_t REG_RDLEN    = 0x02808;
 const uint32_t REG_SRRCTL   = 0x0280C;
 const uint32_t REG_RDH      = 0x02810;
+const uint32_t REG_RXCTL    = 0x02814;
 const uint32_t REG_RDT      = 0x02818;
 const uint32_t REG_RDTR     = 0x02820;
 const uint32_t REG_RXDCTL   = 0x02828;
+const uint32_t REG_RQDPC    = 0x02830;
 const uint32_t REG_RADV     = 0x0282C;
 const uint32_t REG_TCTL     = 0x00400;
+/* RSS registers */
+const uint32_t REG_MRQC     = 0x05818; /* Multiple Receive Control - RW */
+const uint32_t REG_RETA     = 0x05C00; /* Redirection Table - RW Array */
+const uint32_t REG_RSSKEY   = 0x05C80; /* RSS Key - RW Array */
+
 const uint32_t REG_TDBAL    = 0x03800;
 const uint32_t REG_TDBAH    = 0x03804;
 const uint32_t REG_TDLEN    = 0x03808;
 const uint32_t REG_TDH      = 0x03810;
+const uint32_t REG_TXCTL    = 0x03814;
 const uint32_t REG_TXDCA_CTL = 0x03814;
 const uint32_t REG_TDT      = 0x03818;
 const uint32_t REG_TIDV     = 0x03820;
@@ -169,6 +177,68 @@ const uint16_t RXDP_TCP        = 0x010;
 const uint16_t RXDP_UDP        = 0x020;
 const uint16_t RXDP_SCTP       = 0x040;
 const uint16_t RXDP_NFS        = 0x080;
+
+// RSS MRQC configuration
+const uint32_t MRQC_ENABLE_RSS_4Q = 0x00000002;
+const uint32_t MRQC_ENABLE_VMDQ = 0x00000003;
+const uint32_t MRQC_RSS_FIELD_IPV4_TCP = 0x00010000;
+const uint32_t MRQC_RSS_FIELD_IPV4 = 0x00020000;
+const uint32_t MRQC_RSS_FIELD_IPV6_TCP_EX = 0x00040000;
+const uint32_t MRQC_RSS_FIELD_IPV6 = 0x00100000;
+const uint32_t MRQC_RSS_FIELD_IPV6_TCP = 0x00200000;
+const uint32_t MRQC_RSS_FIELD_IPV6_EX = 0x00080000;
+const uint32_t MRQC_RSS_FIELD_IPV4_UDP = 0x00400000;
+const uint32_t MRQC_RSS_FIELD_IPV6_UDP = 0x00800000;
+const uint32_t MRQC_RSS_FIELD_IPV6_UDP_EX = 0x01000000;
+
+/* Convenience macros
+ * "_n" is the queue number of the register to be written to
+ */
+inline uint32_t E1000_RDBAL(int _n) { return ((_n) < 4 ? (REG_RDBAL + ((_n) * 0x100)) : \
+                         (0x0C000 + ((_n) * 0x40))); }
+inline uint32_t E1000_RDBAH(int _n) { return ((_n) < 4 ? (REG_RDBAH + ((_n) * 0x100)) : \
+                         (0x0C004 + ((_n) * 0x40))); }
+inline uint32_t E1000_RDLEN(int _n) { return ((_n) < 4 ? (REG_RDLEN + ((_n) * 0x100)) : \
+                         (0x0C008 + ((_n) * 0x40))); }
+inline uint32_t E1000_SRRCTL(int _n) { return ((_n) < 4 ? (REG_SRRCTL + ((_n) * 0x100)) : \
+                          (0x0C00C + ((_n) * 0x40))); }
+inline uint32_t E1000_RDH(int _n) { return ((_n) < 4 ? (REG_RDH + ((_n) * 0x100)) : \
+                          (0x0C010 + ((_n) * 0x40))); }
+inline uint32_t E1000_RXCTL(int _n) { return ((_n) < 4 ? (REG_RXCTL + ((_n) * 0x100)) : \
+                          (0x0C014 + ((_n) * 0x40))); }
+inline uint32_t E1000_RDT(int _n) { return ((_n) < 4 ? (REG_RDT + ((_n) * 0x100)) : \
+                            (0x0C018 + ((_n) * 0x40))); }
+inline uint32_t E1000_RXDCTL(int _n) { return ((_n) < 4 ? (REG_RXDCTL + ((_n) * 0x100)) : \
+				 (0x0C028 + ((_n) * 0x40))); }
+inline uint32_t E1000_RQDPC(int _n) { return ((_n) < 4 ? (REG_RQDPC + ((_n) * 0x100)) : \
+			 (0x0C030 + ((_n) * 0x40))); }
+inline uint32_t E1000_TDBAL(int _n) { return ((_n) < 4 ? (REG_TDBAL + ((_n) * 0x100)) : \
+			 (0x0E000 + ((_n) * 0x40))); }
+inline uint32_t E1000_TDBAH(int _n) { return ((_n) < 4 ? (REG_TDBAH + ((_n) * 0x100)) : \
+			 (0x0E004 + ((_n) * 0x40))); }
+inline uint32_t E1000_TDLEN(int _n) { return ((_n) < 4 ? (REG_TDLEN + ((_n) * 0x100)) : \
+			 (0x0E008 + ((_n) * 0x40))); }
+inline uint32_t E1000_TDH(int _n) { return ((_n) < 4 ? (REG_TDH + ((_n) * 0x100)) : \
+			 (0x0E010 + ((_n) * 0x40))); }
+inline uint32_t E1000_TXDCA_CTL(int _n) { return ((_n) < 4 ? (REG_TXDCA_CTL + ((_n) * 0x100)) : \
+			 (0x0E014 + ((_n) * 0x40))); }
+inline uint32_t E1000_TDT(int _n) { return ((_n) < 4 ? (REG_TDT + ((_n) * 0x100)) : \
+			 (0x0E018 + ((_n) * 0x40))); }
+inline uint32_t E1000_TXDCTL(int _n) { return ((_n) < 4 ? (REG_TXDCTL + ((_n) * 0x100)) : \
+				 (0x0E028 + ((_n) * 0x40))); }
+inline uint32_t E1000_TDWBAL(int _n) { return ((_n) < 4 ? (REG_TDWBAL + ((_n) * 0x100)) : \
+				 (0x0E038 + ((_n) * 0x40))); }
+inline uint32_t E1000_TDWBAH(int _n) { return ((_n) < 4 ? (REG_TDWBAH + ((_n) * 0x100)) : \
+				 (0x0E03C + ((_n) * 0x40))); }
+
+/* RSS RETA */
+inline uint32_t E1000_RETA(int _n) { return (REG_RETA + ((_n) * 4)); }
+/* RSSRK */
+inline uint32_t E1000_RSSRK(int _n) { return (REG_RSSKEY + ((_n) * 4)); }
+
+
+#define MAX_QUEUE_SIZE 16
+#define RETA_SIZE 128
 
 // Interrupt types
 enum IntTypes
@@ -309,6 +379,42 @@ inline int utcmd(TxDesc *d) { assert(isContext(d)); return bits(d->d2,24,31); }
 #define ADD_FIELD64(NAME, OFFSET, BITS) \
     inline uint64_t NAME() { return bits(_data, OFFSET+BITS-1, OFFSET); } \
     inline void NAME(uint64_t d) { replaceBits(_data, OFFSET+BITS-1, OFFSET,d); }
+
+
+template<uint32_t (*RegFunc)(int)>
+inline bool isRegisterAddress(uint32_t daddr, int &qid, int num_queues) {
+    //num_queues: real number of queues. if i >= num_queues, should return false
+    assert(num_queues <= MAX_QUEUE_SIZE);
+    for (int i = 0; i < num_queues; i++) {
+        if (daddr == RegFunc(i)) {
+            qid = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+inline bool isRETAAddress(uint32_t daddr, int &idx) {
+    int numRegisters = (RETA_SIZE / 4); //128 entries, each entry is 8 bits, 4 entries per register
+    for (int i = 0; i < numRegisters; i++) {
+        if (daddr == E1000_RETA(i)) {
+            idx = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+inline bool isRSSRKAddress(uint32_t daddr, int &idx) {
+    int numRegisters = 10; // 10 registers of 4 bytes each
+    for (int i = 0; i < numRegisters; i++) {
+        if (daddr == E1000_RSSRK(i)) {
+            idx = i;
+            return true;
+        }
+    }
+    return false;
+}
 
 struct Regs : public Serializable
 {
@@ -557,6 +663,34 @@ struct Regs : public Serializable
     };
     TCTL tctl;
 
+    struct MRQC : public Reg<uint32_t>
+    {
+        // 0x05818 MRQC Register
+        using Reg<uint32_t>::operator=;
+        ADD_FIELD32(en,0,3); // enable bits - 000 = disable, 001 = reserved, 010~110 = enable RSS, 111 = reserved
+        ADD_FIELD32(tcpipv4, 16,1); // enable TcpIpv4 rss hash
+        ADD_FIELD32(ipv4, 17,1);  // enable Ipv4 rss hash
+        ADD_FIELD32(tcpipv6, 18,1);  // enable TcpIpv6 rss hash
+        ADD_FIELD32(ipv6ex, 19,1);  // enable Ipv6Ex rss hash
+        ADD_FIELD32(ipv6, 20,1);  // enable Ipv6 rss hash
+    };
+    MRQC mrqc;
+
+    // RETA array
+    uint8_t reta_array[RETA_SIZE]; // RSS Redirection Table Array
+    
+
+    // RSSRK register 
+    // RSS Random Key Register stores a 40-byte random key used for hashing
+    // RSS random key supplied in section 7.1.1.7.3 of the Intel 82576 datasheet.
+    static constexpr uint8_t rssrk[40] = {
+        0x6D, 0x5A, 0x56, 0xDA, 0x25, 0x5B, 0x0E, 0xC2,
+        0x41, 0x67, 0x25, 0x3D, 0x43, 0xA3, 0x8F, 0xB0,
+        0xD0, 0xCA, 0x2B, 0xCB, 0xAE, 0x7B, 0x30, 0xB4,
+        0x77, 0xCB, 0x2D, 0xA3, 0x80, 0x30, 0xF2, 0x0C,
+        0x6A, 0x42, 0xB7, 0x3B, 0xBE, 0xAC, 0x01, 0xFA,
+    };
+
     struct PBA : public Reg<uint32_t>
     {
         // 0x1000 PBA Register
@@ -593,7 +727,9 @@ struct Regs : public Serializable
         ADD_FIELD64(rdbal,0,32); // base address of rx descriptor ring
         ADD_FIELD64(rdbah,32,32); // base address of rx descriptor ring
     };
-    RDBA rdba;
+    // RDBA rdba;
+    //multiple RDBA registers for multiple queues - make array of RDBA, array size is set with the max number of queues
+    RDBA rdba_array[MAX_QUEUE_SIZE];
 
     struct RDLEN : public Reg<uint32_t>
     {
@@ -601,7 +737,9 @@ struct Regs : public Serializable
         using Reg<uint32_t>::operator=;
         ADD_FIELD32(len,7,13); // number of bytes in the descriptor buffer
     };
-    RDLEN rdlen;
+    // RDLEN rdlen;
+    //multiple RDLEN registers for multiple queues - make array of RDLEN, array size is set with the max number of queues
+    RDLEN rdlen_array[MAX_QUEUE_SIZE];
 
     struct SRRCTL : public Reg<uint32_t>
     {
@@ -614,7 +752,9 @@ struct Regs : public Serializable
         unsigned bufLen() { return pktlen() << 10; }
         unsigned hdrLen() { return hdrlen() << 6; }
     };
-    SRRCTL srrctl;
+    // SRRCTL srrctl;
+    //multiple SRRCTL registers for multiple queues - make array of SRRCTL, array size is set with the max number of queues 
+    SRRCTL srrctl_array[MAX_QUEUE_SIZE];
 
     struct RDH : public Reg<uint32_t>
     {
@@ -622,7 +762,9 @@ struct Regs : public Serializable
         using Reg<uint32_t>::operator=;
         ADD_FIELD32(rdh,0,16); // head of the descriptor ring
     };
-    RDH rdh;
+    // RDH rdh;
+    //multiple RDH registers for multiple queues - make array of RDH, array size is set with the max number of queues
+    RDH rdh_array[MAX_QUEUE_SIZE];
 
     struct RDT : public Reg<uint32_t>
     {
@@ -630,7 +772,9 @@ struct Regs : public Serializable
         using Reg<uint32_t>::operator=;
         ADD_FIELD32(rdt,0,16); // tail of the descriptor ring
     };
-    RDT rdt;
+    // RDT rdt;
+    //multiple RDT registers for multiple queues - make array of RDT, array size is set with the max number of queues
+    RDT rdt_array[MAX_QUEUE_SIZE];
 
     struct RDTR : public Reg<uint32_t>
     {
@@ -652,7 +796,9 @@ struct Regs : public Serializable
         ADD_FIELD32(wthresh,16,6);  // writeback threshold
         ADD_FIELD32(gran,24,1);     // granularity 0 = desc, 1 = cacheline
     };
-    RXDCTL rxdctl;
+    // RXDCTL rxdctl;
+    //multiple RXDCTL registers for multiple queues - make array of RXDCTL, array size is set with the max number of queues
+    RXDCTL rxdctl_array[MAX_QUEUE_SIZE];
 
     struct RADV : public Reg<uint32_t>
     {
@@ -677,7 +823,9 @@ struct Regs : public Serializable
         ADD_FIELD64(tdbal,0,32); // base address of transmit descriptor ring
         ADD_FIELD64(tdbah,32,32); // base address of transmit descriptor ring
     };
-    TDBA tdba;
+    // TDBA tdba;
+    //multiple TDBA registers for multiple queues - make array of TDBA, array size is set with the max number of queues
+    TDBA tdba_array[MAX_QUEUE_SIZE];
 
     struct TDLEN : public Reg<uint32_t>
     {
@@ -685,7 +833,9 @@ struct Regs : public Serializable
         using Reg<uint32_t>::operator=;
         ADD_FIELD32(len,7,13); // number of bytes in the descriptor buffer
     };
-    TDLEN tdlen;
+    // TDLEN tdlen;
+    //multiple TDLEN registers for multiple queues - make array of TDLEN, array size is set with the max number of queues
+    TDLEN tdlen_array[MAX_QUEUE_SIZE];
 
     struct TDH : public Reg<uint32_t>
     {
@@ -693,7 +843,9 @@ struct Regs : public Serializable
         using Reg<uint32_t>::operator=;
         ADD_FIELD32(tdh,0,16); // head of the descriptor ring
     };
-    TDH tdh;
+    // TDH tdh;
+    //multiple TDH registers for multiple queues - make array of TDH, array size is set with the max number of queues
+    TDH tdh_array[MAX_QUEUE_SIZE];
 
     struct TXDCA_CTL : public Reg<uint32_t>
     {
@@ -703,7 +855,9 @@ struct Regs : public Serializable
         ADD_FIELD32(enabled, 5,1);
         ADD_FIELD32(relax_ordering, 6, 1);
     };
-    TXDCA_CTL txdca_ctl;
+    // TXDCA_CTL txdca_ctl;
+    //multiple TXDCA_CTL registers for multiple queues - make array of TXDCA_CTL, array size is set with the max number of queues
+    TXDCA_CTL txdca_ctl_array[MAX_QUEUE_SIZE];
 
     struct TDT : public Reg<uint32_t>
     {
@@ -711,7 +865,9 @@ struct Regs : public Serializable
         using Reg<uint32_t>::operator=;
         ADD_FIELD32(tdt,0,16); // tail of the descriptor ring
     };
-    TDT tdt;
+    // TDT tdt;
+    //multiple TDT registers for multiple queues - make array of TDT, array size is set with the max number of queues
+    TDT tdt_array[MAX_QUEUE_SIZE];
 
     struct TIDV : public Reg<uint32_t>
     {
@@ -736,7 +892,9 @@ struct Regs : public Serializable
         ADD_FIELD32(lwthresh,25,7); // xmit descriptor low thresh, interrupt
                                     // below this level
     };
-    TXDCTL txdctl;
+    // TXDCTL txdctl;
+    //multiple TXDCTL registers for multiple queues - make array of TXDCTL, array size is set with the max number of queues
+    TXDCTL txdctl_array[MAX_QUEUE_SIZE];
 
     struct TADV : public Reg<uint32_t>
     {
@@ -755,7 +913,9 @@ struct Regs : public Serializable
         ADD_FIELD64(tdwbah,32,32); // base address of transmit descriptor ring
     };
     TDWBA tdwba;*/
-    uint64_t tdwba;
+    // uint64_t tdwba;
+    //multiple TDWBA registers for multiple queues - make array of TDWBA, array size is set with the max number of queues
+    uint64_t tdwba_array[MAX_QUEUE_SIZE];
 
     struct RXCSUM : public Reg<uint32_t>
     {
@@ -869,25 +1029,67 @@ struct Regs : public Serializable
         paramOut(cp, "pba", pba._data);
         paramOut(cp, "fcrtl", fcrtl._data);
         paramOut(cp, "fcrth", fcrth._data);
-        paramOut(cp, "rdba", rdba._data);
-        paramOut(cp, "rdlen", rdlen._data);
-        paramOut(cp, "srrctl", srrctl._data);
-        paramOut(cp, "rdh", rdh._data);
-        paramOut(cp, "rdt", rdt._data);
+
+        paramOut(cp, "mrqc", mrqc._data);
+        // paramOut(cp, "rdba", rdba._data);
+        //serialize array of rdba registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("rdba_array%d", i), rdba_array[i]._data);
+        // paramOut(cp, "rdlen", rdlen._data);
+        //serialize array of rdlen registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("rdlen_array%d", i), rdlen_array[i]._data);
+        // paramOut(cp, "srrctl", srrctl._data);
+        //serialize array of srrctl registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("srrctl_array%d", i), srrctl_array[i]._data);
+        // paramOut(cp, "rdh", rdh._data);
+        //serialize array of rdh registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("rdh_array%d", i), rdh_array[i]._data);
+        // paramOut(cp, "rdt", rdt._data);
+        //serialize array of rdt registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("rdt_array%d", i), rdt_array[i]._data);
         paramOut(cp, "rdtr", rdtr._data);
-        paramOut(cp, "rxdctl", rxdctl._data);
+        // paramOut(cp, "rxdctl", rxdctl._data);
+        //serialize array of rxdctl registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("rxdctl_array%d", i), rxdctl_array[i]._data);
         paramOut(cp, "radv", radv._data);
         paramOut(cp, "rsrpd", rsrpd._data);
-        paramOut(cp, "tdba", tdba._data);
-        paramOut(cp, "tdlen", tdlen._data);
-        paramOut(cp, "tdh", tdh._data);
-        paramOut(cp, "txdca_ctl", txdca_ctl._data);
-        paramOut(cp, "tdt", tdt._data);
+        // paramOut(cp, "tdba", tdba._data);
+        //serialize array of tdba registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("tdba_array%d", i), tdba_array[i]._data);
+        // paramOut(cp, "tdlen", tdlen._data);
+        //serialize array of tdlen registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("tdlen_array%d", i), tdlen_array[i]._data);
+        // paramOut(cp, "tdh", tdh._data);
+        //serialize array of tdh registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("tdh_array%d", i), tdh_array[i]._data);
+        // paramOut(cp, "txdca_ctl", txdca_ctl._data);
+        //serialize array of txdca_ctl registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("txdca_ctl_array%d", i), txdca_ctl_array[i]._data);
+        // paramOut(cp, "tdt", tdt._data);
+        //serialize array of tdt registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("tdt_array%d", i), tdt_array[i]._data);
         paramOut(cp, "tidv", tidv._data);
-        paramOut(cp, "txdctl", txdctl._data);
+        // paramOut(cp, "txdctl", txdctl._data);
+        //serialize array of txdctl registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("txdctl_array%d", i), txdctl_array[i]._data);
         paramOut(cp, "tadv", tadv._data);
         //paramOut(cp, "tdwba", tdwba._data);
-        SERIALIZE_SCALAR(tdwba);
+        // SERIALIZE_SCALAR(tdwba);
+        //serialize array of tdwba registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramOut(cp, csprintf("tdwba_array%d", i), tdwba_array[i]);
+
         paramOut(cp, "rxcsum", rxcsum._data);
         SERIALIZE_SCALAR(rlpml);
         paramOut(cp, "rfctl", rfctl._data);
@@ -895,6 +1097,10 @@ struct Regs : public Serializable
         paramOut(cp, "swsm", swsm._data);
         paramOut(cp, "fwsm", fwsm._data);
         SERIALIZE_SCALAR(sw_fw_sync);
+
+        //serialize RETA array
+        for (int i = 0; i < RETA_SIZE; i++)
+            paramOut(cp, csprintf("reta_array%d", i), reta_array[i]);
     }
 
     void unserialize(CheckpointIn &cp) override
@@ -915,24 +1121,65 @@ struct Regs : public Serializable
         paramIn(cp, "pba", pba._data);
         paramIn(cp, "fcrtl", fcrtl._data);
         paramIn(cp, "fcrth", fcrth._data);
-        paramIn(cp, "rdba", rdba._data);
-        paramIn(cp, "rdlen", rdlen._data);
-        paramIn(cp, "srrctl", srrctl._data);
-        paramIn(cp, "rdh", rdh._data);
-        paramIn(cp, "rdt", rdt._data);
+
+        paramIn(cp, "mrqc", mrqc._data);
+        // paramIn(cp, "rdba", rdba._data);
+        //unserialize array of rdba registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("rdba_array%d", i), rdba_array[i]._data);
+        // paramIn(cp, "rdlen", rdlen._data);
+        //unserialize array of rdlen registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("rdlen_array%d", i), rdlen_array[i]._data);
+        // paramIn(cp, "srrctl", srrctl._data);
+        //unserialize array of srrctl registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("srrctl_array%d", i), srrctl_array[i]._data);
+        // paramIn(cp, "rdh", rdh._data);
+        //unserialize array of rdh registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("rdh_array%d", i), rdh_array[i]._data);
+        // paramIn(cp, "rdt", rdt._data);
+        //unserialize array of rdt registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("rdt_array%d", i), rdt_array[i]._data);
         paramIn(cp, "rdtr", rdtr._data);
-        paramIn(cp, "rxdctl", rxdctl._data);
+        // paramIn(cp, "rxdctl", rxdctl._data);
+        //unserialize array of rxdctl registers 
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("rxdctl_array%d", i), rxdctl_array[i]._data);
         paramIn(cp, "radv", radv._data);
         paramIn(cp, "rsrpd", rsrpd._data);
-        paramIn(cp, "tdba", tdba._data);
-        paramIn(cp, "tdlen", tdlen._data);
-        paramIn(cp, "tdh", tdh._data);
-        paramIn(cp, "txdca_ctl", txdca_ctl._data);
-        paramIn(cp, "tdt", tdt._data);
+        // paramIn(cp, "tdba", tdba._data);
+        //unserialize array of tdba registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("tdba_array%d", i), tdba_array[i]._data);
+        // paramIn(cp, "tdlen", tdlen._data);
+        //unserialize array of tdlen registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("tdlen_array%d", i), tdlen_array[i]._data);
+        // paramIn(cp, "tdh", tdh._data);
+        //unserialize array of tdh registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("tdh_array%d", i), tdh_array[i]._data);
+        // paramIn(cp, "txdca_ctl", txdca_ctl._data);
+        //unserialize array of txdca_ctl registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("txdca_ctl_array%d", i), txdca_ctl_array[i]._data);
+        // paramIn(cp, "tdt", tdt._data);
+        //unserialize array of tdt registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("tdt_array%d", i), tdt_array[i]._data);
         paramIn(cp, "tidv", tidv._data);
-        paramIn(cp, "txdctl", txdctl._data);
+        // paramIn(cp, "txdctl", txdctl._data);
+        //unserialize array of txdctl registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("txdctl_array%d", i), txdctl_array[i]._data);
         paramIn(cp, "tadv", tadv._data);
-        UNSERIALIZE_SCALAR(tdwba);
+        // UNSERIALIZE_SCALAR(tdwba);
+        //unserialize array of tdwba registers
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+            paramIn(cp, csprintf("tdwba_array%d", i), tdwba_array[i]);
         //paramIn(cp, "tdwba", tdwba._data);
         paramIn(cp, "rxcsum", rxcsum._data);
         UNSERIALIZE_SCALAR(rlpml);
@@ -941,6 +1188,10 @@ struct Regs : public Serializable
         paramIn(cp, "swsm", swsm._data);
         paramIn(cp, "fwsm", fwsm._data);
         UNSERIALIZE_SCALAR(sw_fw_sync);
+
+        //unserialize RETA array
+        for (int i = 0; i < RETA_SIZE; i++)
+            paramIn(cp, csprintf("reta_array%d", i), reta_array[i]);
     }
 };
 

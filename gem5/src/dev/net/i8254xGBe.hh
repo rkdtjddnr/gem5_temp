@@ -76,8 +76,20 @@ class IGbE : public EtherDevice
     PacketFifo rxFifo;
     PacketFifo txFifo;
 
+    // multi-queue
+    int numQueues;
+
     // Packet that we are currently putting into the txFifo
-    EthPacketPtr txPacket;
+    //jm - this should be multiple arrays
+    // EthPacketPtr txPacket;
+    EthPacketPtr txPacketArray[MAX_QUEUE_SIZE];
+
+    //jm rx EthPacketPtr Array 
+    //Packet that is currently being put into the RX queue
+    //If RSS is enabled, RSS is done and push to the rxPacketArray per cycle.
+    //If target rxPacketArray is full, it cannot pop the packet from rxFifo
+
+    EthPacketPtr rxPacketArray[MAX_QUEUE_SIZE]; 
 
     // Should to Rx/Tx State machine tick?
     bool inTick;
@@ -85,10 +97,14 @@ class IGbE : public EtherDevice
     bool txTick;
     bool txFifoTick;
 
-    bool rxDmaPacket;
+    //jm - this should be multiple arrays
+    // bool rxDmaPacket;
+    bool rxDmaPacketArray[MAX_QUEUE_SIZE];
 
+    //jm - this should be multiple arrays
     // Number of bytes copied from current RX packet
-    unsigned pktOffset;
+    // unsigned pktOffset;
+    unsigned pktOffsetArray[MAX_QUEUE_SIZE];
 
     // Delays in managaging descriptors
     Tick fetchDelay, wbDelay;
@@ -96,43 +112,43 @@ class IGbE : public EtherDevice
     Tick rxWriteDelay, txReadDelay;
 
     // Event and function to deal with RDTR timer expiring
-    void rdtrProcess() {
-        rxDescCache.writeback(0);
-        DPRINTF(EthernetIntr,
-                "Posting RXT interrupt because RDTR timer expired\n");
-        postInterrupt(igbreg::IT_RXT);
-    }
+    // void rdtrProcess() {
+    //     rxDescCache.writeback(0);
+    //     DPRINTF(EthernetIntr,
+    //             "Posting RXT interrupt because RDTR timer expired\n");
+    //     postInterrupt(igbreg::IT_RXT);
+    // }
 
-    EventFunctionWrapper rdtrEvent;
+    // EventFunctionWrapper rdtrEvent;
 
     // Event and function to deal with RADV timer expiring
-    void radvProcess() {
-        rxDescCache.writeback(0);
-        DPRINTF(EthernetIntr,
-                "Posting RXT interrupt because RADV timer expired\n");
-        postInterrupt(igbreg::IT_RXT);
-    }
+    // void radvProcess() {
+    //     rxDescCache.writeback(0);
+    //     DPRINTF(EthernetIntr,
+    //             "Posting RXT interrupt because RADV timer expired\n");
+    //     postInterrupt(igbreg::IT_RXT);
+    // }
 
-    EventFunctionWrapper radvEvent;
+    // EventFunctionWrapper radvEvent;
 
     // Event and function to deal with TADV timer expiring
-    void tadvProcess() {
-        txDescCache.writeback(0);
-        DPRINTF(EthernetIntr,
-                "Posting TXDW interrupt because TADV timer expired\n");
-        postInterrupt(igbreg::IT_TXDW);
-    }
+    // void tadvProcess() {
+    //     txDescCache.writeback(0);
+    //     DPRINTF(EthernetIntr,
+    //             "Posting TXDW interrupt because TADV timer expired\n");
+    //     postInterrupt(igbreg::IT_TXDW);
+    // }
 
-    EventFunctionWrapper tadvEvent;
+    // EventFunctionWrapper tadvEvent;
 
     // Event and function to deal with TIDV timer expiring
-    void tidvProcess() {
-        txDescCache.writeback(0);
-        DPRINTF(EthernetIntr,
-                "Posting TXDW interrupt because TIDV timer expired\n");
-        postInterrupt(igbreg::IT_TXDW);
-    }
-    EventFunctionWrapper tidvEvent;
+    // void tidvProcess() {
+    //     txDescCache.writeback(0);
+    //     DPRINTF(EthernetIntr,
+    //             "Posting TXDW interrupt because TIDV timer expired\n");
+    //     postInterrupt(igbreg::IT_TXDW);
+    // }
+    // EventFunctionWrapper tidvEvent;
 
     // Main event to tick the device
     void tick();
@@ -141,8 +157,20 @@ class IGbE : public EtherDevice
 
     uint64_t macAddr;
 
-    void rxStateMachine();
-    void txStateMachine();
+    bool rxStateMachine(int queueID);
+    // void rxStateMachine();
+    bool txStateMachine(int queueID);
+    // void txStateMachine();
+    // Compute the hash function for the given input - used for RSS
+    uint32_t computeHash(uint8_t *input, int length); 
+    int doRSS(EthPacketPtr pkt);
+    int prevRSSQueue; //It is for the case when RSS is enabled, but not ip, tcp, udp packet. just do round-robin
+    // Decide the queue of the packet in front of the rxFifo & pop from rxFifo to the rxPacketArray
+    void rxFifotoRxDesc();
+    // select the queue to push the packet from txPacketArray to txFifo using round-robin
+    void txPackettoTxFifo();
+    int candidateTxQueue;
+    bool successTxQueueSend;
     void updateDropFSM(int rxFifoFull, int rxRingFull, int txRingFull, int txFifoFull);
     void txWire();
 
@@ -308,11 +336,26 @@ class IGbE : public EtherDevice
     class RxDescCache : public DescCache<igbreg::RxDesc>
     {
       protected:
-        Addr descBase() const override { return igbe->regs.rdba(); }
-        long descHead() const override { return igbe->regs.rdh(); }
-        long descLen() const override { return igbe->regs.rdlen() >> 4; }
-        long descTail() const override { return igbe->regs.rdt(); }
-        void updateHead(long h) override { igbe->regs.rdh(h); }
+        Addr descBase() const override { 
+          // return igbe->regs.rdba(); 
+          return igbe->regs.rdba_array[queueID]();
+        }
+        long descHead() const override { 
+          // return igbe->regs.rdh(); 
+          return igbe->regs.rdh_array[queueID]();
+        }
+        long descLen() const override { 
+          // return igbe->regs.rdlen() >> 4; 
+          return igbe->regs.rdlen_array[queueID]() >> 4;
+        }
+        long descTail() const override { 
+          // return igbe->regs.rdt(); 
+          return igbe->regs.rdt_array[queueID]();
+        }
+        void updateHead(long h) override { 
+          // igbe->regs.rdh(h); 
+          igbe->regs.rdh_array[queueID](h);
+        }
         void enableSm() override;
         void fetchAfterWb() override {
             if (!igbe->rxTick && igbe->drainState() == DrainState::Running)
@@ -328,8 +371,10 @@ class IGbE : public EtherDevice
             set EOP */
         unsigned bytesCopied;
 
+        int queueID; // Queue ID for this cache
+
       public:
-        RxDescCache(IGbE *i, std::string n, int s);
+        RxDescCache(IGbE *i, std::string n, int s, int qid);
 
         /** Write the given packet into the buffer(s) pointed to by the
          * descriptor and update the book keeping. Should only be called when
@@ -357,6 +402,24 @@ class IGbE : public EtherDevice
         EventFunctionWrapper pktHdrEvent;
         EventFunctionWrapper pktDataEvent;
 
+        // Event and function to deal with RDTR timer expiring
+        void _rdtrProcess() {
+            writeback(0);
+            DPRINTF(EthernetIntr,
+                    "At RX[%d] Posting RXT interrupt because RDTR timer expired\n", queueID);
+            igbe->postInterrupt(igbreg::IT_RXT);
+        }
+        EventFunctionWrapper _rdtrEvent;
+
+        // Event and function to deal with RADV timer expiring
+        void _radvProcess() {
+            writeback(0);
+            DPRINTF(EthernetIntr,
+                    "At RX[%d] Posting RXT interrupt because RADV timer expired\n", queueID);
+            igbe->postInterrupt(igbreg::IT_RXT);
+        }
+        EventFunctionWrapper _radvEvent;
+
         bool hasOutstandingEvents() override;
 
         void serialize(CheckpointOut &cp) const override;
@@ -364,16 +427,33 @@ class IGbE : public EtherDevice
     };
     friend class RxDescCache;
 
-    RxDescCache rxDescCache;
+    // RxDescCache rxDescCache;
+    //jm - this should be multiple arrays
+    RxDescCache *rxDescCacheArray[MAX_QUEUE_SIZE];
 
     class TxDescCache  : public DescCache<igbreg::TxDesc>
     {
       protected:
-        Addr descBase() const override { return igbe->regs.tdba(); }
-        long descHead() const override { return igbe->regs.tdh(); }
-        long descTail() const override { return igbe->regs.tdt(); }
-        long descLen() const override { return igbe->regs.tdlen() >> 4; }
-        void updateHead(long h) override { igbe->regs.tdh(h); }
+        Addr descBase() const override { 
+          // return igbe->regs.tdba(); 
+          return igbe->regs.tdba_array[queueID]();
+        }
+        long descHead() const override { 
+          // return igbe->regs.tdh(); 
+          return igbe->regs.tdh_array[queueID]();
+        }
+        long descTail() const override { 
+          // return igbe->regs.tdt(); 
+          return igbe->regs.tdt_array[queueID]();
+        }
+        long descLen() const override { 
+          // return igbe->regs.tdlen() >> 4; 
+          return igbe->regs.tdlen_array[queueID]() >> 4;
+        }
+        void updateHead(long h) override { 
+          // igbe->regs.tdh(h); 
+          igbe->regs.tdh_array[queueID](h);
+        }
         void enableSm() override;
         void actionAfterWb() override;
         void fetchAfterWb() override {
@@ -407,8 +487,10 @@ class IGbE : public EtherDevice
         Addr tsoCopyBytes;
         int tsoPkts;
 
+        int queueID; // Queue ID for this cache
+
       public:
-        TxDescCache(IGbE *i, std::string n, int s);
+        TxDescCache(IGbE *i, std::string n, int s, int qid);
 
         /** Tell the cache to DMA a packet from main memory into its buffer and
          * return the size the of the packet to reserve space in tx fifo.
@@ -432,6 +514,12 @@ class IGbE : public EtherDevice
          * @return packet available in descriptor cache
          */
         bool packetAvailable();
+
+        /**
+         * set packetDone to false -> it is called after push the packet to the fifo
+         * 
+         */
+        void unsetPacketDone() { pktDone = false; }
 
         /** Ask if we are still waiting for the packet to be transfered.
          * @return packet still in transit.
@@ -470,13 +558,31 @@ class IGbE : public EtherDevice
         }
         EventFunctionWrapper nullEvent;
 
+        void _tadvProcess() {
+            writeback(0);
+            DPRINTF(EthernetIntr,
+                    "At TX[%d] Posting TXDW interrupt because TADV timer expired\n", queueID);
+            igbe->postInterrupt(igbreg::IT_TXDW);
+        }
+        EventFunctionWrapper _tadvEvent;
+
+        void _tidvProcess() {
+            writeback(0);
+            DPRINTF(EthernetIntr,
+                    "At TX[%d] Posting TXDW interrupt because TIDV timer expired\n", queueID);
+            igbe->postInterrupt(igbreg::IT_TXDW);
+        }
+        EventFunctionWrapper _tidvEvent;                     
+
         void serialize(CheckpointOut &cp) const override;
         void unserialize(CheckpointIn &cp) override;
     };
 
     friend class TxDescCache;
 
-    TxDescCache txDescCache;
+    // TxDescCache txDescCache;
+    //jm - this should be multiple arrays
+    TxDescCache *txDescCacheArray[MAX_QUEUE_SIZE];
 
   public:
     PARAMS(IGbE);

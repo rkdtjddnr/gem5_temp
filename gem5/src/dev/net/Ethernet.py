@@ -189,6 +189,8 @@ class IGbE(EtherDevice):
 
     # SHIN ddio
     adq_idx = Param.Int('-1', "target mlc")
+    # jm - multi-queue
+    num_queues = Param.UInt32(2, "Number of queues")
 
 class IGbE_e1000(IGbE):
     # Older Intel 8254x based gigabit ethernet adapter
@@ -199,6 +201,8 @@ class IGbE_e1000(IGbE):
 
     # SHIN.
     adq_idx = -1
+    # jm - multi-queue
+    num_queues = Param.UInt32(2, "Number of queues")
 
 class IGbE_igb(IGbE):
     # Newer Intel 8257x based gigabit ethernet adapter

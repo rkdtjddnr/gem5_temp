@@ -178,7 +178,7 @@ def makeArmSystem(mem_mode, machine_type, num_cpus=1, mdesc=None,
                   dtb_filename=None, bare_metal=False, cmdline=None,
                   external_memory="", ruby=False, security=False,
                   vio_9p=None, bootloader=None, num_nics=1, num_loadgens=0,
-                  load_generator_type="Simple", **loadgen_kwargs):
+                  load_generator_type="Simple", num_qs=1, **loadgen_kwargs):
     assert machine_type
 
     pci_devices = []
@@ -191,7 +191,7 @@ def makeArmSystem(mem_mode, machine_type, num_cpus=1, mdesc=None,
     links = []
 
     for i in range(num_nics):
-        nics.append(IGbE_e1000(adq_idx=i))
+        nics.append(IGbE_e1000(adq_idx=i, num_queues=num_qs))
 
     for i in range(num_loadgens):
         if load_generator_type == "Simple":

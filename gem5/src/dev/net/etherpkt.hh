@@ -73,12 +73,14 @@ class EthPacketData
      */
     unsigned simLength;
 
+    uint32_t rssHash; // RSS hash value - temporal storage -> finally should be moved to the descriptor
+
     EthPacketData()
-        : data(nullptr), bufLength(0), length(0), simLength(0)
+        : data(nullptr), bufLength(0), length(0), simLength(0), rssHash(0)
     { }
 
     explicit EthPacketData(unsigned size)
-        : data(new uint8_t[size]), bufLength(size), length(0), simLength(0)
+        : data(new uint8_t[size]), bufLength(size), length(0), simLength(0), rssHash(0)
     { }
 
     ~EthPacketData() { if (data) delete [] data; }

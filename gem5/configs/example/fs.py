@@ -102,6 +102,7 @@ def build_test_system(np):
                 vio_9p=args.vio_9p,
                 bootloader=args.bootloader,
                 num_nics=args.num_nics,
+                num_qs=args.num_queues,
                 # Loadgens.
                 num_loadgens=args.num_loadgens,
                 load_generator_type="Simple",
@@ -126,6 +127,7 @@ def build_test_system(np):
                 vio_9p=args.vio_9p,
                 bootloader=args.bootloader,
                 num_nics=args.num_nics,
+                num_qs=args.num_queues,
                 # Loadgens.
                 num_loadgens=args.num_loadgens,
                 loadgen_stack_mode=args.loadgen_stack,

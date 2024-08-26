@@ -123,9 +123,13 @@ class PacketFifo
     bool push(EthPacketPtr ptr)
     {
         assert(ptr->length);
-        assert(_reserved <= ptr->length);
-        if (avail() < ptr->length - _reserved)
-            return false;
+        // assert(_reserved <= ptr->length);
+        if (_reserved > ptr->length)
+            // printf("PacketFifo: _reserved (%d) > ptr->length (%d)\n", _reserved, ptr->length);
+        if (_reserved <= ptr->length) {
+            if (avail() < ptr->length - _reserved)
+                return false;
+        }
 
         _size += ptr->length;
 
@@ -133,7 +137,11 @@ class PacketFifo
         entry.packet = ptr;
         entry.number = _counter++;
         fifo.push_back(entry);
-        _reserved = 0;
+        // _reserved = 0;
+        if (_reserved > ptr->length)
+            _reserved -= ptr->length;
+        else
+            _reserved = 0;
         return true;
     }
 
