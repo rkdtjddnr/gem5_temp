@@ -64,7 +64,7 @@ using namespace networking;
 
 IGbE::IGbE(const Params &p)
     : EtherDevice(p), adq(p.adq_idx), etherInt(NULL), numQueues(p.num_queues),     // SHIN. add adq // jm. add numQueues
-      rxFifo(p.rx_fifo_size), txFifo(p.tx_fifo_size), inTick(false),
+      rxFifo(p.rx_fifo_size, true), txFifo(p.tx_fifo_size, false), inTick(false),
       rxTick(false), txTick(false), txFifoTick(false), //rxDmaPacket(false), pktOffset(0), 
       fetchDelay(p.fetch_delay), wbDelay(p.wb_delay),
       fetchCompDelay(p.fetch_comp_delay), wbCompDelay(p.wb_comp_delay),
@@ -920,7 +920,7 @@ IGbE::write(PacketPtr pkt)
             DPRINTF(EthernetDpdk, "RXS: RDT Updated.\n");
             DPRINTF(EthernetDpdk, "Write RDT[%d]: %d\n", queueid, regs.rdt_array[queueid]());
             if (drainState() == DrainState::Running) {
-                printf("RXS: RDT Fetching Descriptors! in queue %d\n",
+                DPRINTF(EthernetDpdk, "RXS: RDT Fetching Descriptors! in queue %d\n",
                         queueid);
                 rxDescCacheArray[queueid]->fetchDescriptors();
             } else {
@@ -967,7 +967,7 @@ IGbE::write(PacketPtr pkt)
             DPRINTF(EthernetDpdk, "TXS: TX Tail pointer updated in queue %d\n", queueid);
             DPRINTF(EthernetDpdk, "Write TDT[%d]: %d\n", queueid, regs.tdt_array[queueid]());
             if (drainState() == DrainState::Running) {
-                printf("TXS: TDT Fetching Descriptors! in queue %d\n", queueid);  
+                DPRINTF(EthernetDpdk, "TXS: TDT Fetching Descriptors! in queue %d\n", queueid);  
                 txDescCacheArray[queueid]->fetchDescriptors();
             } else {
                 printf("TXS: TDT NOT Fetching Desc b/c draining! in queue %d\n", queueid);
@@ -1549,6 +1549,9 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset)
     pktDone = false;
     unsigned buf_len, hdr_len;
 
+    if (pktPtr->rxDMAStartTick == 0)
+        pktPtr->rxDMAStartTick = curTick();
+
     RxDesc *desc = unusedCache.front();
     switch (igbe->regs.srrctl_array[queueID].desctype()) {
       case RXDT_LEGACY:
@@ -1696,6 +1699,8 @@ IGbE::RxDescCache::pktComplete()
             queueID, pktPtr->length, bytesCopied, crcfixup,
             htole((uint16_t)(pktPtr->length + crcfixup)),
             (uint16_t)(pktPtr->length + crcfixup));
+    
+    igbe->etherDeviceStats.rxDMABytes += bytesCopied;
 
     // no support for anything but starting at 0
     assert(igbe->regs.rxcsum.pcss() == 0);
@@ -1842,6 +1847,27 @@ IGbE::RxDescCache::pktComplete()
             igbe->postInterrupt(IT_SRPD);
         }
         bytesCopied = 0;
+        if (pktPtr->rxDMAEndTick == 0)
+            pktPtr->rxDMAEndTick = curTick();
+        
+        if (pktPtr->rxMadeTick != 0 && pktPtr->rxPortTick != 0 && pktPtr->rxFifoTick != 0 && pktPtr->rxDMAStartTick != 0 && pktPtr->rxDMAEndTick != 0) {
+            uint64_t rxTotalTime = pktPtr->rxDMAEndTick - pktPtr->rxMadeTick;
+            uint64_t rxEtherLinkTime = pktPtr->rxPortTick - pktPtr->rxMadeTick;
+            uint64_t rxPort2FifoTime = pktPtr->rxFifoTick - pktPtr->rxPortTick;
+            uint64_t rxFifo2DMAStartTime = pktPtr->rxDMAStartTick - pktPtr->rxFifoTick;
+            uint64_t rxDMATime = pktPtr->rxDMAEndTick - pktPtr->rxDMAStartTick;
+            printf("RXD[%d] RX Total Time: %ld, EtherLink Time: %ld, Port2Fifo Time: %ld, Fifo2DMAStart Time: %ld, DMA Time: %ld\n", queueID, rxTotalTime, rxEtherLinkTime, rxPort2FifoTime, rxFifo2DMAStartTime, rxDMATime);
+            float rxTotalTimeInSec = (float)rxTotalTime / 10.0e8;
+            float rxEtherLinkTimeInSec = (float)rxEtherLinkTime / 10.0e8;
+            float rxPort2FifoTimeInSec = (float)rxPort2FifoTime / 10.0e8;
+            float rxFifo2DMAStartTimeInSec = (float)rxFifo2DMAStartTime / 10.0e8;
+            float rxDMATimeInSec = (float)rxDMATime / 10.0e8;
+            igbe->etherDeviceStats.rxEnd2EndClk.sample(rxTotalTimeInSec);
+            igbe->etherDeviceStats.rxEtherLinkClk.sample(rxEtherLinkTimeInSec);
+            igbe->etherDeviceStats.rxPort2FifoClk.sample(rxPort2FifoTimeInSec);
+            igbe->etherDeviceStats.rxFifo2DmaClk.sample(rxFifo2DMAStartTimeInSec);
+            igbe->etherDeviceStats.rxDma2CoreClk.sample(rxDMATimeInSec);
+        }
     }
 
     pktPtr = NULL;
@@ -1868,7 +1894,7 @@ bool
 IGbE::RxDescCache::packetDone()
 {
     if (pktDone) {
-        pktDone = false;
+        // pktDone = false;
         return true;
     }
     return false;
@@ -2313,6 +2339,9 @@ IGbE::TxDescCache::pktComplete()
     DPRINTF(EthernetDpdk,
             "TXD[%d] ------Packet of %d bytes ready for transmission-------\n", queueID,
             pktPtr->length);
+    
+    igbe->etherDeviceStats.txDMABytes += pktPtr->length;
+
     pktDone = true;
     pktWaiting = false;
     pktPtr = NULL;
@@ -2949,6 +2978,14 @@ IGbE::rxFifotoRxDesc() {
             DPRINTF(EthernetDpdk, "RXF: Packet(%p) pushed to rxPacketArray[%d]\n", pkt.get(), queueID);
         } else {
             DPRINTF(EthernetDpdk, "RXF: Packet(%p) RSS result is %d, but rxPacketArray[%d] is not null\n", pkt.get(), queueID, queueID);
+
+            for (int i = 0; i < numQueues; i++) {
+                if (i != queueID && rxPacketArray[i] == nullptr) {
+                    DPRINTF(EthernetDpdk, "RXF: Packet(%p) RSS result is %d, but rxPacketArray[%d] is not null", pkt.get(), queueID, i);
+                    etherDeviceStats.rxFifoNotEmptyRSSBad++;
+                    break;
+                }
+            }
         }
     } else {
         // RSS disabled
@@ -3304,6 +3341,10 @@ IGbE::ethRxPkt(EthPacketPtr pkt)
     DPRINTF(Ethernet, "RxFIFO: Receiving packet from wire\n");
     DPRINTF(EthernetDpdk, "RxFIFO: Receiving packet from wire\n");
 
+    if (pkt->rxPortTick == 0) {
+        pkt->rxPortTick = curTick();
+    }
+
     // set rxFifoFull, txRingFull, rxRingFull
     // int rxRingFull = (rxDescCache.descLeft() == 0 ? 1 : 0);
     // int txRingFull = ((!txDescCache.packetWaiting() && txDescCache.descLeft() == 0) ? 1 : 0);
@@ -3364,6 +3405,11 @@ IGbE::ethRxPkt(EthPacketPtr pkt)
     // else
         // rxFifoFull=0;
     updateDropFSM(rxFifoFull, rxRingFull, txRingFull, txFifoFull);
+
+    if (pkt->rxFifoTick == 0) {
+        pkt->rxFifoTick = curTick();
+    }
+
     return true;
 }
 
@@ -3385,6 +3431,8 @@ IGbE::rxStateMachine(int queueID)
     if (rxDescCacheArray[queueID]->packetDone()) {
         // rxDmaPacket = false;
         rxDmaPacketArray[queueID] = false;
+        rxDescCacheArray[queueID]->unsetPacketDone();
+        
         DPRINTF(EthernetSM, "RXS[%d]: Packet completed DMA to memory\n", queueID);
         DPRINTF(EthernetDpdk, "RXS[%d]: Packet completed DMA to memory\n", queueID);
         // int descLeft = rxDescCache.descLeft();
@@ -3493,6 +3541,12 @@ IGbE::rxStateMachine(int queueID)
         // rxTick = false;
         // return;
         rxTickQueue = false;
+        if (rxPacketArray[queueID] != nullptr) {
+            if (rxPacketArray[queueID]->rxFifoNotEmptyDmaBusyChecked == false) {
+                etherDeviceStats.rxFifoNotEmptyDmaBusy++;
+                rxPacketArray[queueID]->rxFifoNotEmptyDmaBusyChecked = true;
+            }
+        }
         return rxTickQueue;
     }
 
@@ -3605,6 +3659,15 @@ IGbE::tick()
         rxFifotoRxDesc();
 
         rxTick = rxTickQueue;
+    } else {
+        for (int i = 0; i < numQueues; i++) {
+            if (rxDmaPacketArray[i] && rxPacketArray[i] != nullptr) {
+                if (rxPacketArray[i]->rxFifoNotEmptyDmaBusyChecked == false) {
+                    rxPacketArray[i]->rxFifoNotEmptyDmaBusyChecked = true;
+                    etherDeviceStats.rxFifoNotEmptyDmaBusy++;
+                }
+            }
+        }
     }
 
     if (txTick) {

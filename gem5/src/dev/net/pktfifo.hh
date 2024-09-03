@@ -83,6 +83,7 @@ class PacketFifo
     typedef std::list<PacketFifoEntry> fifo_list;
     typedef fifo_list::iterator iterator;
     typedef fifo_list::const_iterator const_iterator;
+    bool _isRXFifo;
 
   protected:
     std::list<PacketFifoEntry> fifo;
@@ -92,15 +93,16 @@ class PacketFifo
     unsigned _reserved;
 
   public:
-    explicit PacketFifo(int max)
-        : _counter(0), _maxsize(max), _size(0), _reserved(0) {}
+    explicit PacketFifo(int max, bool isRXFifo = false)
+        : _counter(0), _maxsize(max), _size(0), _reserved(0), _isRXFifo(isRXFifo) {}
     virtual ~PacketFifo() {}
 
     unsigned packets() const { return fifo.size(); }
     unsigned maxsize() const { return _maxsize; }
     unsigned size() const { return _size; }
     unsigned reserved() const { return _reserved; }
-    unsigned avail() const { return _maxsize - _size - _reserved; }
+    int avail() const { //return _maxsize - _size - _reserved; 
+                        return static_cast<int>(_maxsize) - static_cast<int>(_size) - static_cast<int>(_reserved); }
     bool empty() const { return size() <= 0; }
     bool full() const { return avail() <= 0; }
 
@@ -124,25 +126,53 @@ class PacketFifo
     {
         assert(ptr->length);
         // assert(_reserved <= ptr->length);
-        if (_reserved > ptr->length)
-            // printf("PacketFifo: _reserved (%d) > ptr->length (%d)\n", _reserved, ptr->length);
-        if (_reserved <= ptr->length) {
-            if (avail() < ptr->length - _reserved)
-                return false;
+        
+        int avail_space = avail();
+        int required_space = std::max(0, static_cast<int>(ptr->length) - static_cast<int>(_reserved));
+
+        if (avail_space < required_space) {
+            // if (_isRXFifo) {
+            //     printf("RXFifo push rejected! _reserved: %d, ptr->length: %d, avail: %d, required: %d, _size: %d, _maxsize: %d\n", 
+            //        _reserved, ptr->length, avail_space, required_space, _size, _maxsize);
+            // }
+            return false;
+        } else {
+            // if (_isRXFifo) {
+            //     printf("RXFifo push success! _reserved: %d, ptr->length: %d, avail: %d, required: %d, _size: %d, _maxsize: %d\n", 
+            //         _reserved, ptr->length, avail_space, required_space, _size, _maxsize);
+            // }
         }
 
+        // check overflow
+        if (_size + ptr->length > _maxsize) {
+            // printf("Warning: _size would overflow. _size: %d, ptr->legnth: %d, _maxsize: %d\n", _size, ptr->length, _maxsize);
+            return false;
+        }
         _size += ptr->length;
 
         PacketFifoEntry entry;
         entry.packet = ptr;
         entry.number = _counter++;
         fifo.push_back(entry);
-        // _reserved = 0;
         if (_reserved > ptr->length)
             _reserved -= ptr->length;
         else
             _reserved = 0;
         return true;
+
+        // assert(ptr->length);
+        // assert(_reserved <= ptr->length);
+        // if (avail() < ptr->length - _reserved)
+        //     return false;
+
+        // _size += ptr->length;
+
+        // PacketFifoEntry entry;
+        // entry.packet = ptr;
+        // entry.number = _counter++;
+        // fifo.push_back(entry);
+        // _reserved = 0;
+        // return true;
     }
 
     void pop()

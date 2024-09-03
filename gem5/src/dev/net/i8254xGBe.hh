@@ -394,6 +394,8 @@ class IGbE : public EtherDevice
          */
         bool packetDone();
 
+        void unsetPacketDone() { pktDone = false; }
+
         EventFunctionWrapper pktEvent;
 
         // Event to handle issuing header and data write at the same time

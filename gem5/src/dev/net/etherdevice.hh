@@ -71,16 +71,31 @@ class EtherDevice : public PciDevice
         statistics::Scalar rxRingBufferFull;
         statistics::Scalar txRingBufferFull;
 
+        statistics::Scalar rxFifoNotEmptyDmaBusy;
+        statistics::Scalar rxFifoNotEmptyRSSBad;
+
+        statistics::Histogram rxEnd2EndClk;
+        statistics::Histogram rxEtherLinkClk;
+        statistics::Histogram rxPort2FifoClk;
+        statistics::Histogram rxFifo2DmaClk;
+        statistics::Histogram rxDma2CoreClk;
+
         statistics::Scalar postedInterrupts;
 
         statistics::Scalar txBytes;
         statistics::Scalar rxBytes;
+
+        statistics::Scalar txDMABytes;
+        statistics::Scalar rxDMABytes;
 
         statistics::Scalar txPackets;
         statistics::Scalar rxPackets;
 
         statistics::Formula txBandwidth;
         statistics::Formula rxBandwidth;
+
+        statistics::Formula txDMABandwidth;
+        statistics::Formula rxDMABandwidth;
 
         statistics::Scalar txIpChecksums;
         statistics::Scalar rxIpChecksums;
@@ -98,6 +113,7 @@ class EtherDevice : public PciDevice
         statistics::Scalar descDmaWrBytes;
 
         statistics::Formula totBandwidth;
+        statistics::Formula totDMABandwidth;
         statistics::Formula totPackets;
         statistics::Formula totBytes;
         statistics::Formula totPacketRate;

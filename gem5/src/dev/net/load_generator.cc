@@ -75,6 +75,8 @@ namespace gem5
         memcpy(ethpacket->data, head, MACHeaderSize);
         uint64_t timeStamp = gem5::curTick();
         memcpy(&(ethpacket->data[MACHeaderSize]), &timeStamp, sizeof(uint64_t));
+
+        ethpacket->rxMadeTick = gem5::curTick();
     }
 
     void LoadGenerator::sendPacket()

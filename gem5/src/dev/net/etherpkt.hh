@@ -75,12 +75,21 @@ class EthPacketData
 
     uint32_t rssHash; // RSS hash value - temporal storage -> finally should be moved to the descriptor
 
+    uint64_t rxMadeTick; // Tick when the packet was created from EtherLoadGen
+    uint64_t rxPortTick; // Tick when the packet was received by the NIC
+    uint64_t rxFifoTick; // Tick when the packet was enqueued in the NIC's receive FIFO
+    uint64_t rxDMAStartTick; // Tick when the packet was dequeued from the NIC's receive FIFO
+    uint64_t rxDMAEndTick; // Tick when the packet was fully received by the NIC
+
+    bool rxFifoNotEmptyDmaBusyChecked;
+
+
     EthPacketData()
-        : data(nullptr), bufLength(0), length(0), simLength(0), rssHash(0)
+        : data(nullptr), bufLength(0), length(0), simLength(0), rssHash(0), rxMadeTick(0), rxPortTick(0), rxFifoTick(0), rxDMAStartTick(0), rxDMAEndTick(0), rxFifoNotEmptyDmaBusyChecked(false)
     { }
 
     explicit EthPacketData(unsigned size)
-        : data(new uint8_t[size]), bufLength(size), length(0), simLength(0), rssHash(0)
+        : data(new uint8_t[size]), bufLength(size), length(0), simLength(0), rssHash(0), rxMadeTick(0), rxPortTick(0), rxFifoTick(0), rxDMAStartTick(0), rxDMAEndTick(0), rxFifoNotEmptyDmaBusyChecked(false)
     { }
 
     ~EthPacketData() { if (data) delete [] data; }

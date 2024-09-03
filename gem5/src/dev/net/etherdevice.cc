@@ -57,11 +57,29 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
                "Number of times the rxRingBuffer fills up"),
       ADD_STAT(txRingBufferFull, statistics::units::Count::get(),
                "Number of times the txRingBuffer fills up"),
+      ADD_STAT(rxFifoNotEmptyDmaBusy, statistics::units::Count::get(),
+               "Number of times the rxFifo is not empty but the DMA is busy"),
+      ADD_STAT(rxFifoNotEmptyRSSBad, statistics::units::Count::get(),
+               "Number of times the rxFifo is not empty but the RSS queue result is bad (target queue is full, but the non-target is not)"),
+      ADD_STAT(rxEnd2EndClk, statistics::units::Second::get(), 
+               "Distribution of end to end ms for received packets"),
+      ADD_STAT(rxEtherLinkClk, statistics::units::Second::get(), 
+               "Distribution of time spent in the Ethernet link for received packets"),
+      ADD_STAT(rxPort2FifoClk, statistics::units::Second::get(), 
+               "Distribution of time spent in the port to fifo for received packets"),
+      ADD_STAT(rxFifo2DmaClk, statistics::units::Second::get(), 
+               "Distribution of time spent in the fifo to start of dma for received packets"),
+      ADD_STAT(rxDma2CoreClk, statistics::units::Second::get(), 
+               "Distribution of time spent in the dma to core for received packets"),
       ADD_STAT(postedInterrupts, statistics::units::Count::get(),
                "Number of posts to CPU"),
       ADD_STAT(txBytes, statistics::units::Byte::get(),
                "Bytes Transmitted"),
       ADD_STAT(rxBytes, statistics::units::Byte::get(), "Bytes Received"),
+      ADD_STAT(txDMABytes, statistics::units::Byte::get(),
+               "Bytes Transmitted by DMA"),
+      ADD_STAT(rxDMABytes, statistics::units::Byte::get(),
+                "Bytes Received by DMA"),
       ADD_STAT(txPackets, statistics::units::Count::get(),
                "Number of Packets Transmitted"),
       ADD_STAT(rxPackets, statistics::units::Count::get(),
@@ -74,6 +92,14 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
                     statistics::units::Bit, statistics::units::Second>::get(),
                "Receive Bandwidth",
                rxBytes * statistics::constant(8) / simSeconds),
+      ADD_STAT(txDMABandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+               "Transmit Bandwidth by DMA (MB/s)",
+               (txDMABytes / 1000000) / simSeconds),
+      ADD_STAT(rxDMABandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+               "Receive Bandwidth by DMA (MB/s)",
+               (rxDMABytes / 1000000) / simSeconds),
       ADD_STAT(txIpChecksums, statistics::units::Count::get(),
                "Number of tx IP Checksums done by device"),
       ADD_STAT(rxIpChecksums, statistics::units::Count::get(),
@@ -98,6 +124,10 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
                     statistics::units::Bit, statistics::units::Second>::get(),
                "Total Bandwidth",
                txBandwidth + rxBandwidth),
+      ADD_STAT(totDMABandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+               "Total Bandwidth by DMA (MB/s)",
+               txDMABandwidth + rxDMABandwidth),
       ADD_STAT(totPackets, statistics::units::Count::get(), "Total Packets",
                txPackets + rxPackets),
       ADD_STAT(totBytes, statistics::units::Byte::get(), "Total Bytes",
@@ -184,6 +214,16 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
       ADD_STAT(droppedPackets, statistics::units::Count::get(),
                "Number of packets dropped")
 {
+    rxFifoNotEmptyDmaBusy
+        .precision(0);
+    rxFifoNotEmptyRSSBad
+        .precision(0);
+
+    rxEnd2EndClk.init(100);
+    rxEtherLinkClk.init(100);
+    rxPort2FifoClk.init(100);
+    rxFifo2DmaClk.init(100);
+    rxDma2CoreClk.init(100);
 
     postedInterrupts
         .precision(0);
@@ -193,6 +233,12 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
 
     rxBytes
         .prereq(rxBytes);
+
+    txDMABytes
+        .prereq(txDMABytes);
+    
+    rxDMABytes
+        .prereq(rxDMABytes);
 
     txPackets
         .prereq(txBytes);
@@ -244,8 +290,20 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
     rxBandwidth
         .precision(0)
         .prereq(rxBytes);
+    
+    txDMABandwidth
+        .precision(0)
+        .prereq(txDMABytes);
+    
+    rxDMABandwidth
+        .precision(0)
+        .prereq(rxDMABytes);
 
     totBandwidth
+        .precision(0)
+        .prereq(totBytes);
+    
+    totDMABandwidth
         .precision(0)
         .prereq(totBytes);
 
