@@ -246,9 +246,16 @@ def config_cache(options, system):
                                         size = options.l3_size,
                                         assoc = options.l3_assoc)
         else:
-            system.l3 = l2_cache_class(clk_domain = system.cpu_clk_domain,
-                                    size = options.l3_size,
-                                    assoc = options.l3_assoc)
+            if options.l3_multiport: # JM
+                system.l3 = l2_cache_class(clk_domain = system.cpu_clk_domain,
+                                           size = options.l3_size,
+                                           assoc = options.l3_assoc,
+                                           is_multiport = True,
+                                           cpu_side_ports_connection_count = options.l3_cpu_side_ports_connection_count)
+            else:
+                system.l3 = l2_cache_class(clk_domain = system.cpu_clk_domain,
+                                        size = options.l3_size,
+                                        assoc = options.l3_assoc)
         if options.disable_snoop_filter:
             system.tol3bus = L3XBar(clk_domain = system.clk_domain, snoop_filter = NULL)
         else:
@@ -258,7 +265,11 @@ def config_cache(options, system):
             system.l3.connectCPUSideBus(system.tol3bus) 
             system.l3.connectMemSideBus(system.membus)
         else:
-            system.l3.cpu_side = system.tol3bus.master
+            if options.l3_multiport: # JM
+                for i in range(0, options.l3_cpu_side_ports_connection_count):
+                    system.l3.cpu_side_ports[i] = system.tol3bus.master
+            else:
+                system.l3.cpu_side = system.tol3bus.master
             system.l3.mem_side = system.membus.slave
 
     elif options.l2cache:

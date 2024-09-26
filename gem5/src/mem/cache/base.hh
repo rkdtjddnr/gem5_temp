@@ -94,6 +94,7 @@ struct BaseCacheParams;
  */
 class BaseCache : public ClockedObject
 {
+  friend class CoherentXBar;
   protected:
     /**
      * Indexes to enumerate the MSHR queues.
@@ -320,6 +321,7 @@ class BaseCache : public ClockedObject
 
         // a pointer to our specific cache implementation
         BaseCache *cache;
+        PortID id;
 
       protected:
         virtual bool recvTimingSnoopResp(PacketPtr pkt) override;
@@ -337,12 +339,19 @@ class BaseCache : public ClockedObject
       public:
 
         CpuSidePort(const std::string &_name, BaseCache *_cache,
-                    const std::string &_label);
+                    const std::string &_label, PortID _id = InvalidPortID);
+        // JM
+        // return the set from the address
+        uint32_t getSetIdxFromAddr(Addr addr) const {
+            return cache->getSetFromAddr(addr);
+        }
 
     };
 
     CpuSidePort cpuSidePort;
     std::vector<CpuSidePort*> ddioHintPort;
+    // JM - to model slice cache
+    std::vector<CpuSidePort*> cpuSidePortList;
     MemSidePort memSidePort;
 
   protected:
@@ -508,9 +517,10 @@ class BaseCache : public ClockedObject
      * @param ptk The request packet
      * @param blk The referenced block
      * @param request_time The tick at which the block lookup is compete
+     * @param cpu_side_port_id The port id of the CPU side port - used only when multi-port
      */
     virtual void handleTimingReqHit(PacketPtr pkt, CacheBlk *blk,
-                                    Tick request_time);
+                                    Tick request_time, PortID cpu_side_port_id = InvalidPortID);
 
     /*
      * Handle a timing request that missed in the cache
@@ -544,8 +554,9 @@ class BaseCache : public ClockedObject
     /**
      * Performs the access specified by the request.
      * @param pkt The request to perform.
+     * @param cpu_side_port_id from the CPU side port - used only when multi-port
      */
-    virtual void recvTimingReq(PacketPtr pkt);
+    virtual void recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id = InvalidPortID);
 
     /**
      * Handling the special case of uncacheable write responses to
@@ -859,7 +870,7 @@ class BaseCache : public ClockedObject
      * @param id Use the given packet id for the write clean operation.
      * @return The generated write clean packet.
      */
-    PacketPtr writecleanBlk(CacheBlk *blk, Request::Flags dest, PacketId id);
+    PacketPtr writecleanBlk(CacheBlk *blk, Request::Flags dest, PacketId id, PortID cpu_side_port_id = InvalidPortID);
 
     /**
      * Write back dirty blocks in the cache using functional accesses.
@@ -993,6 +1004,8 @@ class BaseCache : public ClockedObject
      * The address range to which the cache responds on the CPU side.
      * Normally this is all possible memory addresses. */
     const AddrRangeList addrRanges;
+    // JM - for multi-port. split the address range and assign to each port
+    std::vector<AddrRangeList> addrRangesList;
 
   public:
     /** System we are currently operating in. */
@@ -1172,7 +1185,16 @@ class BaseCache : public ClockedObject
         return blkSize;
     }
 
-    const AddrRangeList &getAddrRanges() const { return addrRanges; }
+    const AddrRangeList &getAddrRanges(PortID portID) const { 
+        // JM - for multi-port
+        if (isLLC && isMultiPort) {
+            assert(portID < cpuSidePortList.size());
+            assert(portID < addrRangesList.size());
+            return addrRangesList[portID];
+        } else {
+            return addrRanges; 
+        }
+    }
 
     MSHR *allocateMissBuffer(PacketPtr pkt, Tick time, bool sched_send = true)
     {
@@ -1243,7 +1265,14 @@ class BaseCache : public ClockedObject
         if (blocked == 0) {
             stats.blockedCauses[cause]++;
             blockedCycle = curCycle();
-            cpuSidePort.setBlocked();
+            // JM - for multi-port
+            if (isLLC && isMultiPort) {
+                for (int i = 0; i < cpuSidePortList.size(); i++) {
+                    cpuSidePortList[i]->setBlocked();
+                }
+            } else {
+                cpuSidePort.setBlocked();
+            }
         }
         blocked |= flag;
         DPRINTF(Cache,"Blocking for cause %d, mask=%d\n", cause, blocked);
@@ -1263,7 +1292,15 @@ class BaseCache : public ClockedObject
         DPRINTF(Cache,"Unblocking for cause %d, mask=%d\n", cause, blocked);
         if (blocked == 0) {
             stats.blockedCycles[cause] += curCycle() - blockedCycle;
-            cpuSidePort.clearBlocked();
+
+            // JM - for multi-port
+            if (isLLC && isMultiPort) {
+                for (int i = 0; i < cpuSidePortList.size(); i++) {
+                    cpuSidePortList[i]->clearBlocked();
+                }
+            } else {
+                cpuSidePort.clearBlocked();
+            }
         }
     }
 
@@ -1374,12 +1411,19 @@ class BaseCache : public ClockedObject
         return ( (isMLC  && mlc_ddio) || isLLC) && pkt->isBlockIO() && pkt->cmd == MemCmd::InvalidateReq; 
     }
 
+    // JM
+    uint32_t getSetFromAddr(Addr addr) const {
+        return tags->extractSetForXBar(addr);
+    }
+
     // SHIN.
     bool ddioEnabled;
     bool ddioDisabled;
     int32_t ddioWayPart;
     bool isLLC;
     bool mlc_ddio;
+    // JM - for multi-port
+    bool isMultiPort;
 };
 
 /**

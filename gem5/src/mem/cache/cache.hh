@@ -89,13 +89,13 @@ class Cache : public BaseCache
                 PacketList &writebacks, bool is_ddio = false) override; // SHIN
 
     void handleTimingReqHit(PacketPtr pkt, CacheBlk *blk,
-                            Tick request_time) override;
+                            Tick request_time, PortID cpu_side_port_id = InvalidPortID) override;
 
     void handleTimingReqMiss(PacketPtr pkt, CacheBlk *blk,
                              Tick forward_time,
                              Tick request_time) override;
 
-    void recvTimingReq(PacketPtr pkt) override;
+    void recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id = InvalidPortID) override;
 
     void doWritebacks(PacketList& writebacks, Tick forward_time) override;
 

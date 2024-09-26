@@ -164,6 +164,10 @@ class BaseXBar : public ClockedObject
          */
         void recvRetry();
 
+        statistics::Scalar dataOccupancy; // occupancy for packets with data - that is really sent
+        statistics::Scalar headerOccupancy; // occupancy for packets without data - that is really sent
+        statistics::Scalar failOccupancy; // occupancy for packets that failed to send
+
       protected:
 
         /**
@@ -355,6 +359,10 @@ class BaseXBar : public ClockedObject
      */
     AddrRangeList getAddrRanges() const;
 
+    // JM - for L3XBar
+    // Check given address range is within the address ranges of the crossbar
+    bool isWithinAddrRanges(AddrRange addrRange) const;
+
     /**
      * Calculate the timing parameters for the packet. Updates the
      * headerDelay and payloadDelay fields of the packet
@@ -402,6 +410,9 @@ class BaseXBar : public ClockedObject
     statistics::Vector transDist;
     statistics::Vector2d pktCount;
     statistics::Vector2d pktSize;
+
+    // JM - for ioxbar (model pcie xbar)
+    bool isIOXBar;
 
   public:
 

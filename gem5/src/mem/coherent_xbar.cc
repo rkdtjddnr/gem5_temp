@@ -56,6 +56,8 @@
 // SHIN
 #include "debug/IdioMlcPrefetcherSnoopFilter.hh"
 
+// JM
+#include "mem/cache/base.hh"
 namespace gem5
 {
 
@@ -109,6 +111,13 @@ CoherentXBar::CoherentXBar(const CoherentXBarParams &p)
         respLayers.push_back(new RespLayer(*bp, *this,
                                            csprintf("respLayer%d", i)));
         snoopRespPorts.push_back(new SnoopRespPort(*bp, *this));
+    }
+
+    if (snoopFilter && snoopFilter->isForL3X) {
+        isL3XBar = true;
+        numL3XBarPorts = p.port_mem_side_ports_connection_count;
+    } else {
+        isL3XBar = false;
     }
 }
 
@@ -165,6 +174,12 @@ CoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     // determine the destination based on the destination address range
     PortID mem_side_port_id = findPort(pkt->getAddrRange());
 
+    if (isL3XBar && numL3XBarPorts > 0) {
+        // If this is L3XBar, decide the memory port id based on the set index
+        mem_side_port_id = getMemSidePortIdForL3XBar(pkt->getAddr());
+        assert(mem_side_port_id < reqLayers.size());
+    }
+
     // SHIN
     if(pkt->isPrefetchHintPkt())
         DPRINTF(IdioMlcPrefetcherSnoopFilter, "CoherentXBar::recvTimingReq pkt %s\n", pkt->print());
@@ -175,6 +190,23 @@ CoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         !reqLayers[mem_side_port_id]->tryTiming(src_port)) {
         DPRINTF(CoherentXBar, "%s: src %s packet %s BUSY\n", __func__,
                 src_port->name(), pkt->print());
+        //check L3XBar
+        // if (width == 32 && pkt->getSize() == 64 && cpu_side_port_id == 3 && pkt->cmd == MemCmd::InvalidateReq) {
+        //     if (snoopFilter) {
+        //         if (snoopFilter->isForL3X) {
+        //             // L3XBar
+        //             printf("XBar %s isDDIO: %d, recvTimingReq BUSY At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s\n", 
+        //             name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str());
+        //         }
+        //     }
+        // }
+
+        //check MemBar
+        // if (width == 16 && pkt->getSize() == 64 && cpu_side_port_id == 1 && pkt->cmd == MemCmd::InvalidateReq) {
+        //     // MemBar
+        //     printf("XBar %s isDDIO: %d, recvTimingReq BUSY At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s\n",
+        //     name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str());
+        // }
         return false;
     }
 
@@ -220,6 +252,9 @@ CoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
                 // update the layer state and schedule an idle event
                 reqLayers[mem_side_port_id]->failedTiming(src_port,
                                                         clockEdge(Cycles(1)));
+
+                // JM
+                reqLayers[mem_side_port_id]->failOccupancy += clockEdge(Cycles(1)) - curTick();
                 return false;
             }
         }
@@ -332,6 +367,9 @@ CoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         // update the layer state and schedule an idle event
         reqLayers[mem_side_port_id]->failedTiming(src_port,
                                                 clockEdge(Cycles(1)));
+        
+        // JM
+        reqLayers[mem_side_port_id]->failOccupancy += clockEdge(Cycles(1)) - curTick();
     } else {
         // express snoops currently bypass the crossbar state entirely
         if (!is_express_snoop) {
@@ -359,8 +397,33 @@ CoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
                          name(), maxRoutingTableSizeCheck);
             }
 
+            //check is this L3XBar
+            // if (width == 32 && pkt->getSize() == 64 && cpu_side_port_id == 3 && pkt->cmd == MemCmd::InvalidateReq) {
+            //     if (snoopFilter) {
+            //         if (snoopFilter->isForL3X) {
+            //             // L3XBar
+            //             printf("XBar %s isDDIO: %d, recvTimingReq At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s, headerDelay: %ld, packetFinishTime: %ld\n", 
+            //             name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str(), pkt->headerDelay, packetFinishTime);
+            //         }
+            //     }
+            // }
+
+            // check MemBar
+            // if (width == 16 && pkt->getSize() == 64 && cpu_side_port_id == 1 && pkt->cmd == MemCmd::InvalidateReq) {
+            //     // MemBar
+            //     printf("XBar %s isDDIO: %d, recvTimingReq At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s, headerDelay: %ld, packetFinishTime: %ld\n",
+            //     name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str(), pkt->headerDelay, packetFinishTime);
+            // }
+
             // update the layer state and schedule an idle event
             reqLayers[mem_side_port_id]->succeededTiming(packetFinishTime);
+
+            // JM
+            if (pkt_size > 0) {
+                reqLayers[mem_side_port_id]->dataOccupancy += packetFinishTime - curTick();
+            } else {
+                reqLayers[mem_side_port_id]->headerOccupancy += packetFinishTime - curTick();
+            }
         }
 
         // stats updates only consider packets that were successfully sent
@@ -454,6 +517,44 @@ CoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     return success;
 }
 
+uint32_t 
+CoherentXBar::getSetIndexForL3XBar(Addr addr)
+{
+    assert(isL3XBar);
+
+    //access memory_port_id: 0's memory port to finally access the response port and get the cache set index
+    PortID memory_port_id = 0; //It is fine to use 0 as the memory port id because the all memory_port_id's are connected to the same L3 Cache
+    ResponsePort * respPort = memSidePorts[memory_port_id]->getResponsePort();
+    uint32_t setIndex = 0;
+
+    gem5::BaseCache::CpuSidePort* cachePort = dynamic_cast<gem5::BaseCache::CpuSidePort*>(respPort);
+    if (cachePort) {
+        // Access the cache using cachePort
+        setIndex = cachePort->getSetIdxFromAddr(addr);
+    } else {
+        // Handle the case when cachePort is not a CpuSidePort
+        printf("XBar %s addr: %lx, cachePort is not a CpuSidePort!!!!!!!!!!\n", name().c_str(), addr);
+        assert(0);
+    }
+
+    return setIndex;
+}
+
+PortID
+CoherentXBar::getMemSidePortIdForL3XBar(Addr addr)
+{
+    assert(isL3XBar);
+
+    // Decide the memory port id based on the set index
+    // PortID should be in the range of 0 to numL3XBarPorts - 1
+    // get the set index
+    uint32_t set_index = getSetIndexForL3XBar(addr);
+    PortID memory_port_id = set_index % numL3XBarPorts;
+    // printf("XBar %s addr: %lx, setIndex: %d, memory_port_id: %d\n", name().c_str(), addr, set_index, memory_port_id);
+
+    return memory_port_id;
+}
+
 bool
 CoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
 {
@@ -472,6 +573,17 @@ CoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
     if (!respLayers[cpu_side_port_id]->tryTiming(src_port)) {
         DPRINTF(CoherentXBar, "%s: src %s packet %s BUSY\n", __func__,
                 src_port->name(), pkt->print());
+    
+        // check L3XBar
+        // if (width == 32 && pkt->getSize() == 64 && cpu_side_port_id == 3 && pkt->cmd == MemCmd::InvalidateResp) {
+        //     if (snoopFilter) {
+        //         if (snoopFilter->isForL3X) {
+        //             // L3XBar
+        //             printf("XBar %s isDDIO: %d, recvTimingResp BUSY At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s\n", 
+        //             name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str());
+        //         }
+        //     }
+        // }
         return false;
     }
 
@@ -507,7 +619,25 @@ CoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
     // remove the request from the routing table
     routeTo.erase(route_lookup);
 
+    // check L3XBar
+    // if (width == 32 && pkt->getSize() == 64 && cpu_side_port_id == 3 && pkt->cmd == MemCmd::InvalidateResp) {
+    //     if (snoopFilter) {
+    //         if (snoopFilter->isForL3X) {
+    //             // L3XBar
+    //             printf("XBar %s isDDIO: %d, recvTimingResp At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s, headerDelay: %ld, packetFinishTime: %ld\n", 
+    //             name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str(), latency, packetFinishTime);
+    //         }
+    //     }
+    // }
+
     respLayers[cpu_side_port_id]->succeededTiming(packetFinishTime);
+
+    // JM
+    if (pkt_size > 0) {
+        respLayers[cpu_side_port_id]->dataOccupancy += packetFinishTime - curTick();
+    } else {
+        respLayers[cpu_side_port_id]->headerOccupancy += packetFinishTime - curTick();
+    }
 
     // stats updates
     pktCount[cpu_side_port_id][mem_side_port_id]++;
@@ -574,7 +704,16 @@ CoherentXBar::recvTimingSnoopReq(PacketPtr pkt, PortID mem_side_port_id)
     // device responsible for the address range something is
     // wrong, hence there is nothing further to do as the packet
     // would be going back to where it came from
-    assert(findPort(pkt->getAddrRange()) == mem_side_port_id);
+
+    // JM - This cannot be true for L3XBar
+    if (isL3XBar && numL3XBarPorts > 0) {
+        if (!isWithinAddrRanges(pkt->getAddrRange())) {
+            // printf("XBar %s isL3XBar: %d, isWithinAddrRanges: false, addr: %lx\n", name().c_str(), isL3XBar, pkt->getAddr());
+            assert(0);
+        }
+    } else {
+        assert(findPort(pkt->getAddrRange()) == mem_side_port_id);
+    }
 }
 
 bool
@@ -693,6 +832,13 @@ CoherentXBar::recvTimingSnoopResp(PacketPtr pkt, PortID cpu_side_port_id)
                                     curTick() + latency);
 
         respLayers[dest_port_id]->succeededTiming(packetFinishTime);
+
+        // JM
+        if (pkt_size > 0) {
+            respLayers[dest_port_id]->dataOccupancy += packetFinishTime - curTick();
+        } else {
+            respLayers[dest_port_id]->headerOccupancy += packetFinishTime - curTick();
+        }
     }
 
     // remove the request from the routing table
@@ -840,6 +986,13 @@ CoherentXBar::recvAtomicBackdoor(PacketPtr pkt, PortID cpu_side_port_id,
     // even if we had a snoop response, we must continue and also
     // perform the actual request at the destination
     PortID mem_side_port_id = findPort(pkt->getAddrRange());
+
+    if (isL3XBar && numL3XBarPorts > 0) {
+        // If this is L3XBar, decide the memory port id based on the set index
+        // printf("XBar %s isL3XBar: %d, numL3XBarPorts: %d, addr: %lx, before mem_side_port_id: %d\n", name().c_str(), isL3XBar, numL3XBarPorts, pkt->getAddr(), mem_side_port_id);
+        mem_side_port_id = getMemSidePortIdForL3XBar(pkt->getAddr());
+        assert(mem_side_port_id < memSidePorts.size());
+    }
 
     if (sink_packet) {
         DPRINTF(CoherentXBar, "%s: Not forwarding %s\n", __func__,
@@ -1068,6 +1221,13 @@ CoherentXBar::recvFunctional(PacketPtr pkt, PortID cpu_side_port_id)
         }
 
         PortID dest_id = findPort(pkt->getAddrRange());
+
+        if (isL3XBar && numL3XBarPorts > 0) {
+            // If this is L3XBar, decide the memory port id based on the set index
+            // printf("XBar %s isL3XBar: %d, numL3XBarPorts: %d, addr: %lx, before mem_side_port_id: %d\n", name().c_str(), isL3XBar, numL3XBarPorts, pkt->getAddr(), dest_id);
+            dest_id = getMemSidePortIdForL3XBar(pkt->getAddr());
+            assert(dest_id < memSidePorts.size());
+        }
 
         memSidePorts[dest_id]->sendFunctional(pkt);
     }

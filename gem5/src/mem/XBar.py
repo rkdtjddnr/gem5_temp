@@ -94,6 +94,9 @@ class BaseXBar(ClockedObject):
     # xbar configuration.
     use_default_range = Param.Bool(False, "Perform address mapping for " \
                                        "the default port")
+    
+    #JM
+    is_ioxbar = Param.Bool(False, "Is this an IO crossbar")
 
 class NoncoherentXBar(BaseXBar):
     type = 'NoncoherentXBar'
@@ -204,7 +207,7 @@ class SystemXBar(CoherentXBar):
 # caches. Normally this crossbar would be part of the cache itself.
 class L3XBar(CoherentXBar):
     # 256-bit crossbar by default
-    width = 32
+    width = 64
 
     # Assume that most of this is covered by the cache latencies, with
     # no more than a single pipeline stage for any packet.
@@ -237,3 +240,4 @@ class IOXBar(NoncoherentXBar):
     frontend_latency = 2
     forward_latency = 1
     response_latency = 2
+    # is_ioxbar = True -> set at the .sh file

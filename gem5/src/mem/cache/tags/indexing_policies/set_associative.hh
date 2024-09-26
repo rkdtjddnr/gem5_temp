@@ -127,6 +127,17 @@ class SetAssociative : public BaseIndexingPolicy
      */
     Addr regenerateAddr(const Addr tag, const ReplaceableEntry* entry) const
                                                                    override;
+
+    /**
+     * Return the set index for the crossbar.
+     * 
+     * @param addr 
+     * @return uint32_t 
+     */
+    uint32_t extractSetForXBar(const Addr addr) const override
+    {
+        return extractSet(addr);
+    }
 };
 
 } // namespace gem5

@@ -370,6 +370,9 @@ class Packet : public Printable
 
     const PacketId id;
 
+    // JM - for multi-port cache
+    PortID cpu_side_port_id;
+
     /// A pointer to the original request.
     RequestPtr req;
 
@@ -857,7 +860,7 @@ class Packet : public Printable
      * not be valid. The command must be supplied.
      */
     Packet(const RequestPtr &_req, MemCmd _cmd)
-        :  cmd(_cmd), id((PacketId)_req.get()), req(_req),
+        :  cmd(_cmd), id((PacketId)_req.get()), cpu_side_port_id(InvalidPortID), req(_req),
            data(nullptr), addr(0), _isSecure(false), size(0),
            _qosValue(0),
            htmReturnReason(HtmCacheFailure::NO_FAIL),
@@ -897,8 +900,8 @@ class Packet : public Printable
      * a request that is for a whole block, not the address from the
      * req.  this allows for overriding the size/addr of the req.
      */
-    Packet(const RequestPtr &_req, MemCmd _cmd, int _blkSize, PacketId _id = 0)
-        :  cmd(_cmd), id(_id ? _id : (PacketId)_req.get()), req(_req),
+    Packet(const RequestPtr &_req, MemCmd _cmd, int _blkSize, PacketId _id = 0, PortID _cpu_side_port_id = InvalidPortID)
+        :  cmd(_cmd), id(_id ? _id : (PacketId)_req.get()), cpu_side_port_id(_cpu_side_port_id), req(_req),
            data(nullptr), addr(0), _isSecure(false),
            _qosValue(0),
            htmReturnReason(HtmCacheFailure::NO_FAIL),
@@ -924,7 +927,7 @@ class Packet : public Printable
      * packet should allocate its own data.
      */
     Packet(const PacketPtr pkt, bool clear_flags, bool alloc_data)
-        :  cmd(pkt->cmd), id(pkt->id), req(pkt->req),
+        :  cmd(pkt->cmd), id(pkt->id), cpu_side_port_id(pkt->cpu_side_port_id), req(pkt->req),
            data(nullptr),
            addr(pkt->addr), _isSecure(pkt->_isSecure), size(pkt->size),
            bytesValid(pkt->bytesValid),

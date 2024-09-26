@@ -88,6 +88,8 @@ NoncoherentXBar::NoncoherentXBar(const NoncoherentXBarParams &p)
         respLayers.push_back(new RespLayer(*bp, *this,
                                            csprintf("respLayer%d", i)));
     }
+
+    printf("XBar %s isIOXBar: %d, width: %d\n", name().c_str(), isIOXBar, width);
 }
 
 NoncoherentXBar::~NoncoherentXBar()
@@ -115,6 +117,11 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     if (!reqLayers[mem_side_port_id]->tryTiming(src_port)) {
         DPRINTF(NoncoherentXBar, "recvTimingReq: src %s %s 0x%x BUSY\n",
                 src_port->name(), pkt->cmdString(), pkt->getAddr());
+        // if (cpu_side_port_id == 2 && pkt->getSize() == 64 && pkt->cmd == MemCmd::WriteReq) {
+        //     // packet is coming from NIC
+        //     printf("XBar %s isDDIO: %d, recvTimingReq BUSY At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s\n", 
+        //     name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str());
+        // }
         return false;
     }
 
@@ -137,11 +144,23 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
 
     // determine how long to be crossbar layer is busy
     Tick packetFinishTime = clockEdge(Cycles(1)) + pkt->payloadDelay;
+    if (isIOXBar && pkt->payloadDelay != 0) {
+        packetFinishTime = clockEdge(Cycles(0)) + pkt->payloadDelay; // just apply the payload delay in the layer
+    }
+    // if (width == 16 && pkt->payloadDelay != 0) {
+    //     packetFinishTime = clockEdge(Cycles(0)) + pkt->payloadDelay; // just apply the payload delay in the layer
+    // }
 
     // before forwarding the packet (and possibly altering it),
     // remember if we are expecting a response
     const bool expect_response = pkt->needsResponse() &&
         !pkt->cacheResponding();
+    
+    // if (cpu_side_port_id == 2 && pkt->getSize() == 64 && pkt->cmd == MemCmd::WriteReq) {
+    //     // packet is coming from NIC
+    //     printf("XBar %s isDDIO: %d, recvTimingReq At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s, headerDelay: %ld, packetFinishTime: %ld\n", 
+    //     name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str(), pkt->headerDelay, packetFinishTime);
+    // }
 
     // since it is a normal request, attempt to send the packet
     bool success = memSidePorts[mem_side_port_id]->sendTimingReq(pkt);
@@ -157,6 +176,9 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         reqLayers[mem_side_port_id]->failedTiming(src_port,
                                                 clockEdge(Cycles(1)));
 
+        // JM 
+        reqLayers[mem_side_port_id]->failOccupancy += clockEdge(Cycles(1)) - curTick();
+
         return false;
     }
 
@@ -167,6 +189,13 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     }
 
     reqLayers[mem_side_port_id]->succeededTiming(packetFinishTime);
+
+    // JM
+    if (pkt_size > 0) {
+        reqLayers[mem_side_port_id]->dataOccupancy += packetFinishTime - curTick();
+    } else {
+        reqLayers[mem_side_port_id]->headerOccupancy += packetFinishTime - curTick();
+    }
 
     // stats updates
     pktCount[cpu_side_port_id][mem_side_port_id]++;
@@ -194,6 +223,11 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
     if (!respLayers[cpu_side_port_id]->tryTiming(src_port)) {
         DPRINTF(NoncoherentXBar, "recvTimingResp: src %s %s 0x%x BUSY\n",
                 src_port->name(), pkt->cmdString(), pkt->getAddr());
+        // if (cpu_side_port_id == 2 && pkt->getSize() == 64 && pkt->cmd == MemCmd::WriteResp) {
+        //     // packet is going to NIC
+        //     printf("XBar %s isDDIO: %d, recvTimingResp BUSY At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s\n", 
+        //     name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str());
+        // }
         return false;
     }
 
@@ -213,11 +247,22 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
 
     // determine how long to be crossbar layer is busy
     Tick packetFinishTime = clockEdge(Cycles(1)) + pkt->payloadDelay;
+    if (isIOXBar && pkt->payloadDelay != 0) {
+        packetFinishTime = clockEdge(Cycles(0)) + pkt->payloadDelay; // just apply the payload delay in the layer
+    }
+    // if (width == 16 && pkt->payloadDelay != 0) {
+    //     packetFinishTime = clockEdge(Cycles(0)) + pkt->payloadDelay; // just apply the payload delay in the layer
+    // }
 
     // send the packet through the destination CPU-side port, and pay for
     // any outstanding latency
     Tick latency = pkt->headerDelay;
     pkt->headerDelay = 0;
+    // if (cpu_side_port_id == 2 && pkt->getSize() == 64 && pkt->cmd == MemCmd::WriteResp) {
+    //     // packet is going to NIC
+    //     printf("XBar %s isDDIO: %d, recvTimingResp At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s, headerDelay: %ld, packetFinishTime: %ld\n", 
+    //     name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str(), latency, packetFinishTime);
+    // }
     cpuSidePorts[cpu_side_port_id]->schedTimingResp(pkt,
                                         curTick() + latency);
 
@@ -225,6 +270,13 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
     routeTo.erase(route_lookup);
 
     respLayers[cpu_side_port_id]->succeededTiming(packetFinishTime);
+
+    // JM
+    if (pkt_size > 0) {
+        respLayers[cpu_side_port_id]->dataOccupancy += packetFinishTime - curTick();
+    } else {
+        respLayers[cpu_side_port_id]->headerOccupancy += packetFinishTime - curTick();
+    }
 
     // stats updates
     pktCount[cpu_side_port_id][mem_side_port_id]++;

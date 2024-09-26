@@ -317,6 +317,15 @@ class BaseTags : public ClockedObject
     virtual Addr extractTag(const Addr addr) const;
 
     /**
+     * Get the set from the address.
+     * 
+     * @param addr 
+     * @return uint32_t 
+     */
+    // JM
+    virtual uint32_t extractSetForXBar(Addr addr) const;
+
+    /**
      * Insert the new block into the cache and update stats.
      *
      * @param pkt Packet holding the address to update

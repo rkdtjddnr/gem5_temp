@@ -130,6 +130,8 @@ class ChunkGenerator
     // SHIN. For head of chunk
     bool isHead() {return is_first_of_chunk;}
 
+    Addr getStartAddr() const { return startAddr; }
+
     /**
      * Number of bytes we have already chunked up.
      *

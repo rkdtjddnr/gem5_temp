@@ -122,6 +122,7 @@ class BaseCache(ClockedObject):
     mem_side = RequestPort("Downstream port closer to memory")
     cpu_side_smt = ResponsePort("Upstream port closer to the CPU and/or device")
     mem_side_smt = RequestPort("Downstream port closer to memory")
+    cpu_side_ports = VectorResponsePort("Upstream ports closer to the CPU and/or device")
 
     addr_ranges = VectorParam.AddrRange([AllMemory],
          "Address range for the CPU-side port (to allow striping)")
@@ -168,6 +169,11 @@ class BaseCache(ClockedObject):
     ddio_way_part = Param.Int(-1, "way partitioning for ddio; "
                                   "-1 means all sets can be used")
 
+    # JM. For Multi-port L3 cache
+    is_multiport = Param.Bool(False, "Is this cache multiport?")
+    cpu_side_ports_connection_count = Param.Int(1, "Number of CPU-side ports")
+    
+
 class Cache(BaseCache):
     type = 'Cache'
     cxx_header = 'mem/cache/cache.hh'
@@ -179,6 +185,10 @@ class Cache(BaseCache):
     is_iocache = False
     send_header_only = False
     mlc_ddio = False
+    
+    # JM
+    is_multiport = False
+    cpu_side_ports_connection_count = 1
 
 class NoncoherentCache(BaseCache):
     type = 'NoncoherentCache'

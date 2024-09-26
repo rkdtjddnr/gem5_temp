@@ -139,6 +139,14 @@ class BaseIndexingPolicy : public SimObject
     virtual Addr extractTag(const Addr addr) const;
 
     /**
+     * Generate the set from the given address.
+     *
+     * @param addr The address to get the tag from.
+     * @return The set of the address.
+     */
+    virtual uint32_t extractSetForXBar(const Addr addr) const = 0;
+
+    /**
      * Find all possible entries for insertion and replacement of an address.
      * Should be called immediately before ReplacementPolicy's findVictim()
      * not to break cache resizing.

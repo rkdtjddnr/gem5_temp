@@ -80,6 +80,21 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
                "Bytes Transmitted by DMA"),
       ADD_STAT(rxDMABytes, statistics::units::Byte::get(),
                 "Bytes Received by DMA"),
+      ADD_STAT(metaDMABytes, statistics::units::Byte::get(),
+               "Bytes Transmitted by DMA for metadata (DescFetch + DescWB + TailWrite)"),
+      ADD_STAT(rxDescFetchBytes, statistics::units::Byte::get(),
+               "RX Bytes DMA for descriptor fetch"),
+      ADD_STAT(txDescFetchBytes, statistics::units::Byte::get(),
+                "TX Bytes DMA for descriptor fetch"),
+      ADD_STAT(rxDescWBBytes, statistics::units::Byte::get(),
+               "RX Bytes DMA for descriptor writeback"),
+      ADD_STAT(txDescWBBytes, statistics::units::Byte::get(),
+                "TX Bytes DMA for descriptor writeback"),
+      ADD_STAT(rxTailWriteBytes, statistics::units::Byte::get(),
+                "RX Bytes DMA for tail write"),
+      ADD_STAT(txTailWriteBytes, statistics::units::Byte::get(),
+                "TX Bytes DMA for tail write"),
+      
       ADD_STAT(txPackets, statistics::units::Count::get(),
                "Number of Packets Transmitted"),
       ADD_STAT(rxPackets, statistics::units::Count::get(),
@@ -100,6 +115,34 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
                     statistics::units::Byte, statistics::units::Second>::get(),
                "Receive Bandwidth by DMA (MB/s)",
                (rxDMABytes / 1000000) / simSeconds),
+      ADD_STAT(metaDMABandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+               "Bandwidth by DMA for metadata (MB/s)",
+               (metaDMABytes / 1000000) / simSeconds),
+      ADD_STAT(rxDescFetchBandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+               "RX Bandwidth by DMA for descriptor fetch (MB/s)",
+               (rxDescFetchBytes / 1000000) / simSeconds),
+      ADD_STAT(txDescFetchBandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+                "TX Bandwidth by DMA for descriptor fetch (MB/s)",
+                (txDescFetchBytes / 1000000) / simSeconds),
+      ADD_STAT(rxDescWBBandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+                "RX Bandwidth by DMA for descriptor writeback (MB/s)",
+                (rxDescWBBytes / 1000000) / simSeconds),
+      ADD_STAT(txDescWBBandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+                "TX Bandwidth by DMA for descriptor writeback (MB/s)",
+                (txDescWBBytes / 1000000) / simSeconds),
+      ADD_STAT(rxTailWriteBandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+                "RX Bandwidth by DMA for tail write (MB/s)",
+                (rxTailWriteBytes / 1000000) / simSeconds),
+      ADD_STAT(txTailWriteBandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+                "TX Bandwidth by DMA for tail write (MB/s)",
+                (txTailWriteBytes / 1000000) / simSeconds),
       ADD_STAT(txIpChecksums, statistics::units::Count::get(),
                "Number of tx IP Checksums done by device"),
       ADD_STAT(rxIpChecksums, statistics::units::Count::get(),
@@ -126,8 +169,8 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
                txBandwidth + rxBandwidth),
       ADD_STAT(totDMABandwidth, statistics::units::Rate<
                     statistics::units::Byte, statistics::units::Second>::get(),
-               "Total Bandwidth by DMA (MB/s)",
-               txDMABandwidth + rxDMABandwidth),
+               "Total Bandwidth (tx + rx + metadata) by DMA (MB/s)",
+               txDMABandwidth + rxDMABandwidth + metaDMABandwidth),
       ADD_STAT(totPackets, statistics::units::Count::get(), "Total Packets",
                txPackets + rxPackets),
       ADD_STAT(totBytes, statistics::units::Byte::get(), "Total Bytes",
@@ -240,6 +283,24 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
     rxDMABytes
         .prereq(rxDMABytes);
 
+    metaDMABytes
+        .prereq(metaDMABytes);
+    
+    rxDescFetchBytes
+        .prereq(rxDescFetchBytes);
+    
+    txDescFetchBytes
+        .prereq(txDescFetchBytes);
+    
+    rxDescWBBytes
+        .prereq(rxDescWBBytes);
+    
+    txDescWBBytes
+        .prereq(txDescWBBytes);
+    
+    rxTailWriteBytes
+        .prereq(rxTailWriteBytes);
+
     txPackets
         .prereq(txBytes);
 
@@ -298,7 +359,35 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
     rxDMABandwidth
         .precision(0)
         .prereq(rxDMABytes);
+    
+    metaDMABandwidth
+        .precision(0)
+        .prereq(metaDMABytes);
+    
+    rxDescFetchBandwidth
+        .precision(0)
+        .prereq(rxDescFetchBytes);
+    
+    txDescFetchBandwidth
+        .precision(0)
+        .prereq(txDescFetchBytes);
+    
+    rxDescWBBandwidth
+        .precision(0)
+        .prereq(rxDescWBBytes);
 
+    txDescWBBandwidth
+        .precision(0)
+        .prereq(txDescWBBytes);
+    
+    rxTailWriteBandwidth
+        .precision(0)
+        .prereq(rxTailWriteBytes);
+    
+    txTailWriteBandwidth
+        .precision(0)
+        .prereq(txTailWriteBytes);
+    
     totBandwidth
         .precision(0)
         .prereq(totBytes);

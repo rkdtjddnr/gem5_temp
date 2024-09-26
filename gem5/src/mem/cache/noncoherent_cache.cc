@@ -132,7 +132,7 @@ NoncoherentCache::handleTimingReqMiss(PacketPtr pkt, CacheBlk *blk,
 }
 
 void
-NoncoherentCache::recvTimingReq(PacketPtr pkt)
+NoncoherentCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
 {
     panic_if(pkt->cacheResponding(), "Should not see packets where cache "
              "is responding");
@@ -140,7 +140,7 @@ NoncoherentCache::recvTimingReq(PacketPtr pkt)
     panic_if(!(pkt->isRead() || pkt->isWrite()),
              "Should only see read and writes at non-coherent cache\n");
 
-    BaseCache::recvTimingReq(pkt);
+    BaseCache::recvTimingReq(pkt, cpu_side_port_id);
 }
 
 PacketPtr

@@ -75,7 +75,7 @@ class NoncoherentCache : public BaseCache
                              Tick forward_time,
                              Tick request_time) override;
 
-    void recvTimingReq(PacketPtr pkt) override;
+    void recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id = InvalidPortID) override;
 
     void doWritebacks(PacketList& writebacks,
                       Tick forward_time) override;

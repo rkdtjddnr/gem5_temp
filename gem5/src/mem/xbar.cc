@@ -65,6 +65,7 @@ BaseXBar::BaseXBar(const BaseXBarParams &p)
                           p.port_mem_side_ports_connection_count, false),
       gotAllAddrRanges(false), defaultPortID(InvalidPortID),
       useDefaultRange(p.use_default_range),
+      isIOXBar(p.is_ioxbar),
 
       ADD_STAT(transDist, statistics::units::Count::get(),
                "Transaction distribution"),
@@ -146,7 +147,10 @@ BaseXBar::Layer<SrcType, DstType>::Layer(DstType& _port, BaseXBar& _xbar,
     port(_port), xbar(_xbar), _name(xbar.name() + "." + _name), state(IDLE),
     waitingForPeer(NULL), releaseEvent([this]{ releaseLayer(); }, name()),
     ADD_STAT(occupancy, statistics::units::Tick::get(), "Layer occupancy (ticks)"),
-    ADD_STAT(utilization, statistics::units::Ratio::get(), "Layer utilization")
+    ADD_STAT(utilization, statistics::units::Ratio::get(), "Layer utilization"),
+    ADD_STAT(dataOccupancy, statistics::units::Tick::get(), "Layer data occupancy (ticks)"),
+    ADD_STAT(headerOccupancy, statistics::units::Tick::get(), "Layer header-only occupancy (ticks) (without data packet)"),
+    ADD_STAT(failOccupancy, statistics::units::Tick::get(), "Layer failed occupancy (ticks)")
 {
     occupancy
         .flags(statistics::nozero);
@@ -156,6 +160,15 @@ BaseXBar::Layer<SrcType, DstType>::Layer(DstType& _port, BaseXBar& _xbar,
         .flags(statistics::nozero);
 
     utilization = occupancy / simTicks;
+
+    dataOccupancy
+        .flags(statistics::nozero);
+    
+    headerOccupancy
+        .flags(statistics::nozero);
+    
+    failOccupancy
+        .flags(statistics::nozero);
 }
 
 template <typename SrcType, typename DstType>
@@ -299,6 +312,9 @@ BaseXBar::Layer<SrcType, DstType>::retryWaiting()
 
         // occupy the crossbar layer until the next clock edge
         occupyLayer(xbar.clockEdge());
+
+        // JM - count retry as failed occupancy
+        failOccupancy += xbar.clockEdge() - curTick();
     }
 }
 
@@ -357,6 +373,19 @@ BaseXBar::findPort(AddrRange addr_range)
     // match, or the default port is not set
     fatal("Unable to find destination for %s on %s\n", addr_range.to_string(),
           name());
+}
+
+bool 
+BaseXBar::isWithinAddrRanges(AddrRange addrRange) const
+{
+    assert(gotAllAddrRanges);
+
+    // Check the address map interval tree
+    if (portMap.contains(addrRange) != portMap.end()) {
+        return true;
+    } else {
+        return false;
+    }
 }
 
 /** Function called by the port when the crossbar is receiving a range change.*/

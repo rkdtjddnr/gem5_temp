@@ -505,7 +505,7 @@ MSHR::handleSnoop(PacketPtr pkt, Counter _order)
         // snoop.
         PacketPtr cp_pkt = will_respond ? new Packet(pkt, true, true) :
             new Packet(std::make_shared<Request>(*pkt->req), pkt->cmd,
-                       blkSize, pkt->id);
+                       blkSize, pkt->id, pkt->cpu_side_port_id);
 
         if (will_respond) {
             // we are the ordering point, and will consequently

@@ -137,6 +137,8 @@ Bridge::BridgeRequestPort::recvTimingResp(PacketPtr pkt)
     Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
     pkt->headerDelay = pkt->payloadDelay = 0;
 
+    // printf("Bridge::BridgeRequestPort::recvTimingResp isDDIO: %d, At clk: %d, addr: %lx, size: %d, receive_delay: %d\n", pkt->isDdioPkt(), curTick(), pkt->getAddr(), pkt->getSize(), receive_delay);
+
     cpuSidePort.schedTimingResp(pkt, bridge.clockEdge(delay) +
                               receive_delay);
 
@@ -164,6 +166,7 @@ Bridge::BridgeResponsePort::recvTimingReq(PacketPtr pkt)
     // if the request queue is full then there is no hope
     if (memSidePort.reqQueueFull()) {
         DPRINTF(Bridge, "Request queue full\n");
+        // printf("Bridge::BridgeResponsePort::recvTimingReq: Request queue full\n");
         retryReq = true;
     } else {
         // look at the response queue if we expect to see a response
@@ -171,6 +174,7 @@ Bridge::BridgeResponsePort::recvTimingReq(PacketPtr pkt)
         if (expects_response) {
             if (respQueueFull()) {
                 DPRINTF(Bridge, "Response queue full\n");
+                // printf("Bridge::BridgeResponsePort::recvTimingReq: Response queue full\n");
                 retryReq = true;
             } else {
                 // ok to send the request with space for the response
@@ -190,6 +194,8 @@ Bridge::BridgeResponsePort::recvTimingReq(PacketPtr pkt)
             // synchronous)
             Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
             pkt->headerDelay = pkt->payloadDelay = 0;
+
+            // printf("Bridge::BridgeResponsePort::recvTimingReq At clk: %ld, addr: %lx, size: %d, receive_delay: %ld\n", curTick(), pkt->getAddr(), pkt->getSize(), receive_delay);
 
             memSidePort.schedTimingReq(pkt, bridge.clockEdge(delay) +
                                       receive_delay);
@@ -263,6 +269,8 @@ Bridge::BridgeRequestPort::trySendTiming()
         transmitList.pop_front();
         DPRINTF(Bridge, "trySend request successful\n");
 
+        // printf("Bridge::BridgeRequestPort::trySendTiming success: At clk: %ld, addr: %lx, size: %d\n", curTick(), pkt->getAddr(), pkt->getSize());
+
         // If there are more packets to send, schedule event to try again.
         if (!transmitList.empty()) {
             DeferredPacket next_req = transmitList.front();
@@ -303,6 +311,8 @@ Bridge::BridgeResponsePort::trySendTiming()
 
         assert(outstandingResponses != 0);
         --outstandingResponses;
+
+        // printf("Bridge::BridgeResponsePort::trySendTiming success isDDIO:%d, At clk: %d, addr: %lx, size: %d\n", pkt->isDdioPkt(), curTick(), pkt->getAddr(), pkt->getSize());
 
         // If there are more packets to send, schedule event to try again.
         if (!transmitList.empty()) {

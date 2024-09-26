@@ -6,8 +6,8 @@ import matplotlib.ticker as ticker
 # num_queues = 1
 # script = "dpdk-testpmd"
 num_queues = 2
-script = "dpdk-set"
-base_folder = "/home/jmhhh/Documents/CXL_network/gem5_dpdk_multiqueue/gem5-dpdk-setup/rundir/dpdk-set-1core"  # have to set
+script = "dpdk-set" # have to set
+base_folder = "/home/jmhhh/Documents/CXL_network/gem5_dpdk_multiqueue/gem5-dpdk-setup/rundir/dpdk-set-2core-l3-4port-4ns"  # have to set
 
 def parse_stats(file_path):
     with open(file_path, 'r') as file:

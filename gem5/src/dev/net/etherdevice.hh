@@ -87,6 +87,13 @@ class EtherDevice : public PciDevice
 
         statistics::Scalar txDMABytes;
         statistics::Scalar rxDMABytes;
+        statistics::Scalar metaDMABytes;
+        statistics::Scalar rxDescFetchBytes;
+        statistics::Scalar txDescFetchBytes;
+        statistics::Scalar rxDescWBBytes;
+        statistics::Scalar txDescWBBytes;
+        statistics::Scalar rxTailWriteBytes;
+        statistics::Scalar txTailWriteBytes;
 
         statistics::Scalar txPackets;
         statistics::Scalar rxPackets;
@@ -96,6 +103,13 @@ class EtherDevice : public PciDevice
 
         statistics::Formula txDMABandwidth;
         statistics::Formula rxDMABandwidth;
+        statistics::Formula metaDMABandwidth;
+        statistics::Formula rxDescFetchBandwidth;
+        statistics::Formula txDescFetchBandwidth;
+        statistics::Formula rxDescWBBandwidth;
+        statistics::Formula txDescWBBandwidth;
+        statistics::Formula rxTailWriteBandwidth;
+        statistics::Formula txTailWriteBandwidth;
 
         statistics::Scalar txIpChecksums;
         statistics::Scalar rxIpChecksums;

@@ -118,7 +118,7 @@ BaseCache::BaseCache(const BaseCacheParams &p, unsigned blk_size)
       stats(*this),
       ddioEnabled(p.ddio_enabled), ddioDisabled(p.ddio_disabled),
       ddioWayPart(p.ddio_way_part),
-      isLLC(p.is_llc), mlc_ddio(p.mlc_ddio)
+      isLLC(p.is_llc), mlc_ddio(p.mlc_ddio), isMultiPort(p.is_multiport)
 {
     // the MSHR queue has no reserve entries as we check the MSHR
     // queue on every single allocation, whereas the write queue has
@@ -142,6 +142,43 @@ BaseCache::BaseCache(const BaseCacheParams &p, unsigned blk_size)
         "Compressed cache %s does not have a compression algorithm", name());
     if (compressor)
         compressor->setCache(this);
+    
+    if (isLLC && isMultiPort) {
+        for (int i = 0; i < p.cpu_side_ports_connection_count; ++i) {
+            std::string portName = csprintf("%s.cpu_side_port[%d]", name(), i);
+            cpuSidePortList.emplace_back(new CpuSidePort(
+                portName, this, "CpuSidePort", i));
+
+        }
+        // JM. split the address ranges for each port - split evenly
+        int num_ports = cpuSidePortList.size();
+        int num_ranges = addrRanges.size();
+        if (num_ranges == 1) {
+            // split the existing addrRange into num_ports
+            AddrRange range = *addrRanges.begin();
+            Addr start = range.start();
+            Addr end = range.end();
+            Addr size = range.size();
+            Addr port_size = size / num_ports;
+            Addr accum_size = 0;
+            for (int i = 0; i < num_ports - 1; i++) {
+                AddrRange new_range(start + accum_size, start + accum_size + port_size);
+                AddrRangeList new_ranges;
+                new_ranges.push_back(new_range);
+                accum_size += port_size;
+                printf("L3 cpu_side_port %d: %s\n", i, new_range.to_string().c_str());
+                addrRangesList.push_back(new_ranges);
+            }
+            AddrRange new_range(start + accum_size, end);
+            AddrRangeList new_ranges;
+            new_ranges.push_back(new_range);
+            printf("L3 cpu_side_port %d: %s\n", num_ports - 1, new_range.to_string().c_str());
+            addrRangesList.push_back(new_ranges);
+            assert(addrRangesList.size() == num_ports);
+        } else {
+            panic("L3 cache %s does not support multiple address ranges\n", name());
+        }
+    }
 }
 
 BaseCache::~BaseCache()
@@ -199,10 +236,28 @@ BaseCache::regenerateBlkAddr(CacheBlk* blk)
 void
 BaseCache::init()
 {
-    if (!cpuSidePort.isConnected() || !memSidePort.isConnected())
-        fatal("Cache ports on %s are not connected\n", name());
-    cpuSidePort.sendRangeChange();
-    forwardSnoops = cpuSidePort.isSnooping();
+    if (isLLC && isMultiPort) {
+        bool fullyConnected = true;
+        for (const auto& cpu_port : cpuSidePortList) {
+            if (!cpu_port->isConnected()) {
+                fullyConnected = false;
+                break;
+            }
+        }
+        fullyConnected = fullyConnected && memSidePort.isConnected();
+        if (!fullyConnected) {
+            fatal("Not all CPU-side ports are connected to cache %s\n", name());
+        }
+        for (const auto& cpu_port : cpuSidePortList) {
+            cpu_port->sendRangeChange();
+            forwardSnoops = forwardSnoops || cpu_port->isSnooping();
+        }
+    } else {
+        if (!cpuSidePort.isConnected() || !memSidePort.isConnected())
+            fatal("Cache ports on %s are not connected\n", name());
+        cpuSidePort.sendRangeChange();
+        forwardSnoops = cpuSidePort.isSnooping();
+    }
 }
 
 Port &
@@ -211,8 +266,28 @@ BaseCache::getPort(const std::string &if_name, PortID idx)
     if (if_name == "mem_side") {
         return memSidePort;
     } else if (if_name == "cpu_side") {
-        return cpuSidePort;
-    }  else {
+        if (isLLC && isMultiPort) {
+            if (idx < cpuSidePortList.size()) {
+                return *cpuSidePortList[idx];
+            } else {
+                panic("L3 cache %s does not have a CPU-side port with index %d\n",
+                      name(), idx);
+            }
+        } else {
+            return cpuSidePort;
+        }
+    }  else if (if_name == "cpu_side_ports") { 
+        if (isLLC && isMultiPort) {
+            if (idx < cpuSidePortList.size()) {
+                return *cpuSidePortList[idx];
+            } else {
+                panic("L3 cache %s does not have a CPU-side port with index %d\n",
+                      name(), idx);
+            }
+        } else {
+            return cpuSidePort;
+        }
+    } else {
         return ClockedObject::getPort(if_name, idx);
     }
 }
@@ -229,7 +304,7 @@ BaseCache::inRange(Addr addr) const
 }
 
 void
-BaseCache::handleTimingReqHit(PacketPtr pkt, CacheBlk *blk, Tick request_time)
+BaseCache::handleTimingReqHit(PacketPtr pkt, CacheBlk *blk, Tick request_time, PortID cpu_side_port_id)
 {
     if (pkt->needsResponse()) {
         // These delays should have been consumed by now
@@ -243,7 +318,13 @@ BaseCache::handleTimingReqHit(PacketPtr pkt, CacheBlk *blk, Tick request_time)
         // lat, neglecting responseLatency, modelling hit latency
         // just as the value of lat overriden by access(), which calls
         // the calculateAccessLatency() function.
-        cpuSidePort.schedTimingResp(pkt, request_time);
+        if (isLLC && isMultiPort) {
+            assert(cpu_side_port_id != InvalidPortID);
+            assert(cpu_side_port_id < cpuSidePortList.size());
+            cpuSidePortList[cpu_side_port_id]->schedTimingResp(pkt, request_time);
+        } else {
+            cpuSidePort.schedTimingResp(pkt, request_time);
+        }
     } else {
         DPRINTF(Cache, "%s satisfied %s, no response needed\n", __func__,
                 pkt->print());
@@ -355,7 +436,7 @@ BaseCache::handleTimingReqMiss(PacketPtr pkt, MSHR *mshr, CacheBlk *blk,
 }
 
 void
-BaseCache::recvTimingReq(PacketPtr pkt)
+BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
 {
     // anything that is merely forwarded pays for the forward latency and
     // the delay provided by the crossbar
@@ -403,7 +484,7 @@ BaseCache::recvTimingReq(PacketPtr pkt)
             blk->clearPrefetched();
         }
 
-        handleTimingReqHit(pkt, blk, request_time);
+        handleTimingReqHit(pkt, blk, request_time, cpu_side_port_id);
 
         // SHIN.
         if(isIOCache){
@@ -440,7 +521,14 @@ BaseCache::handleUncacheableWriteResp(PacketPtr pkt)
     // Reset the bus additional time as it is now accounted for
     pkt->headerDelay = pkt->payloadDelay = 0;
 
-    cpuSidePort.schedTimingResp(pkt, completion_time);
+    if (isLLC && isMultiPort) {
+        assert(pkt->cpu_side_port_id != InvalidPortID);
+        assert(pkt->cpu_side_port_id < cpuSidePortList.size());
+        cpuSidePortList[pkt->cpu_side_port_id]->schedTimingResp(pkt,
+                                                                completion_time);
+    } else {
+        cpuSidePort.schedTimingResp(pkt, completion_time); 
+    }
 }
 
 void
@@ -640,7 +728,7 @@ BaseCache::recvAtomic(PacketPtr pkt)
         // until the point of reference.
         DPRINTF(CacheVerbose, "%s: packet %s found block: %s\n",
                 __func__, pkt->print(), blk->print());
-        PacketPtr wb_pkt = writecleanBlk(blk, pkt->req->getDest(), pkt->id);
+        PacketPtr wb_pkt = writecleanBlk(blk, pkt->req->getDest(), pkt->id, pkt->cpu_side_port_id);
         writebacks.push_back(wb_pkt);
         pkt->setSatisfied();
     }
@@ -727,10 +815,18 @@ BaseCache::functionalAccess(PacketPtr pkt, bool from_cpu_side)
                       (mshr && mshr->inService && mshr->isPendingModified()));
 
     bool done = have_dirty ||
-        cpuSidePort.trySatisfyFunctional(pkt) ||
+        // cpuSidePort.trySatisfyFunctional(pkt) ||
         mshrQueue.trySatisfyFunctional(pkt) ||
         writeBuffer.trySatisfyFunctional(pkt) ||
         memSidePort.trySatisfyFunctional(pkt);
+    
+    if (isLLC && isMultiPort) {
+        for (const auto& cpu_port : cpuSidePortList) {
+            done = done || cpu_port->trySatisfyFunctional(pkt);
+        }
+    } else {
+        done = done || cpuSidePort.trySatisfyFunctional(pkt);
+    }
 
     DPRINTF(CacheVerbose, "%s: %s %s%s%s\n", __func__,  pkt->print(),
             (blk && blk->isValid()) ? "valid " : "",
@@ -742,14 +838,24 @@ BaseCache::functionalAccess(PacketPtr pkt, bool from_cpu_side)
     if (done) {
         pkt->makeResponse();
     } else {
+        PortID cpu_port_id = isLLC && isMultiPort ? pkt->cpu_side_port_id : InvalidPortID;
+
         // if it came as a request from the CPU side then make sure it
         // continues towards the memory side
         if (from_cpu_side) {
             memSidePort.sendFunctional(pkt);
-        } else if (cpuSidePort.isSnooping()) {
-            // if it came from the memory side, it must be a snoop request
-            // and we should only forward it if we are forwarding snoops
-            cpuSidePort.sendFunctionalSnoop(pkt);
+        } else {
+            if (isLLC && isMultiPort) {
+                assert(cpu_port_id != InvalidPortID);
+                assert(cpu_port_id < cpuSidePortList.size());
+                if (cpuSidePortList[cpu_port_id]->isSnooping()) {
+                    cpuSidePortList[cpu_port_id]->sendFunctionalSnoop(pkt);
+                }
+            } else if (cpuSidePort.isSnooping()) {
+                // if it came from the memory side, it must be a snoop request
+                // and we should only forward it if we are forwarding snoops
+                cpuSidePort.sendFunctionalSnoop(pkt);
+            }
         }
     }
 }
@@ -1814,7 +1920,7 @@ BaseCache::writebackBlk(CacheBlk *blk)
 }
 
 PacketPtr
-BaseCache::writecleanBlk(CacheBlk *blk, Request::Flags dest, PacketId id)
+BaseCache::writecleanBlk(CacheBlk *blk, Request::Flags dest, PacketId id, PortID cpu_side_port_id)
 {
     RequestPtr req = std::make_shared<Request>(
         regenerateBlkAddr(blk), blkSize, 0, Request::wbRequestorId);
@@ -1824,7 +1930,7 @@ BaseCache::writecleanBlk(CacheBlk *blk, Request::Flags dest, PacketId id)
     }
     req->taskId(blk->getTaskId());
 
-    PacketPtr pkt = new Packet(req, MemCmd::WriteClean, blkSize, id);
+    PacketPtr pkt = new Packet(req, MemCmd::WriteClean, blkSize, id, cpu_side_port_id);
 
     if (dest) {
         req->setFlags(dest);
@@ -2038,7 +2144,7 @@ BaseCache::sendMSHRQueuePacket(MSHR* mshr)
             DPRINTF(CacheVerbose, "%s: packet %s found block: %s\n",
                     __func__, pkt->print(), blk->print());
             PacketPtr wb_pkt = writecleanBlk(blk, pkt->req->getDest(),
-                                             pkt->id);
+                                             pkt->id, pkt->cpu_side_port_id);
             PacketList writebacks;
             writebacks.push_back(wb_pkt);
             doWritebacks(writebacks, 0);
@@ -2617,7 +2723,17 @@ BaseCache::CpuSidePort::recvTimingReq(PacketPtr pkt)
         assert(success);
         return true;
     } else if (tryTiming(pkt)) {
-        cache->recvTimingReq(pkt);
+        if (cache->isLLC && cache->isMultiPort) {
+            assert(id != InvalidPortID);
+            if (pkt->cpu_side_port_id == InvalidPortID) {
+                pkt->cpu_side_port_id = id;
+            } else {
+                assert(pkt->cpu_side_port_id == id);
+            }
+            cache->recvTimingReq(pkt, id);
+        } else {
+            cache->recvTimingReq(pkt);
+        }
         return true;
     }
     return false;
@@ -2644,21 +2760,38 @@ BaseCache::CpuSidePort::recvFunctional(PacketPtr pkt)
         return;
     }
 
+    if (cache->isLLC && cache->isMultiPort) {
+        // JM - set cpu_port_id in pkt
+        assert(id != InvalidPortID);
+        if (pkt->cpu_side_port_id == InvalidPortID) {
+            pkt->cpu_side_port_id = id;
+        } else {
+            assert(pkt->cpu_side_port_id == id);
+        }
+    }
+
     // functional request
     cache->functionalAccess(pkt, true);
 }
 
 AddrRangeList
 BaseCache::CpuSidePort::getAddrRanges() const
-{
-    return cache->getAddrRanges();
+{   
+    // JM - multiport cache
+    if (cache->isLLC && cache->isMultiPort) {
+        assert(id != InvalidPortID);
+        return cache->getAddrRanges(id);
+    } else {
+        // JM - single port cache. InvalidPortID is meaningless
+        return cache->getAddrRanges(InvalidPortID);
+    }
 }
 
 
 BaseCache::
 CpuSidePort::CpuSidePort(const std::string &_name, BaseCache *_cache,
-                         const std::string &_label)
-    : CacheResponsePort(_name, _cache, _label), cache(_cache)
+                         const std::string &_label, PortID _id)
+    : CacheResponsePort(_name, _cache, _label), cache(_cache), id(_id)
 {
 }
 

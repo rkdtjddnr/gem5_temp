@@ -82,7 +82,6 @@ namespace prefetch
 class StridePrefetcherHashedSetAssociative : public SetAssociative
 {
   protected:
-    uint32_t extractSet(const Addr addr) const override;
     Addr extractTag(const Addr addr) const override;
 
   public:
@@ -92,6 +91,7 @@ class StridePrefetcherHashedSetAssociative : public SetAssociative
     {
     }
     ~StridePrefetcherHashedSetAssociative() = default;
+    uint32_t extractSet(const Addr addr) const override;
 };
 
 class Stride : public Queued

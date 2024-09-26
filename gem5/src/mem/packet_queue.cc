@@ -173,6 +173,10 @@ PacketQueue::schedSendEvent(Tick when)
             // if the new time is earlier than when the event
             // currently is scheduled, move it forward
             em.reschedule(&sendEvent, when);
+        } else {
+            // TODO - JM: maybe have to check this condition for multi-ported L3 cache
+            // if the new time is same as sendEvent's time. 
+            // Maybe we have to we have to wait for the sendEvent to complete and then schedule the new event.
         }
     } else {
         // we get a MaxTick when there is no more to send, so if we're

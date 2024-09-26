@@ -91,6 +91,8 @@ DmaPort::handleResp(DmaReqState *state, Addr addr, Addr size, Tick delay)
             state->numBytes, state->totBytes,
             state->completionEvent ?
             state->completionEvent->scheduled() : 0);
+    
+    // printf("DMA(DDIO) handleResp At clk: %ld, startAddr: %lx, addr: %lx, size: %d, type: %s\n", curTick(), state->gen.getStartAddr(), addr, size, MemCmd(state->cmd).toString().c_str());
 
     // Update the number of bytes received based on the request rather
     // than the packet as the latter could be rounded up to line sizes.
@@ -104,6 +106,7 @@ DmaPort::handleResp(DmaReqState *state, Addr addr, Addr size, Tick delay)
         pendingCount--;
         if (state->completionEvent) {
             delay += state->delay;
+            // printf("DMA(DDIO) handleResp Finish EtherPacket At clk: %ld, startAddr: %lx, delay: %ld\n", curTick(), state->gen.getStartAddr(), delay);
             device->schedule(state->completionEvent, curTick() + delay);
         }
         delete state;
@@ -217,6 +220,8 @@ DmaPort::ddioActionAdq(Packet::Command cmd, Addr addr, int size, Event *event,
 {
     DPRINTF(DMA, "Starting DMA(DDIO) for addr: %#x size: %d sched: %d\n", addr, size,
             event ? event->scheduled() : -1);
+    
+    // printf("DMA(DDIO) transmitList.push_back At clk: %ld, cmd: %d, addr: %lx, size: %d, delay: %ld\n", curTick(), cmd, addr, size, delay);
 
     // One DMA request sender state for every action, that is then
     // split into many requests and packets based on the block size,
@@ -279,6 +284,11 @@ DmaPort::trySendTimingReq()
     DmaReqState *state = transmitList.front();
 
     PacketPtr pkt = inRetry ? inRetry : state->createPacket();
+    if (inRetry) {
+        // printf("DMA(DDIO) trySendTimingReq Retry At clk: %ld, addr: %lx, size: %d, type: %s, isDDIO: %d\n", curTick(), pkt->getAddr(), pkt->req->getSize(), pkt->cmdString().c_str(), pkt->isDdioPkt());
+    } else {
+        // printf("DMA(DDIO) trySendTimingReq New At clk: %ld, startAddr: %lx, addr: %lx, size: %d, type: %s, isDDIO: %d\n", curTick(), state->gen.getStartAddr(), pkt->getAddr(), pkt->req->getSize(), pkt->cmdString().c_str(), pkt->isDdioPkt());
+    }
     inRetry = nullptr;
 
     DPRINTF(DMA, "Trying to send %s addr %#x\n", pkt->cmdString(),

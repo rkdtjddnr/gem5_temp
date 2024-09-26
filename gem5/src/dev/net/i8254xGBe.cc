@@ -160,7 +160,7 @@ IGbE::IGbE(const Params &p)
     std::uniform_int_distribution<> dis(0, numQueues-1);
     for (int i = 0; i < RETA_SIZE; i++) {
         regs.reta_array[i] = dis(gen);
-        printf("reta_array[%d]: %d\n", i, regs.reta_array[i]);
+        // printf("reta_array[%d]: %d\n", i, regs.reta_array[i]);
     }
     eeOpBits            = 0;
     eeAddrBits          = 0;
@@ -919,6 +919,7 @@ IGbE::write(PacketPtr pkt)
             regs.rdt_array[queueid] = val;
             DPRINTF(EthernetDpdk, "RXS: RDT Updated.\n");
             DPRINTF(EthernetDpdk, "Write RDT[%d]: %d\n", queueid, regs.rdt_array[queueid]());
+            etherDeviceStats.rxTailWriteBytes += pkt->getSize();
             if (drainState() == DrainState::Running) {
                 DPRINTF(EthernetDpdk, "RXS: RDT Fetching Descriptors! in queue %d\n",
                         queueid);
@@ -966,6 +967,7 @@ IGbE::write(PacketPtr pkt)
             regs.tdt_array[queueid] = val;
             DPRINTF(EthernetDpdk, "TXS: TX Tail pointer updated in queue %d\n", queueid);
             DPRINTF(EthernetDpdk, "Write TDT[%d]: %d\n", queueid, regs.tdt_array[queueid]());
+            etherDeviceStats.txTailWriteBytes += pkt->getSize();
             if (drainState() == DrainState::Running) {
                 DPRINTF(EthernetDpdk, "TXS: TDT Fetching Descriptors! in queue %d\n", queueid);  
                 txDescCacheArray[queueid]->fetchDescriptors();
@@ -1172,8 +1174,8 @@ IGbE::chkInterrupt()
 ///////////////////////////// IGbE::DescCache //////////////////////////////
 
 template<class T>
-IGbE::DescCache<T>::DescCache(IGbE *i, const std::string n, int s)
-    : igbe(i), _name(n), cachePnt(0), size(s), curFetching(0),
+IGbE::DescCache<T>::DescCache(IGbE *i, const std::string n, int s, bool _isRx)
+    : igbe(i), _name(n), cachePnt(0), size(s), curFetching(0), isRx(_isRx),
       wbOut(0), moreToWb(false), wbAlignment(0), pktPtr(NULL),
       wbDelayEvent([this]{ writeback1(); }, n),
       fetchDelayEvent([this]{ fetchDescriptors1(); }, n),
@@ -1275,6 +1277,9 @@ IGbE::DescCache<T>::writeback1()
     // igbe->dmaWrite(pciToDma(descBase() + descHead() * sizeof(T)),
     //                wbOut * sizeof(T), &wbEvent, (uint8_t*)wbBuf,
     //                igbe->wbCompDelay);
+    // printf("WritebackDesc At clk: %ld IdioWrite Addr: %lx, Size: %d, Delay: %ld\n",
+    //         curTick(), pciToDma(descBase() + descHead() * sizeof(T)),
+    //         wbOut * sizeof(T), igbe->wbCompDelay);
     igbe->IdioWrite(pciToDma(descBase() + descHead() * sizeof(T)),
                     wbOut * sizeof(T), &wbEvent, (uint8_t*)wbBuf,
                     igbe->wbCompDelay, 0, igbe->adq);
@@ -1298,10 +1303,16 @@ IGbE::DescCache<T>::fetchDescriptors()
 
     if (descTail() >= cachePnt)
         max_to_fetch = descTail() - cachePnt;
-    else
+    else {
+        assert(descLen() >= cachePnt);
         max_to_fetch = descLen() - cachePnt;
+    }
 
-    size_t free_cache = size - usedCache.size() - unusedCache.size();
+    // size_t free_cache = size - usedCache.size() - unusedCache.size(); // JM - TODO: Check this - it seems underflow
+    // Fix the underflow
+    size_t totalUsed = usedCache.size() + unusedCache.size();
+    size_t free_cache = (static_cast<size_t>(size) >= totalUsed) ? (static_cast<size_t>(size) - totalUsed) : 0;
+
 
     max_to_fetch = std::min(max_to_fetch, free_cache);
 
@@ -1339,6 +1350,9 @@ IGbE::DescCache<T>::fetchDescriptors1()
             descBase() + cachePnt * sizeof(T),
             pciToDma(descBase() + cachePnt * sizeof(T)),
             curFetching * sizeof(T));
+    // printf("FetchDesc At clk: %ld DmaRead Addr: %lx, Size: %d, Delay: %ld\n",
+    //         curTick(), pciToDma(descBase() + cachePnt * sizeof(T)),
+    //         curFetching * sizeof(T), igbe->fetchCompDelay);
     assert(curFetching);
     igbe->dmaRead(pciToDma(descBase() + cachePnt * sizeof(T)),
                   curFetching * sizeof(T), &fetchEvent, (uint8_t*)fetchBuf,
@@ -1354,6 +1368,13 @@ IGbE::DescCache<T>::fetchComplete()
         newDesc = new T;
         memcpy(newDesc, &fetchBuf[x], sizeof(T));
         unusedCache.push_back(newDesc);
+    }
+
+    igbe->etherDeviceStats.metaDMABytes += curFetching * sizeof(T);
+    if (isRx) {
+        igbe->etherDeviceStats.rxDescFetchBytes += curFetching * sizeof(T);
+    } else {
+        igbe->etherDeviceStats.txDescFetchBytes += curFetching * sizeof(T);
     }
 
 
@@ -1385,6 +1406,13 @@ IGbE::DescCache<T>::wbComplete()
         assert(usedCache.size());
         delete usedCache[0];
         usedCache.pop_front();
+    }
+
+    igbe->etherDeviceStats.metaDMABytes += wbOut * sizeof(T);
+    if (isRx) {
+        igbe->etherDeviceStats.rxDescWBBytes += wbOut * sizeof(T);
+    } else {
+        igbe->etherDeviceStats.txDescWBBytes += wbOut * sizeof(T);
     }
 
     curHead += wbOut;
@@ -1506,7 +1534,7 @@ IGbE::DescCache<T>::unserialize(CheckpointIn &cp)
 ///////////////////////////// IGbE::RxDescCache //////////////////////////////
 
 IGbE::RxDescCache::RxDescCache(IGbE *i, const std::string n, int s, int qid)
-    : DescCache<RxDesc>(i, n, s), pktDone(false), splitCount(0), queueID(qid),
+    : DescCache<RxDesc>(i, n, s, true), pktDone(false), splitCount(0), queueID(qid),
     pktEvent([this]{ pktComplete(); }, n),
     pktHdrEvent([this]{ pktSplitDone(); }, n),
     pktDataEvent([this]{ pktSplitDone(); }, n),
@@ -1580,6 +1608,9 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset)
         // igbe->dmaWrite(pciToDma(desc->adv_read.pkt),
         //                packet->length, &pktEvent, packet->data,
         //                igbe->rxWriteDelay);
+        // printf("RXD[%d] At clk: %ld IdioWrite pktPtr: %p, Addr: %lx, Size: %d, Delay: %ld\n",
+        //         queueID, curTick(), pktPtr, pciToDma(desc->adv_read.pkt),
+        //         packet->length, igbe->rxWriteDelay);
         igbe->IdioWrite(pciToDma(desc->adv_read.pkt),
                        packet->length, &pktEvent, packet->data,
                        igbe->rxWriteDelay, 0, igbe->adq);
@@ -1707,6 +1738,8 @@ IGbE::RxDescCache::pktComplete()
 
     DPRINTF(EthernetDesc, "RXD[%d] Packet written to memory updating Descriptor\n", queueID);
     DPRINTF(EthernetDpdk, "RXD[%d] Packet written to memory updating Descriptor\n", queueID);
+
+    // printf("RXD[%d] At clk: %ld pktComplete() pktPtr: %p\n", queueID, curTick(), pktPtr);
 
     uint16_t status = RXDS_DD;
     uint8_t err = 0;
@@ -1856,7 +1889,7 @@ IGbE::RxDescCache::pktComplete()
             uint64_t rxPort2FifoTime = pktPtr->rxFifoTick - pktPtr->rxPortTick;
             uint64_t rxFifo2DMAStartTime = pktPtr->rxDMAStartTick - pktPtr->rxFifoTick;
             uint64_t rxDMATime = pktPtr->rxDMAEndTick - pktPtr->rxDMAStartTick;
-            printf("RXD[%d] RX Total Time: %ld, EtherLink Time: %ld, Port2Fifo Time: %ld, Fifo2DMAStart Time: %ld, DMA Time: %ld\n", queueID, rxTotalTime, rxEtherLinkTime, rxPort2FifoTime, rxFifo2DMAStartTime, rxDMATime);
+            // printf("RXD[%d] RX Total Time: %ld, EtherLink Time: %ld, Port2Fifo Time: %ld, Fifo2DMAStart Time: %ld, DMA Time: %ld\n", queueID, rxTotalTime, rxEtherLinkTime, rxPort2FifoTime, rxFifo2DMAStartTime, rxDMATime);
             float rxTotalTimeInSec = (float)rxTotalTime / 10.0e8;
             float rxEtherLinkTimeInSec = (float)rxEtherLinkTime / 10.0e8;
             float rxPort2FifoTimeInSec = (float)rxPort2FifoTime / 10.0e8;
@@ -1948,7 +1981,7 @@ IGbE::RxDescCache::unserialize(CheckpointIn &cp)
 ///////////////////////////// IGbE::TxDescCache //////////////////////////////
 
 IGbE::TxDescCache::TxDescCache(IGbE *i, const std::string n, int s, int qid)
-    : DescCache<TxDesc>(i,n, s), pktDone(false), isTcp(false),
+    : DescCache<TxDesc>(i,n, s, false), pktDone(false), isTcp(false),
       pktWaiting(false), pktMultiDesc(false),
       completionAddress(0), completionEnabled(false),
       useTso(false), tsoHeaderLen(0), tsoMss(0), tsoTotalLen(0), tsoUsedLen(0),
@@ -2144,6 +2177,9 @@ IGbE::TxDescCache::getPacketData(EthPacketPtr p)
         DPRINTF(EthernetDesc,
                 "TXD[%d] Starting DMA of packet at offset %d length: %d\n", queueID,
                 p->length, tsoCopyBytes);
+        // printf("TXD[%d] At clk: %ld DmaRead pktPtr: %p, Addr: %lx, Size: %d, Delay: %ld\n", 
+        //         queueID, curTick(), p, pciToDma(txd_op::getBuf(desc)) + tsoDescBytesUsed, tsoCopyBytes, igbe->txReadDelay);
+
         igbe->dmaRead(pciToDma(txd_op::getBuf(desc))
                       + tsoDescBytesUsed,
                       tsoCopyBytes, &pktEvent, p->data + p->length,
@@ -2151,6 +2187,8 @@ IGbE::TxDescCache::getPacketData(EthPacketPtr p)
         tsoDescBytesUsed += tsoCopyBytes;
         assert(tsoDescBytesUsed <= txd_op::getLen(desc));
     } else {
+        // printf("TXD[%d] At clk: %ld DmaRead pktPtr: %p, Addr: %lx, Size: %d, Delay: %ld\n", 
+        //         queueID, curTick(), p, pciToDma(txd_op::getBuf(desc)), txd_op::getLen(desc), igbe->txReadDelay);
         igbe->dmaRead(pciToDma(txd_op::getBuf(desc)),
                       txd_op::getLen(desc), &pktEvent, p->data + p->length,
                       igbe->txReadDelay);
@@ -2167,6 +2205,8 @@ IGbE::TxDescCache::pktComplete()
 
     DPRINTF(EthernetDesc, "TXD[%d] DMA of packet complete\n", queueID);
     DPRINTF(EthernetDpdk, "TXD[%d] DMA of packet complete\n", queueID);
+
+    // printf("TXD[%d] At clk: %ld pktComplete() pktPtr: %p\n", queueID, curTick(), pktPtr);
 
 
     desc = unusedCache.front();
@@ -3432,7 +3472,7 @@ IGbE::rxStateMachine(int queueID)
         // rxDmaPacket = false;
         rxDmaPacketArray[queueID] = false;
         rxDescCacheArray[queueID]->unsetPacketDone();
-        
+
         DPRINTF(EthernetSM, "RXS[%d]: Packet completed DMA to memory\n", queueID);
         DPRINTF(EthernetDpdk, "RXS[%d]: Packet completed DMA to memory\n", queueID);
         // int descLeft = rxDescCache.descLeft();
@@ -3460,9 +3500,10 @@ IGbE::rxStateMachine(int queueID)
             rxDescCacheArray[queueID]->writeback(0);
         }
 
-        if (rxFifo.empty())
+        if (rxFifo.empty()) {
             // rxDescCache.writeback(0);
             rxDescCacheArray[queueID]->writeback(0);
+        }
 
         if (descLeft == 0) { 
             etherDeviceStats.rxRingBufferFull++; //TODO - jm : make this as array 

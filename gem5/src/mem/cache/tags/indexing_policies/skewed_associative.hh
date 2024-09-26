@@ -173,6 +173,12 @@ class SkewedAssociative : public BaseIndexingPolicy
      */
     Addr regenerateAddr(const Addr tag, const ReplaceableEntry* entry) const
                                                                    override;
+    
+    uint32_t extractSetForXBar(const Addr addr) const override
+    {
+        // Not used in skewed associative 
+        return 0;
+    }
 };
 
 } // namespace gem5

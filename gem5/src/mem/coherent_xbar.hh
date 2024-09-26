@@ -292,6 +292,10 @@ class CoherentXBar : public BaseXBar
     /** Is this crossbar the point of unification? **/
     const bool pointOfUnification;
 
+    // JM
+    /** Is this crossbar L3XBar? */
+    bool isL3XBar;
+
     /**
      * Upstream caches need this packet until true is returned, so
      * hold it for deletion until a subsequent call
@@ -303,6 +307,12 @@ class CoherentXBar : public BaseXBar
     void recvTimingSnoopReq(PacketPtr pkt, PortID mem_side_port_id);
     bool recvTimingSnoopResp(PacketPtr pkt, PortID cpu_side_port_id);
     void recvReqRetry(PortID mem_side_port_id);
+
+    // JM
+    // get set index from address using port's cache
+    uint32_t getSetIndexForL3XBar(Addr addr);
+    // get mem_side_port_id from set index - for L3XBar
+    PortID getMemSidePortIdForL3XBar(Addr addr);
 
     /**
      * Forward a timing packet to our snoopers, potentially excluding
@@ -421,6 +431,10 @@ class CoherentXBar : public BaseXBar
     statistics::Scalar snoops;
     statistics::Scalar snoopTraffic;
     statistics::Distribution snoopFanout;
+
+    // JM
+    // used for L3XBar. The number of mem_side_ports connected to L3XBar
+    int numL3XBarPorts;
 
   public:
 

@@ -314,14 +314,14 @@ Cache::promoteWholeLineWrites(PacketPtr pkt)
 }
 
 void
-Cache::handleTimingReqHit(PacketPtr pkt, CacheBlk *blk, Tick request_time)
+Cache::handleTimingReqHit(PacketPtr pkt, CacheBlk *blk, Tick request_time, PortID cpu_side_port_id)
 {
     // should never be satisfying an uncacheable access as we
     // flush and invalidate any existing block as part of the
     // lookup
     assert(!pkt->req->isUncacheable());
 
-    BaseCache::handleTimingReqHit(pkt, blk, request_time);
+    BaseCache::handleTimingReqHit(pkt, blk, request_time, cpu_side_port_id);
 }
 
 void
@@ -406,6 +406,7 @@ Cache::handleTimingReqMiss(PacketPtr pkt, CacheBlk *blk, Tick forward_time,
 
         // request_time is used here, taking into account lat and the delay
         // charged if the packet comes from the xbar.
+        assert(!(isLLC && isMultiPort)); // If assert fails, need to update this code
         cpuSidePort.schedTimingResp(pkt, request_time);
 
         // If an outstanding request is in progress (we found an
@@ -417,7 +418,7 @@ Cache::handleTimingReqMiss(PacketPtr pkt, CacheBlk *blk, Tick forward_time,
 }
 
 void
-Cache::recvTimingReq(PacketPtr pkt)
+Cache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
 {
     DPRINTF(CacheTags, "%s tags:\n%s\n", __func__, tags->print());
 
@@ -516,7 +517,7 @@ Cache::recvTimingReq(PacketPtr pkt)
         return;
     }
 
-    BaseCache::recvTimingReq(pkt);
+    BaseCache::recvTimingReq(pkt, cpu_side_port_id);
 }
 
 PacketPtr
@@ -901,7 +902,15 @@ Cache::serviceMSHRTargets(MSHR *mshr, const PacketPtr pkt, CacheBlk *blk)
             }
             // Reset the bus additional time as it is now accounted for
             tgt_pkt->headerDelay = tgt_pkt->payloadDelay = 0;
-            cpuSidePort.schedTimingResp(tgt_pkt, completion_time);
+            // JM - multi-port cache
+            if (isLLC && isMultiPort) {
+                assert(tgt_pkt->cpu_side_port_id != InvalidPortID);
+                assert(tgt_pkt->cpu_side_port_id < cpuSidePortList.size());
+                cpuSidePortList[tgt_pkt->cpu_side_port_id]->schedTimingResp(
+                    tgt_pkt, completion_time);
+            } else {
+                cpuSidePort.schedTimingResp(tgt_pkt, completion_time);
+            }
             break;
 
           case MSHR::Target::FromPrefetcher:
@@ -1101,7 +1110,19 @@ Cache::handleSnoop(PacketPtr pkt, CacheBlk *blk, bool is_timing,
             // the snoop packet does not need to wait any additional
             // time
             snoopPkt.headerDelay = snoopPkt.payloadDelay = 0;
-            cpuSidePort.sendTimingSnoopReq(&snoopPkt);
+
+            // JM - multi-port cache
+            if (isLLC && isMultiPort) {
+                PortID port_id = pkt->cpu_side_port_id;
+                if (port_id == InvalidPortID) {
+                    assert(cpuSidePortList.size() > 0);
+                    port_id = 0;
+                }
+                cpuSidePortList[port_id]->sendTimingSnoopReq(
+                    &snoopPkt);
+            } else {
+                cpuSidePort.sendTimingSnoopReq(&snoopPkt);
+            }
 
             // add the header delay (including crossbar and snoop
             // delays) of the upward snoop to the snoop delay for this
@@ -1125,7 +1146,18 @@ Cache::handleSnoop(PacketPtr pkt, CacheBlk *blk, bool is_timing,
             pkt->copyResponderFlags(&snoopPkt);
         } else {
             bool already_responded = pkt->cacheResponding();
-            cpuSidePort.sendAtomicSnoop(pkt);
+
+            // JM - multi-port cache
+            if (isLLC && isMultiPort) {
+                PortID port_id = pkt->cpu_side_port_id;
+                if (port_id == InvalidPortID) {
+                    assert(cpuSidePortList.size() > 0);
+                    port_id = 0;
+                }
+                cpuSidePortList[port_id]->sendAtomicSnoop(pkt);
+            } else {
+                cpuSidePort.sendAtomicSnoop(pkt);
+            }
             if (!already_responded && pkt->cacheResponding()) {
                 // cache-to-cache response from some upper cache:
                 // forward response to original requestor
@@ -1141,7 +1173,7 @@ Cache::handleSnoop(PacketPtr pkt, CacheBlk *blk, bool is_timing,
             DPRINTF(CacheVerbose, "%s: packet (snoop) %s found block: %s\n",
                     __func__, pkt->print(), blk->print());
             PacketPtr wb_pkt =
-                writecleanBlk(blk, pkt->req->getDest(), pkt->id);
+                writecleanBlk(blk, pkt->req->getDest(), pkt->id, pkt->cpu_side_port_id);
             PacketList writebacks;
             writebacks.push_back(wb_pkt);
 
@@ -1446,12 +1478,35 @@ Cache::isCachedAbove(PacketPtr pkt, bool is_timing)
         // generate a snoop response.
         assert(pkt->isEviction() || pkt->cmd == MemCmd::WriteClean);
         snoop_pkt.senderState = nullptr;
-        cpuSidePort.sendTimingSnoopReq(&snoop_pkt);
+        // JM - multi-port cache
+        if (isLLC && isMultiPort) {
+            PortID port_id = pkt->cpu_side_port_id;
+            if (port_id == InvalidPortID) {
+                assert(cpuSidePortList.size() > 0);
+                // printf("isCachedAbove cpu_side_port_id is InvalidPortID, so send to cpu_port_id 0\n");
+                port_id = 0;
+            }
+            cpuSidePortList[port_id]->sendTimingSnoopReq(
+                &snoop_pkt);
+        } else {
+            cpuSidePort.sendTimingSnoopReq(&snoop_pkt);
+        }
         // Writeback/CleanEvict snoops do not generate a snoop response.
         assert(!(snoop_pkt.cacheResponding()));
         return snoop_pkt.isBlockCached();
     } else {
-        cpuSidePort.sendAtomicSnoop(pkt);
+        // JM - multi-port cache
+        if (isLLC && isMultiPort) {
+            PortID port_id = pkt->cpu_side_port_id;
+            if (port_id == InvalidPortID) {
+                assert(cpuSidePortList.size() > 0);
+                // printf("isCachedAbove cpu_side_port_id is InvalidPortID, so send to cpu_port_id 0\n");
+                port_id = 0;
+            }
+            cpuSidePortList[port_id]->sendAtomicSnoop(pkt);
+        } else {
+            cpuSidePort.sendAtomicSnoop(pkt);
+        }
         return pkt->isBlockCached();
     }
 }
@@ -1493,7 +1548,18 @@ Cache::sendMSHRQueuePacket(MSHR* mshr)
             DPRINTF(AdaptiveDdioMlcPrefetcher, "Cache::sendMSHRQueuePacket dest %d, pkt %s\n", snoop_pkt.getDdioPrefetchDestination(), snoop_pkt.print());
         }
         
-        cpuSidePort.sendTimingSnoopReq(&snoop_pkt);
+        // JM - multi-port cache
+        if (isLLC && isMultiPort) {
+            PortID port_id = tgt_pkt->cpu_side_port_id;
+            if (port_id == InvalidPortID) {
+                assert(cpuSidePortList.size() > 0);
+                // printf("sendMSHRQueuePacket cpu_side_port_id is InvalidPortID, so send to cpu_port_id 0\n");
+                port_id = 0;
+            }
+            cpuSidePortList[port_id]->sendTimingSnoopReq(&snoop_pkt);
+        } else {
+            cpuSidePort.sendTimingSnoopReq(&snoop_pkt);
+        }
 
         // Check to see if the prefetch was squashed by an upper cache (to
         // prevent us from grabbing the line) or if a Check to see if a

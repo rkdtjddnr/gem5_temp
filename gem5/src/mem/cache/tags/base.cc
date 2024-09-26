@@ -145,6 +145,12 @@ BaseTags::extractTag(const Addr addr) const
     return indexingPolicy->extractTag(addr);
 }
 
+uint32_t
+BaseTags::extractSetForXBar(const Addr addr) const
+{
+    return indexingPolicy->extractSetForXBar(addr);
+}
+
 void
 BaseTags::cleanupRefsVisitor(CacheBlk &blk)
 {

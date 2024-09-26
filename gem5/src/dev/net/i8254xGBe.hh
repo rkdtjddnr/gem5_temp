@@ -256,6 +256,9 @@ class IGbE : public EtherDevice
         /** The packet that is currently being dmad to memory if any */
         EthPacketPtr pktPtr;
 
+        // JM
+        bool isRx;
+
         /** Shortcut for DMA address translation */
         Addr pciToDma(Addr a) { return igbe->pciToDma(a); }
 
@@ -264,7 +267,7 @@ class IGbE : public EtherDevice
         std::string annSmFetch, annSmWb, annUnusedDescQ, annUsedCacheQ,
             annUsedDescQ, annUnusedCacheQ, annDescQ;
 
-        DescCache(IGbE *i, const std::string n, int s);
+        DescCache(IGbE *i, const std::string n, int s, bool _isRx);
         virtual ~DescCache();
 
         std::string name() { return _name; }
@@ -557,6 +560,7 @@ class IGbE : public EtherDevice
 
         void nullCallback() {
             DPRINTF(EthernetDesc, "Completion writeback complete\n");
+            igbe->etherDeviceStats.metaDMABytes += 4; // write 4 bytes (descEnd)
         }
         EventFunctionWrapper nullEvent;
 
