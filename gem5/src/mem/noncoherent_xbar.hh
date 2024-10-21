@@ -100,6 +100,24 @@ class NoncoherentXBar : public BaseXBar
               queue(_xbar, *this)
         { }
 
+        bool
+        isIOXBarPort() override
+        {
+            return xbar.isIOXBar;
+        }
+
+        double
+        getXBarReqLayerUtilization(PortID id) override
+        {
+          return xbar.getReqLayerUtilization(id);
+        }
+
+        double
+        getXBarRespLayerUtilization(PortID id) override
+        {
+          return xbar.getRespLayerUtilization(id);
+        }
+
       protected:
 
         bool
@@ -185,6 +203,9 @@ class NoncoherentXBar : public BaseXBar
     NoncoherentXBar(const NoncoherentXBarParams &p);
 
     virtual ~NoncoherentXBar();
+
+    double getReqLayerUtilization(PortID id) const;
+    double getRespLayerUtilization(PortID id) const;
 };
 
 } // namespace gem5

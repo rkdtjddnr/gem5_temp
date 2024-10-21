@@ -70,15 +70,20 @@ class EtherDevice : public PciDevice
         statistics::Scalar txDescCacheFullCount;
         statistics::Scalar rxRingBufferFull;
         statistics::Scalar txRingBufferFull;
+        statistics::Scalar m2funcTxFifoMaxLen;
 
         statistics::Scalar rxFifoNotEmptyDmaBusy;
         statistics::Scalar rxFifoNotEmptyRSSBad;
 
-        statistics::Histogram rxEnd2EndClk;
-        statistics::Histogram rxEtherLinkClk;
-        statistics::Histogram rxPort2FifoClk;
-        statistics::Histogram rxFifo2DmaClk;
-        statistics::Histogram rxDma2CoreClk;
+        // statistics::Histogram rxEnd2EndClk;
+        // statistics::Histogram rxEtherLinkClk;
+        // statistics::Histogram rxPort2FifoClk;
+        // statistics::Histogram rxFifo2DmaClk;
+        // statistics::Histogram rxDma2CoreClk;
+        
+        statistics::Histogram rxPacketComeDistance; // The time between the time of consecutive packets ready
+        statistics::Histogram rxM2funcReadDistance; // The time between the time of consecutive reads from the M2func
+        statistics::Histogram rxRingBufferStartDMADistance; // The time between the time of consecutive DMA start from the ring buffer
 
         statistics::Scalar postedInterrupts;
 
@@ -95,6 +100,15 @@ class EtherDevice : public PciDevice
         statistics::Scalar rxTailWriteBytes;
         statistics::Scalar txTailWriteBytes;
 
+        //For M2func
+        statistics::Scalar txBytesM2func; // tx Bytes from host to device (total bytes used in M2func - including dummy data within flit) 
+        statistics::Scalar rxBytesM2func; // rx Bytes from device to host (total bytes used in M2func)
+        statistics::Scalar txBytesM2funcData; // tx Bytes from host to device (actual data bytes used in M2func)
+        statistics::Scalar rxBytesM2funcData; // rx Bytes from device to host (actual data bytes used in M2func)
+        statistics::Scalar txBytesM2funcDesc; // tx Bytes from host to device (actual descriptor bytes used in M2func)
+        statistics::Scalar rxBytesM2funcDesc; // rx Bytes from device to host (actual descriptor bytes used in M2func)
+        statistics::Scalar txBytesM2funcBitMask; // tx Bytes from host to device (actual bitmask bytes used in M2func)
+
         statistics::Scalar txPackets;
         statistics::Scalar rxPackets;
 
@@ -110,6 +124,11 @@ class EtherDevice : public PciDevice
         statistics::Formula txDescWBBandwidth;
         statistics::Formula rxTailWriteBandwidth;
         statistics::Formula txTailWriteBandwidth;
+
+        statistics::Formula txM2funcBandwidth; // tx Bandwidth from host to device (total bandwidth used in M2func)
+        statistics::Formula rxM2funcBandwidth; // rx Bandwidth from device to host (total bandwidth used in M2func)
+        statistics::Formula txM2funcEffectiveBandwidth; // tx Bandwidth from host to device (actual data bandwidth used in M2func - excluding dummy data within flit)
+        statistics::Formula rxM2funcEffectiveBandwidth; // rx Bandwidth from device to host (actual data bandwidth used in M2func)
 
         statistics::Scalar txIpChecksums;
         statistics::Scalar rxIpChecksums;

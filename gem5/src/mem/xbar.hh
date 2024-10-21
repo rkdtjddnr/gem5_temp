@@ -151,6 +151,8 @@ class BaseXBar : public ClockedObject
 
         void occupyLayer(Tick until);
 
+        double getUtilization() const { return utilization.total(); }
+
         /**
          * Send a retry to the port at the head of waitingForLayer. The
          * caller must ensure that the list is not empty.
@@ -166,7 +168,13 @@ class BaseXBar : public ClockedObject
 
         statistics::Scalar dataOccupancy; // occupancy for packets with data - that is really sent
         statistics::Scalar headerOccupancy; // occupancy for packets without data - that is really sent
+        statistics::Scalar writeReqHeaderOccupancy; // occupancy for write requests without data - that is really sent
+        statistics::Scalar readReqHeaderOccupancy; // occupancy for read requests without data - that is really sent
+        statistics::Scalar elseHeaderOccupancy; // occupancy for other requests without data - that is really sent
+        statistics::Scalar writeRespHeaderOccupancy; // occupancy for write responses without data - that is really sent
+        statistics::Scalar readRespHeaderOccupancy; // occupancy for read responses without data - that is really sent
         statistics::Scalar failOccupancy; // occupancy for packets that failed to send
+
 
       protected:
 

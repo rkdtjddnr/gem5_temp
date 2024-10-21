@@ -12,6 +12,12 @@
 #include <stdarg.h>
 #include <inttypes.h>
 
+#ifdef RTE_ARM_USE_SVE
+
+#include <arm_sve.h>
+
+#endif
+
 #include <rte_interrupts.h>
 #include <rte_byteorder.h>
 #include <rte_common.h>
@@ -65,6 +71,48 @@
 #define PCI_CFG_STATUS_REG                 0x06
 #define FLUSH_DESC_REQUIRED               0x100
 
+// JM
+#define E1000_PCI_REG_WRITE64B(reg, value)		\
+	rte_write64B(value, reg)
+
+#define E1000_PCI_REG_READ64B(addr, packet_buffer)  \
+	rte_read64B(addr, packet_buffer)
+
+static __rte_always_inline void
+rte_write64B(const void *packet, volatile void *addr)
+{
+    rte_io_wmb();  // Ensure memory writes happen in order before the I/O operation
+
+    // ARM SVE assembly to transfer 64 bytes (512 bits) at once
+	#ifdef RTE_ARM_USE_SVE
+    asm volatile (
+        "ptrue p0.d\n\t"                // Predicate register to select all elements in the vector
+        "ld1d {z0.d}, p0/z, [%x[val]]\n\t"   // Load 64 bytes from packet into z0 register
+        "st1d {z0.d}, p0, [%x[addr]]\n\t"     // Store 64 bytes from z0 register to the register (addr)
+        :
+        : [addr] "r"(addr), [val] "r"(packet)
+        : "memory", "p0", "z0"
+    );
+	#endif
+}
+
+static __rte_always_inline void
+rte_read64B(const volatile void *addr, void *packet_buffer)
+{	
+	#ifdef RTE_ARM_USE_SVE
+    asm volatile (
+        "ptrue p0.d\n\t"               // Predicate register to select all elements in the vector
+        "ld1d {z0.d}, p0/z, [%x[addr]]\n\t"  // Load 64 bytes from addr into z0 register
+        "st1d {z0.d}, p0, [%x[packet_buffer]]\n\t" // Store 64 bytes from z0 register into packet_buffer
+        :
+        : [addr] "r"(addr), [packet_buffer] "r"(packet_buffer)
+        : "memory", "p0", "z0"
+    );
+	#endif
+
+    rte_io_rmb();  // Memory barrier to ensure proper memory ordering after read
+}
+
 
 /**
  * Structure associated with each descriptor of the RX ring of a RX queue.
@@ -92,6 +140,7 @@ struct em_rx_queue {
 	uint64_t            rx_ring_phys_addr; /**< RX ring DMA address. */
 	volatile uint32_t   *rdt_reg_addr; /**< RDT register address. */
 	volatile uint32_t   *rdh_reg_addr; /**< RDH register address. */
+	volatile uint32_t   *rx_m2func_reg_addr; /**< Address of M2FUNC register. */
 	struct em_rx_entry *sw_ring;   /**< address of RX software ring. */
 	struct rte_mbuf *pkt_first_seg; /**< First segment of current packet. */
 	struct rte_mbuf *pkt_last_seg;  /**< Last segment of current packet. */
@@ -172,6 +221,7 @@ struct em_tx_queue {
 	uint64_t               tx_ring_phys_addr; /**< TX ring DMA address. */
 	struct em_tx_entry    *sw_ring; /**< virtual address of SW ring. */
 	volatile uint32_t      *tdt_reg_addr; /**< Address of TDT register. */
+	volatile uint32_t      *tx_m2func_reg_addr; /**< Address of M2FUNC register. */
 	uint32_t               txd_type;      /**< Device-specific TXD type */
 	uint16_t               nb_tx_desc;    /**< number of TX descriptors. */
 	uint16_t               tx_tail;  /**< Current value of TDT register. */
@@ -394,6 +444,106 @@ em_set_xmit_ctx(struct em_tx_queue* txq,
 }
 
 /*
+ * Populates TX context descriptor.
+ */
+static inline void
+em_set_xmit_ctx_m2func(struct em_tx_queue* txq,
+		uint64_t ol_flags,
+		union em_vlan_macip hdrlen)
+{
+	struct e1000_adv_tx_context_desc ctx_txd;
+
+	uint32_t type_tucmd_mlhl;
+	uint32_t mss_l4len_idx;
+	uint32_t ctx_idx, ctx_curr;
+	uint32_t vlan_macip_lens;
+	union em_vlan_macip tx_offload_mask;
+
+	// ctx_idx = ctx_curr + txq->ctx_start;
+	ctx_idx = 0; //jm - we are not using multiple contexts
+
+	tx_offload_mask.data = 0;
+	type_tucmd_mlhl = 0;
+
+	/* Specify which HW CTX to upload. */
+	mss_l4len_idx = (ctx_idx << E1000_ADVTXD_IDX_SHIFT);
+
+	if (ol_flags & PKT_TX_VLAN_PKT)
+		tx_offload_mask.data |= TX_VLAN_CMP_MASK;
+
+	/* check if TCP segmentation required for this packet */
+	if (ol_flags & PKT_TX_TCP_SEG) {
+		/* implies IP cksum in IPv4 */
+		if (ol_flags & PKT_TX_IP_CKSUM)
+			type_tucmd_mlhl = E1000_ADVTXD_TUCMD_IPV4 |
+				E1000_ADVTXD_TUCMD_L4T_TCP |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+		else
+			type_tucmd_mlhl = E1000_ADVTXD_TUCMD_IPV6 |
+				E1000_ADVTXD_TUCMD_L4T_TCP |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+
+		tx_offload_mask.data |= TX_TSO_CMP_MASK;
+		mss_l4len_idx |= hdrlen.f.tso_segsz << E1000_ADVTXD_MSS_SHIFT;
+		mss_l4len_idx |= hdrlen.f.l4_len << E1000_ADVTXD_L4LEN_SHIFT;
+	} else { /* no TSO, check if hardware checksum is needed */
+		if (ol_flags & (PKT_TX_IP_CKSUM | PKT_TX_L4_MASK))
+			tx_offload_mask.data |= TX_MACIP_LEN_CMP_MASK;
+
+		if (ol_flags & PKT_TX_IP_CKSUM)
+			type_tucmd_mlhl = E1000_ADVTXD_TUCMD_IPV4;
+
+		switch (ol_flags & PKT_TX_L4_MASK) {
+		case PKT_TX_UDP_CKSUM:
+			type_tucmd_mlhl |= E1000_ADVTXD_TUCMD_L4T_UDP |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+			mss_l4len_idx |= sizeof(struct rte_udp_hdr)
+				<< E1000_ADVTXD_L4LEN_SHIFT;
+			break;
+		case PKT_TX_TCP_CKSUM:
+			type_tucmd_mlhl |= E1000_ADVTXD_TUCMD_L4T_TCP |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+			mss_l4len_idx |= sizeof(struct rte_tcp_hdr)
+				<< E1000_ADVTXD_L4LEN_SHIFT;
+			break;
+		case PKT_TX_SCTP_CKSUM:
+			type_tucmd_mlhl |= E1000_ADVTXD_TUCMD_L4T_SCTP |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+			mss_l4len_idx |= sizeof(struct rte_sctp_hdr)
+				<< E1000_ADVTXD_L4LEN_SHIFT;
+			break;
+		default:
+			type_tucmd_mlhl |= E1000_ADVTXD_TUCMD_L4T_RSV |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+			break;
+		}
+	}
+
+	txq->ctx_cache.flags = ol_flags;
+	txq->ctx_cache.tx_offload.data =
+		tx_offload_mask.data & hdrlen.data;
+	txq->ctx_cache.tx_offload_mask = tx_offload_mask;
+
+	vlan_macip_lens = (uint32_t)hdrlen.data;
+	// Write the context descriptor to the descriptor ring
+	uint64_t ctx_buffer[8];
+
+	// Pack the first and second halves of the context descriptor
+	//for CXL, place d2 part at first and d1 part at second - to match with not context case
+	ctx_buffer[1] = rte_cpu_to_le_32(((uint64_t)vlan_macip_lens << 32)) | 0;
+	ctx_buffer[0] = rte_cpu_to_le_32(((uint64_t)type_tucmd_mlhl << 32)) | rte_cpu_to_le_32(mss_l4len_idx);
+
+	// Fill the remaining 48B with 0 (NULL) for padding
+	for (int i = 2; i < 8; i++) {
+		ctx_buffer[i] = 0;
+	}
+
+	// Send each 64-bit portion using E1000_PCI_REG_WRITE64B
+	E1000_PCI_REG_WRITE64B(txq->tx_m2func_reg_addr, ctx_buffer);
+
+}
+
+/*
  * Check which hardware context can be used. Use the existing match
  * or create a new context descriptor.
  */
@@ -468,6 +618,91 @@ em_xmit_cleanup(struct em_tx_queue *txq)
 
 	/* Update the txq to reflect the last descriptor that was cleaned */
 	txq->last_desc_cleaned = desc_to_clean_to;
+	txq->nb_tx_free = (uint16_t)(txq->nb_tx_free + nb_tx_to_clean);
+
+	/* No Error */
+	return 0;
+}
+
+
+/* Reset transmit descriptors after they have been used */
+static inline int
+em_xmit_cleanup_m2func(struct em_tx_queue *txq)
+{
+	struct em_tx_entry *sw_ring = txq->sw_ring;
+	volatile union e1000_adv_tx_desc *txr = txq->tx_ring; // NIC TX ring
+	uint16_t last_desc_cleaned = txq->last_desc_cleaned;
+	uint16_t nb_tx_desc = txq->nb_tx_desc;
+	uint16_t desc_to_clean_to;
+	uint16_t nb_tx_to_clean;
+	uint16_t nb_tx_to_clean_goal; // JM
+	uint8_t bitmask[64];  // 512-bit (64-byte) bitmask, byte-level array
+	uint64_t bitmask_len = 512; // 512-bit (64-byte) bitmask
+	int bit_idx = 0;
+	uint16_t desc_idx;
+
+	/* Read the 512-bit bitmask from the NIC's device register */
+    E1000_PCI_REG_READ64B(txq->tx_m2func_reg_addr, bitmask);  // Function to read 64B from NIC register
+
+	/* Determine the last descriptor needing to be cleaned */
+	desc_to_clean_to = (uint16_t)(last_desc_cleaned + txq->tx_rs_thresh);
+	if (desc_to_clean_to >= nb_tx_desc)
+		desc_to_clean_to = (uint16_t)(desc_to_clean_to - nb_tx_desc);
+
+	/* Check to make sure the last descriptor to clean is done */
+	desc_to_clean_to = sw_ring[desc_to_clean_to].last_id;
+
+	/* Iterate over the bitmask to clean descriptors */
+	nb_tx_to_clean = 0;
+	for (desc_idx = last_desc_cleaned; desc_idx != desc_to_clean_to; desc_idx = (desc_idx + 1) % nb_tx_desc) {
+        /* Check if the corresponding bit in the bitmask is set (indicating DD = 1) */
+		if (bit_idx >= bitmask_len) {
+			PMD_TX_FREE_LOG(ERROR,
+			"At TX descriptor %4u, bit_idx is over 512 (port=%d queue=%d), bit_idx=%d. So break", desc_idx,
+			txq->port_id, txq->queue_id, bit_idx);
+			return -(1);
+		}
+		if (bitmask[bit_idx / 8] & (1ULL << (bit_idx % 8))) { // 8-bit mask
+			/* Descriptor is done, reset the status */
+			nb_tx_to_clean++;
+			txr[desc_idx].wb.status = 0; 
+			PMD_TX_FREE_LOG(WARNING,
+			"TX descriptor %4u is done (port=%d queue=%d), bit_idx=%d", desc_idx,
+			txq->port_id, txq->queue_id, bit_idx);
+		} else {
+			/* Descriptor is not done, break out of the loop */
+			PMD_TX_FREE_LOG(WARNING,
+			"TX descriptor %4u is not done (port=%d queue=%d), bit_idx=%d. So break", desc_idx,
+			txq->port_id, txq->queue_id, bit_idx);
+
+			break;
+		}
+		bit_idx++;
+    }
+
+	if (nb_tx_to_clean == 0) {
+		/* Failed to clean any descriptors, better luck next time */
+		PMD_TX_FREE_LOG(WARNING,
+				"TX descriptor nb_tx_to_clean=%d, last_desc_cleaned=%d, desc_to_clean_to=%d, cannot clean any descriptors (port=%d queue=%d)", 
+				nb_tx_to_clean, last_desc_cleaned, desc_to_clean_to, txq->port_id, txq->queue_id);
+		return -(1);
+	}
+
+	/* Figure out how many descriptors will be cleaned */
+	if (last_desc_cleaned > desc_to_clean_to)
+		nb_tx_to_clean_goal = (uint16_t)((nb_tx_desc - last_desc_cleaned) +
+							desc_to_clean_to);
+	else
+		nb_tx_to_clean_goal = (uint16_t)(desc_to_clean_to -
+						last_desc_cleaned);
+
+	PMD_TX_FREE_LOG(WARNING,
+			"Cleaning GOAL: %4u TX descriptors: %4u to %4u, RESULTS: %4u TX descriptors: %4u to %4u "
+			"(port=%d queue=%d)", nb_tx_to_clean_goal, last_desc_cleaned, desc_to_clean_to, 
+			nb_tx_to_clean, last_desc_cleaned, desc_idx, txq->port_id, txq->queue_id);	
+
+	/* Update the txq to reflect the last descriptor that was cleaned */
+	txq->last_desc_cleaned = desc_idx; // start index to look for next time
 	txq->nb_tx_free = (uint16_t)(txq->nb_tx_free + nb_tx_to_clean);
 
 	/* No Error */
@@ -812,6 +1047,223 @@ end_of_tx:
 	return nb_tx;
 }
 
+uint16_t
+eth_em_xmit_pkts_m2func(void *tx_queue, struct rte_mbuf **tx_pkts,
+        uint16_t nb_pkts)
+{
+    struct em_tx_queue *txq;
+    struct em_tx_entry *sw_ring;
+	struct em_tx_entry *txe, *txn;
+    struct rte_mbuf     *tx_pkt;
+    struct rte_mbuf     *m_seg;
+    uint32_t olinfo_status;
+    uint32_t cmd_type_len; 
+    uint32_t pkt_len;
+	uint64_t ol_flags;
+	uint16_t tx_id;
+	uint16_t tx_last;
+	uint16_t nb_tx;
+	uint16_t nb_used;
+	uint64_t tx_ol_req;
+	uint32_t ctx;
+	uint32_t new_ctx;
+	union em_vlan_macip hdrlen;
+    void *seg_buf;
+    int offset;
+	unsigned desc_len = 8; //8B descriptor length
+	unsigned flit_len = 64; //64B flit length
+	unsigned payload_len_within_flit = flit_len - desc_len; //56B payload length within a 64B flit
+
+    txq = tx_queue;
+    sw_ring = txq->sw_ring; // DPDK TX ring
+    tx_id = txq->tx_tail; // TX tail id
+	txe = &sw_ring[tx_id]; // DPDK TX ring entry
+
+    /* Clean up if necessary */
+    if (txq->nb_tx_free < txq->tx_free_thresh)
+        em_xmit_cleanup_m2func(txq);
+
+    /* TX loop */
+    for (nb_tx = 0; nb_tx < nb_pkts; nb_tx++) {
+		new_ctx = 0;
+        tx_pkt = *tx_pkts++;
+        pkt_len = tx_pkt->pkt_len;
+		
+		RTE_MBUF_PREFETCH_TO_FREE(txe->mbuf);
+
+        ol_flags = tx_pkt->ol_flags;
+        tx_ol_req = (ol_flags & E1000_TX_OFFLOAD_MASK);
+		if (tx_ol_req) {
+			hdrlen.f.vlan_tci = tx_pkt->vlan_tci;
+			hdrlen.f.l2_len = tx_pkt->l2_len;
+			hdrlen.f.l3_len = tx_pkt->l3_len;
+			//jm
+			hdrlen.f.l4_len = tx_pkt->l4_len;
+			hdrlen.f.tso_segsz = tx_pkt->tso_segsz;
+			tx_ol_req = check_tso_para(tx_ol_req, hdrlen);
+			/* If new context to be built or reuse the exist ctx. */
+			ctx = what_ctx_update(txq, tx_ol_req, hdrlen);
+
+			/* Only allocate context descriptor if required*/
+			new_ctx = (ctx == EM_CTX_NUM);
+		}
+
+		if (tx_pkt->nb_segs > 1) {
+			PMD_TX_FREE_LOG(WARNING, "Scattered packets not supported");
+			if (nb_tx == 0)
+				return 0;
+			goto end_of_tx;
+		}
+
+		nb_used = (uint16_t)(tx_pkt->nb_segs + new_ctx);
+		tx_last = (uint16_t) (tx_id + nb_used - 1);
+
+		/* Circular ring */
+		if (tx_last >= txq->nb_tx_desc)
+			tx_last = (uint16_t) (tx_last - txq->nb_tx_desc);
+		
+		PMD_TX_LOG(INFO, "port_id=%u queue_id=%u pktlen=%u"
+			   " tx_first=%u tx_last=%u",
+			   (unsigned) txq->port_id,
+			   (unsigned) txq->queue_id,
+			   (unsigned) tx_pkt->pkt_len,
+			   (unsigned) tx_id,
+			   (unsigned) tx_last);
+		
+		while (unlikely (nb_used > txq->nb_tx_free)) {
+			PMD_TX_FREE_LOG(WARNING, "Not enough free TX descriptors "
+					"nb_used=%4u nb_free=%4u "
+					"(port=%d queue=%d)",
+					nb_used, txq->nb_tx_free,
+					txq->port_id, txq->queue_id);
+
+			if (em_xmit_cleanup_m2func(txq) != 0) {
+				/* Could not clean any descriptors */
+				if (nb_tx == 0)
+					return 0;
+				goto end_of_tx;
+			}
+		}
+
+		txq->nb_tx_used = (uint16_t)(txq->nb_tx_used + nb_used);
+		txq->nb_tx_free = (uint16_t)(txq->nb_tx_free - nb_used);
+        
+        /* Setup descriptor fields */
+        cmd_type_len = E1000_ADVTXD_DTYP_DATA |
+			E1000_ADVTXD_DCMD_IFCS | E1000_ADVTXD_DCMD_DEXT;
+		if (tx_ol_req & PKT_TX_TCP_SEG)
+			pkt_len -= (tx_pkt->l2_len + tx_pkt->l3_len + tx_pkt->l4_len);
+		olinfo_status = (pkt_len << E1000_ADVTXD_PAYLEN_SHIFT);
+
+        if (tx_ol_req) {
+            /*
+			 * Setup the TX Context Descriptor if required
+			 */
+			if (new_ctx) {
+				txn = &sw_ring[txe->next_id];
+				RTE_MBUF_PREFETCH_TO_FREE(txn->mbuf);
+
+				if (txe->mbuf != NULL) {
+					rte_pktmbuf_free_seg(txe->mbuf);
+					txe->mbuf = NULL;
+				}
+
+				em_set_xmit_ctx_m2func(txq, tx_ol_req, hdrlen);
+
+				txe->last_id = tx_last;
+				tx_id = txe->next_id;
+				txe = txn;
+			}
+
+			/*
+			 * Setup the TX Data Descriptor,
+			 * This path will go through
+			 * whatever new/reuse the context descriptor
+			 */
+			cmd_type_len  |= tx_desc_vlan_flags_to_cmdtype(tx_ol_req);
+			olinfo_status |= tx_desc_cksum_flags_to_olinfo(tx_ol_req);
+			olinfo_status |= (ctx << E1000_ADVTXD_IDX_SHIFT);
+        }
+
+        /* First 64B: Combine descriptor and first 56B of packet data */
+        m_seg = tx_pkt;
+		txn = &sw_ring[txe->next_id]; // DPDK TX ring entry - next to txe
+		if (txe->mbuf != NULL) // DPDK TX ring entry - current
+				rte_pktmbuf_free_seg(txe->mbuf);
+		txe->mbuf = m_seg; // set DPDK TX ring entry - current
+
+		/* 
+		 * Set up Transmit Data Descriptor.
+		 */
+        uint8_t tx_buffer[64];  // Temporary buffer to hold 64B
+
+        /* Pack descriptor (cmd_type_len + olinfo_status) into the first 8B of tx_buffer */
+		if (txq->nb_tx_used >= txq->tx_rs_thresh) {
+			PMD_TX_FREE_LOG(WARNING,
+					"Setting RS bit on TXD id=%4u "
+					"(port=%d queue=%d)",
+					tx_last, txq->port_id, txq->queue_id);
+
+			cmd_type_len |= E1000_ADVTXD_DCMD_RS;
+			txq->nb_tx_used = 0;
+		}
+		/* without scattered packets, EOP is set */
+		cmd_type_len |= E1000_ADVTXD_DCMD_EOP;
+		*((uint32_t *)tx_buffer) = rte_cpu_to_le_32(cmd_type_len | m_seg->data_len); 
+        *((uint32_t *)(tx_buffer + 4)) = rte_cpu_to_le_32(olinfo_status);
+
+        /* Copy first 56B of the packet data into tx_buffer */
+		seg_buf = rte_pktmbuf_mtod(m_seg, void *);
+		unsigned flit_real_payload_len = payload_len_within_flit; //length to copy in the first flit
+		unsigned remain_payload_len = m_seg->data_len; //remaining length to send
+		void * tx_buffer_ptr = tx_buffer + desc_len; //pointer to the payload in tx_buffer
+
+		if (m_seg->data_len > payload_len_within_flit) {
+			flit_real_payload_len = payload_len_within_flit;
+			remain_payload_len = m_seg->data_len - payload_len_within_flit;
+		} else {
+			flit_real_payload_len = m_seg->data_len;
+			remain_payload_len = 0;
+		}
+
+		rte_memcpy(tx_buffer_ptr, seg_buf, (size_t) flit_real_payload_len);
+
+		/* Send the first 64B (descriptor + packet data) */
+        E1000_PCI_REG_WRITE64B(txq->tx_m2func_reg_addr, tx_buffer);
+
+        /* Now send the rest of the packet data in 64B chunks */
+		offset = flit_real_payload_len;
+        while (offset < m_seg->data_len) {
+			E1000_PCI_REG_WRITE64B(txq->tx_m2func_reg_addr, ((char *) seg_buf + offset));
+            offset += flit_len;
+        }
+
+		txe->last_id = tx_last;
+		tx_id = txe->next_id;
+		txe = txn;
+
+        /* Handle multiple segments in case of scattered packets - Not supported now!! */
+        m_seg = m_seg->next;
+        if (m_seg != NULL) {
+			PMD_TX_FREE_LOG(WARNING, "Scattered packets not supported");
+			if (nb_tx == 0)
+				return 0;
+			goto end_of_tx;
+		}
+    }
+end_of_tx:
+	rte_wmb();
+
+    /* Final update of tail ID */
+	PMD_TX_LOG(WARNING, "port_id=%u queue_id=%u tx_tail=%u nb_tx=%u",
+		(unsigned) txq->port_id, (unsigned) txq->queue_id,
+		(unsigned) tx_id, (unsigned) nb_tx);
+    txq->tx_tail = tx_id;
+
+    return nb_tx;
+}
+
+
 /*********************************************************************
  *
  *  TX prep functions
@@ -1123,7 +1575,8 @@ eth_em_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		 *    - error flags.
 		 */
 		// pkt_len = (uint16_t) (rte_le_to_cpu_16(rxd.length) -
-		pkt_len = (uint16_t) (rte_le_to_cpu_16(rxd.wb.upper.length) - //jm
+		//jm
+		pkt_len = (uint16_t) (rte_le_to_cpu_16(rxd.wb.upper.length) - 
 				rxq->crc_len);
 		rxm->data_off = RTE_PKTMBUF_HEADROOM;
 		rte_packet_prefetch((char *)rxm->buf_addr + rxm->data_off);
@@ -1193,6 +1646,165 @@ eth_em_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		nb_hold = 0;
 	}
 	rxq->nb_rx_hold = nb_hold;
+
+	struct rte_ether_hdr *eth_hdr;
+	struct rte_mbuf *mb;
+	int i;
+	for (i = 0; i < nb_rx; i++) {
+		mb = rx_pkts[i];
+		eth_hdr = rte_pktmbuf_mtod(mb, struct rte_ether_hdr *);
+	}
+	
+	return nb_rx;
+}
+
+uint16_t
+eth_em_recv_pkts_m2func(void *rx_queue, struct rte_mbuf **rx_pkts,
+		uint16_t nb_pkts)
+{
+	struct em_rx_queue *rxq;
+	struct em_rx_entry *sw_ring;
+	struct em_rx_entry *rxe;
+	struct rte_mbuf *rxm;
+	struct rte_mbuf *nmb;
+	union e1000_adv_rx_desc rxd;
+	uint64_t dma_addr;
+	uint32_t staterr; //jm
+	uint32_t hlen_type_rss; //jm
+	uint16_t pkt_len;
+	uint16_t rx_id;
+	uint16_t nb_rx;
+	uint16_t nb_hold;
+	uint8_t status;
+	uint64_t pkt_flags; //jm
+	uint16_t flit_size = 64; // 64B flit size
+	uint16_t desc_size = 16; // 16B descriptor size
+	uint16_t partial_payload_size = flit_size - desc_size; // 48B payload size
+	uint8_t read_buffer[64]; // 64B buffer for reading from PCIe
+	void *read_buffer_ptr = (void *) read_buffer; // Pointer to read buffer
+	rxq = rx_queue;
+
+	nb_rx = 0;
+	nb_hold = 0;
+	rx_id = rxq->rx_tail;
+	sw_ring = rxq->sw_ring; // DPDK RX ring
+	while (nb_rx < nb_pkts) {
+		/*
+         * Step 1: Read 64B from NIC device register to get both descriptor (16B) and packet data.
+         */
+		//Read 64B from NIC device register & Do not convert le_to_cpu at E1000_PCI_REG_READ64 -> because it needs to copy to descriptor, which is in little-endian format
+		E1000_PCI_REG_READ64B(rxq->rx_m2func_reg_addr, read_buffer); // Read 64B from PCIe
+        /*
+         * Step 2: Extract the descriptor (16B) from the first part of the read buffer.
+         */
+        rte_memcpy(&rxd, read_buffer, sizeof(rxd));		
+
+        staterr = rxd.wb.upper.status_error;
+        if (!(staterr & rte_cpu_to_le_32(E1000_RXD_STAT_DD))) {
+            break; // If DD bit is not set, break the loop.
+        }
+
+        /*
+         * Step 3: Read pkt_len from the descriptor to know how much data to fetch.
+         */
+        pkt_len = (uint16_t) (rte_le_to_cpu_16(rxd.wb.upper.length) - rxq->crc_len);
+
+        /*
+         * Step 4: Allocate a new mbuf and ensure it succeeds.
+         */
+        nmb = rte_mbuf_raw_alloc(rxq->mb_pool);
+        if (nmb == NULL) {
+            PMD_RX_LOG(WARNING, "RX mbuf alloc failed port_id=%u queue_id=%u",
+                       (unsigned) rxq->port_id, (unsigned) rxq->queue_id);
+            rte_eth_devices[rxq->port_id].data->rx_mbuf_alloc_failed++;
+            break;
+        }
+
+        nb_hold++;
+        rxe = &sw_ring[rx_id];
+        rx_id++;
+		if (rx_id == rxq->nb_rx_desc)
+			rx_id = 0;
+
+        /* Prefetch next mbuf while processing current one */
+        rte_em_prefetch(sw_ring[rx_id].mbuf);
+
+		/*
+		 * When next RX descriptor is on a cache-line boundary,
+		 * prefetch the next 4 RX descriptors and the next 8 pointers
+		 * to mbufs.
+		 */
+		if ((rx_id & 0x3) == 0) {
+			rte_em_prefetch(&sw_ring[rx_id]);
+		}
+
+        /* Step 5: Rearm RXD: attach new mbuf */
+        rxm = rxe->mbuf;
+        rxe->mbuf = nmb;        
+
+        /*
+         * Step 6: Copy the remaining 48B of the read buffer into the rxm as part of the payload.
+         */
+		rxm->data_off = RTE_PKTMBUF_HEADROOM;
+		rte_packet_prefetch((char *)rxm->buf_addr + rxm->data_off);
+        void *data_ptr = rte_pktmbuf_mtod(rxm, void *); // Get pointer to mbuf data    
+		read_buffer_ptr = ((char *) read_buffer + desc_size); // Move pointer to 48B after descriptor
+		// JM: maybe we don't have to convert le_to_cpu before copy to mbuf
+		rte_memcpy(data_ptr, read_buffer_ptr, (size_t) partial_payload_size); // Copy 48B from read buffer to payload
+        
+		data_ptr = ((char *) data_ptr + partial_payload_size); // Move pointer to the end of the copied data
+
+        /*
+         * Step 7: If the packet length exceeds 48B, keep reading the remaining payload data.
+         */
+        uint16_t remaining_len = pkt_len - partial_payload_size;
+        while (remaining_len > 0) {
+            uint16_t chunk_size = (remaining_len > flit_size) ? flit_size : remaining_len;
+			// JM: maybe we don't have to read 64B from NIC device register & Convert le_to_cpu before copy to mbuf
+            if (chunk_size == flit_size) {
+				E1000_PCI_REG_READ64B(rxq->rx_m2func_reg_addr, data_ptr); // Read 64B from PCIe
+			} else {
+				uint8_t temp_buffer[64]; // Temporary buffer to hold 64B
+				E1000_PCI_REG_READ64B(rxq->rx_m2func_reg_addr, temp_buffer); // Read 64B from PCIe
+				rte_memcpy(data_ptr, temp_buffer, (size_t) chunk_size); // Copy chunk_size from temp_buffer to mbuf
+			}
+            data_ptr = ((char *) data_ptr + chunk_size); // Move pointer to the end of the copied data
+            remaining_len -= chunk_size;
+        }
+
+        /*
+         * Step 8: Initialize the mbuf fields with descriptor values and packet info.
+         */        
+        rxm->nb_segs = 1;
+        rxm->next = NULL;
+        rxm->pkt_len = pkt_len;
+        rxm->data_len = pkt_len;
+        rxm->port = rxq->port_id;
+
+        rxm->hash.rss = rxd.wb.lower.hi_dword.rss;
+        uint32_t hlen_type_rss = rte_le_to_cpu_32(rxd.wb.lower.lo_dword.data);
+
+        /*
+         * Step 9: Set packet flags and handle VLAN tag.
+         */
+		if ((staterr & rte_cpu_to_le_32(E1000_RXDEXT_STATERR_LB)) &&
+				(rxq->flags & 0x01)) {
+			rxm->vlan_tci = rte_be_to_cpu_16(rxd.wb.upper.vlan);
+		} else {
+			rxm->vlan_tci = rte_le_to_cpu_16(rxd.wb.upper.vlan);
+		}
+
+        pkt_flags = rx_desc_hlen_type_rss_to_pkt_flags(rxq, hlen_type_rss);
+		pkt_flags = pkt_flags | rx_desc_status_to_pkt_flags(staterr);
+		pkt_flags = pkt_flags | rx_desc_error_to_pkt_flags(staterr);
+		rxm->ol_flags = pkt_flags;
+		rxm->packet_type = em_rxd_pkt_info_to_pkt_type(rxd.wb.lower.
+						lo_dword.hs_rss.pkt_info);
+
+        /* Store the mbuf address into the array of returned packets */
+        rx_pkts[nb_rx++] = rxm;
+	}
+	rxq->rx_tail = rx_id;
 
 	struct rte_ether_hdr *eth_hdr;
 	struct rte_mbuf *mb;
@@ -1724,6 +2336,10 @@ eth_em_tx_queue_setup(struct rte_eth_dev *dev,
 	txq->port_id = dev->data->port_id;
 
 	txq->tdt_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_TDT(queue_idx));
+	txq->tx_m2func_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_TXM2FUNC(queue_idx));
+	printf("======== txq[%d]->tdt_reg_addr: 0x%lx ========\n", queue_idx, txq->tdt_reg_addr);
+	printf("======== txq[%d]->tx_m2func_reg_addr: 0x%lx ========\n", queue_idx, txq->tx_m2func_reg_addr);
+	fflush(stdout);
 	txq->tx_ring_phys_addr = tz->iova;
 	// txq->tx_ring = (struct e1000_data_desc *) tz->addr;
 	txq->tx_ring = (union e1000_adv_tx_desc *) tz->addr; //jm
@@ -1915,6 +2531,11 @@ eth_em_rx_queue_setup(struct rte_eth_dev *dev,
 
 	rxq->rdt_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_RDT(queue_idx));
 	rxq->rdh_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_RDH(queue_idx));
+	rxq->rx_m2func_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_RXM2FUNC(queue_idx));
+	printf("======== rxq[%d]->rdt_reg_addr: 0x%lx ========\n", queue_idx, rxq->rdt_reg_addr);
+	printf("======== rxq[%d]->rdh_reg_addr: 0x%lx ========\n", queue_idx, rxq->rdh_reg_addr);
+	printf("======== rxq[%d]->rx_m2func_reg_addr: 0x%lx ========\n", queue_idx, rxq->rx_m2func_reg_addr);
+	fflush(stdout);
 	rxq->rx_ring_phys_addr = rz->iova;
 	// rxq->rx_ring = (struct e1000_rx_desc *) rz->addr;
 	rxq->rx_ring = (union e1000_adv_rx_desc *) rz->addr;
@@ -1941,15 +2562,21 @@ eth_em_rx_queue_count(struct rte_eth_dev *dev, uint16_t rx_queue_id)
 	rxq = dev->data->rx_queues[rx_queue_id];
 	rxdp = &(rxq->rx_ring[rxq->rx_tail]);
 
-	while ((desc < rxq->nb_rx_desc) &&
-		// (rxdp->status & E1000_RXD_STAT_DD)) {
-		(rxdp->wb.upper.status_error & E1000_RXD_STAT_DD)) {
-		desc += EM_RXQ_SCAN_INTERVAL;
-		rxdp += EM_RXQ_SCAN_INTERVAL;
-		if (rxq->rx_tail + desc >= rxq->nb_rx_desc)
-			rxdp = &(rxq->rx_ring[rxq->rx_tail +
-				desc - rxq->nb_rx_desc]);
-	}
+	// while ((desc < rxq->nb_rx_desc) &&
+	// 	// (rxdp->status & E1000_RXD_STAT_DD)) {
+	// 	(rxdp->wb.upper.status_error & E1000_RXD_STAT_DD)) {
+	// 	desc += EM_RXQ_SCAN_INTERVAL;
+	// 	rxdp += EM_RXQ_SCAN_INTERVAL;
+	// 	if (rxq->rx_tail + desc >= rxq->nb_rx_desc)
+	// 		rxdp = &(rxq->rx_ring[rxq->rx_tail +
+	// 			desc - rxq->nb_rx_desc]);
+	// }
+
+	// JM - If reached here, we have to implement the same logic as above
+	// Just print the status for now
+	PMD_RX_LOG(WARNING, "eth_em_rx_queue_count is called!!!!!! port_id=%u queue_id=%u rx_tail=%u ",
+		   (unsigned) rxq->port_id, (unsigned) rxq->queue_id,
+		   (unsigned) rxq->rx_tail);
 
 	return desc;
 }
@@ -1970,6 +2597,10 @@ eth_em_rx_descriptor_done(void *rx_queue, uint16_t offset)
 
 	rxdp = &rxq->rx_ring[desc];
 	// return !!(rxdp->status & E1000_RXD_STAT_DD);
+	PMD_RX_LOG(WARNING, "eth_em_rx_descriptor_done is called!!!!!! port_id=%u queue_id=%u rx_tail=%u ",
+		   (unsigned) rxq->port_id, (unsigned) rxq->queue_id,
+		   (unsigned) rxq->rx_tail);
+
 	return !!(rxdp->wb.upper.status_error & E1000_RXD_STAT_DD);
 }
 
@@ -1979,6 +2610,10 @@ eth_em_rx_descriptor_status(void *rx_queue, uint16_t offset)
 	struct em_rx_queue *rxq = rx_queue;
 	volatile uint8_t *status;
 	uint32_t desc;
+
+	PMD_RX_LOG(WARNING, "eth_em_rx_descriptor_status is called!!!!!! port_id=%u queue_id=%u rx_tail=%u ",
+		   (unsigned) rxq->port_id, (unsigned) rxq->queue_id,
+		   (unsigned) rxq->rx_tail);
 
 	if (unlikely(offset >= rxq->nb_rx_desc))
 		return -EINVAL;
@@ -2005,6 +2640,10 @@ eth_em_tx_descriptor_status(void *tx_queue, uint16_t offset)
 	struct em_tx_queue *txq = tx_queue;
 	volatile uint8_t *status;
 	uint32_t desc;
+
+	PMD_TX_LOG(WARNING, "eth_em_tx_descriptor_status is called!!!!!! port_id=%u queue_id=%u tx_tail=%u ",
+		   (unsigned) txq->port_id, (unsigned) txq->queue_id,
+		   (unsigned) txq->tx_tail);
 
 	if (unlikely(offset >= txq->nb_tx_desc))
 		return -EINVAL;
@@ -2482,7 +3121,9 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 	if (hw->mac.type == e1000_82573)
 		E1000_WRITE_REG(hw, E1000_RDTR, 0x20);
 
-	dev->rx_pkt_burst = (eth_rx_burst_t)eth_em_recv_pkts;
+	// dev->rx_pkt_burst = (eth_rx_burst_t)eth_em_recv_pkts;
+	// JM - CHANGE
+	dev->rx_pkt_burst = (eth_rx_burst_t)eth_em_recv_pkts_m2func;
 
 	/* Determine RX bufsize. */
 	rctl_bsize = EM_MAX_BUF_SIZE;

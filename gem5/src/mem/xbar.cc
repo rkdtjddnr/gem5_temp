@@ -150,7 +150,12 @@ BaseXBar::Layer<SrcType, DstType>::Layer(DstType& _port, BaseXBar& _xbar,
     ADD_STAT(utilization, statistics::units::Ratio::get(), "Layer utilization"),
     ADD_STAT(dataOccupancy, statistics::units::Tick::get(), "Layer data occupancy (ticks)"),
     ADD_STAT(headerOccupancy, statistics::units::Tick::get(), "Layer header-only occupancy (ticks) (without data packet)"),
-    ADD_STAT(failOccupancy, statistics::units::Tick::get(), "Layer failed occupancy (ticks)")
+    ADD_STAT(failOccupancy, statistics::units::Tick::get(), "Layer failed occupancy (ticks)"),
+    ADD_STAT(writeReqHeaderOccupancy, statistics::units::Tick::get(), "Layer write request header-only occupancy (ticks)"),
+    ADD_STAT(readReqHeaderOccupancy, statistics::units::Tick::get(), "Layer read request header-only occupancy (ticks)"),
+    ADD_STAT(elseHeaderOccupancy, statistics::units::Tick::get(), "Layer other request header-only occupancy (ticks)"),
+    ADD_STAT(writeRespHeaderOccupancy, statistics::units::Tick::get(), "Layer write response header-only occupancy (ticks)"),
+    ADD_STAT(readRespHeaderOccupancy, statistics::units::Tick::get(), "Layer read response header-only occupancy (ticks)")
 {
     occupancy
         .flags(statistics::nozero);
@@ -168,6 +173,21 @@ BaseXBar::Layer<SrcType, DstType>::Layer(DstType& _port, BaseXBar& _xbar,
         .flags(statistics::nozero);
     
     failOccupancy
+        .flags(statistics::nozero);
+
+    writeReqHeaderOccupancy
+        .flags(statistics::nozero);
+    
+    readReqHeaderOccupancy
+        .flags(statistics::nozero);
+    
+    elseHeaderOccupancy
+        .flags(statistics::nozero);
+    
+    writeRespHeaderOccupancy
+        .flags(statistics::nozero);
+
+    readRespHeaderOccupancy
         .flags(statistics::nozero);
 }
 

@@ -212,6 +212,9 @@ class RequestPort: public Port, public AtomicRequestProtocol,
      */
     virtual void sendRetryResp();
 
+    double getIOXBarReqLayerUtilization(PortID id);
+    double getIOXBarRespLayerUtilization(PortID id);
+
   protected:
     /**
      * Called to receive an address range change from the peer response
@@ -312,6 +315,10 @@ class ResponsePort : public Port, public AtomicResponseProtocol,
      */
     void unbind() override {}
     void bind(Port &peer) override {}
+
+    virtual bool isIOXBarPort() { return false; }
+    virtual double getXBarReqLayerUtilization(PortID id) { return 0.0; }
+    virtual double getXBarRespLayerUtilization(PortID id) { return 0.0; }
 
   public:
     /* The atomic protocol. */
@@ -531,6 +538,44 @@ RequestPort::sendRetryResp()
         TimingRequestProtocol::sendRetryResp(_responsePort);
     } catch (UnboundPortException) {
         reportUnbound();
+    }
+}
+
+inline double 
+RequestPort::getIOXBarReqLayerUtilization(PortID id)
+{
+    try {
+        ResponsePort *responsePort = _responsePort;
+        if (responsePort) {
+            if (responsePort->isIOXBarPort()) {
+                return responsePort->getXBarReqLayerUtilization(id);                
+            } else {
+                return 0.0;
+            }
+        } else {
+            return 0.0;
+        }
+    } catch (UnboundPortException) {
+        return 0.0;
+    }
+}
+
+inline double 
+RequestPort::getIOXBarRespLayerUtilization(PortID id)
+{
+    try {
+        ResponsePort *responsePort = _responsePort;
+        if (responsePort) {
+            if (responsePort->isIOXBarPort()) {
+                return responsePort->getXBarRespLayerUtilization(id);
+            } else {
+                return 0.0;
+            }
+        } else {
+            return 0.0;
+        }
+    } catch (UnboundPortException) {
+        return 0.0;
     }
 }
 

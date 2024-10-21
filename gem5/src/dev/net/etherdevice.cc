@@ -57,25 +57,33 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
                "Number of times the rxRingBuffer fills up"),
       ADD_STAT(txRingBufferFull, statistics::units::Count::get(),
                "Number of times the txRingBuffer fills up"),
+      ADD_STAT(m2funcTxFifoMaxLen, statistics::units::Count::get(),
+               "Maximum length of the m2func txFifo"),
       ADD_STAT(rxFifoNotEmptyDmaBusy, statistics::units::Count::get(),
                "Number of times the rxFifo is not empty but the DMA is busy"),
       ADD_STAT(rxFifoNotEmptyRSSBad, statistics::units::Count::get(),
                "Number of times the rxFifo is not empty but the RSS queue result is bad (target queue is full, but the non-target is not)"),
-      ADD_STAT(rxEnd2EndClk, statistics::units::Second::get(), 
-               "Distribution of end to end ms for received packets"),
-      ADD_STAT(rxEtherLinkClk, statistics::units::Second::get(), 
-               "Distribution of time spent in the Ethernet link for received packets"),
-      ADD_STAT(rxPort2FifoClk, statistics::units::Second::get(), 
-               "Distribution of time spent in the port to fifo for received packets"),
-      ADD_STAT(rxFifo2DmaClk, statistics::units::Second::get(), 
-               "Distribution of time spent in the fifo to start of dma for received packets"),
-      ADD_STAT(rxDma2CoreClk, statistics::units::Second::get(), 
-               "Distribution of time spent in the dma to core for received packets"),
+    //   ADD_STAT(rxEnd2EndClk, statistics::units::Second::get(), 
+    //            "Distribution of end to end ms for received packets"),
+    //   ADD_STAT(rxEtherLinkClk, statistics::units::Second::get(), 
+    //            "Distribution of time spent in the Ethernet link for received packets"),
+    //   ADD_STAT(rxPort2FifoClk, statistics::units::Second::get(), 
+    //            "Distribution of time spent in the port to fifo for received packets"),
+    //   ADD_STAT(rxFifo2DmaClk, statistics::units::Second::get(), 
+    //            "Distribution of time spent in the fifo to start of dma for received packets"),
+    //   ADD_STAT(rxDma2CoreClk, statistics::units::Second::get(), 
+    //            "Distribution of time spent in the dma to core for received packets"),
+      ADD_STAT(rxPacketComeDistance, statistics::units::Tick::get(),
+               "Distribution of Tick between consecutive receive packets comming in rxFifo"),
+      ADD_STAT(rxM2funcReadDistance, statistics::units::Tick::get(),
+               "Distribution of Tick between consecutive reads from M2func"),
+      ADD_STAT(rxRingBufferStartDMADistance, statistics::units::Tick::get(),
+               "Distribution of Tick between consecutive DMA start from the ring buffer"),
       ADD_STAT(postedInterrupts, statistics::units::Count::get(),
                "Number of posts to CPU"),
       ADD_STAT(txBytes, statistics::units::Byte::get(),
-               "Bytes Transmitted"),
-      ADD_STAT(rxBytes, statistics::units::Byte::get(), "Bytes Received"),
+               "Bytes Transmitted through etherlink"),
+      ADD_STAT(rxBytes, statistics::units::Byte::get(), "Bytes Received through etherlink"),
       ADD_STAT(txDMABytes, statistics::units::Byte::get(),
                "Bytes Transmitted by DMA"),
       ADD_STAT(rxDMABytes, statistics::units::Byte::get(),
@@ -95,6 +103,21 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
       ADD_STAT(txTailWriteBytes, statistics::units::Byte::get(),
                 "TX Bytes DMA for tail write"),
       
+      ADD_STAT(txBytesM2func, statistics::units::Byte::get(),
+               "Total Bytes Transmitted by M2func"),
+      ADD_STAT(rxBytesM2func, statistics::units::Byte::get(),
+                "Total Bytes Received by M2func"),
+      ADD_STAT(txBytesM2funcData, statistics::units::Byte::get(),
+                "Actual Data Bytes Transmitted by M2func"),
+      ADD_STAT(rxBytesM2funcData, statistics::units::Byte::get(),
+                "Actual Data Bytes Received by M2func"),
+      ADD_STAT(txBytesM2funcDesc, statistics::units::Byte::get(),
+                "Actual Descriptor Bytes Transmitted by M2func"),
+      ADD_STAT(rxBytesM2funcDesc, statistics::units::Byte::get(),
+                "Actual Descriptor Bytes Received by M2func"),
+      ADD_STAT(txBytesM2funcBitMask, statistics::units::Byte::get(),
+                "Actual BitMask Bytes Transmitted by M2func"),
+
       ADD_STAT(txPackets, statistics::units::Count::get(),
                "Number of Packets Transmitted"),
       ADD_STAT(rxPackets, statistics::units::Count::get(),
@@ -143,6 +166,22 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
                     statistics::units::Byte, statistics::units::Second>::get(),
                 "TX Bandwidth by DMA for tail write (MB/s)",
                 (txTailWriteBytes / 1000000) / simSeconds),
+      ADD_STAT(txM2funcBandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+                "TX Bandwidth by M2func (MB/s)",
+                (txBytesM2func / 1000000) / simSeconds),
+      ADD_STAT(rxM2funcBandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+                "RX Bandwidth by M2func (MB/s)",
+                (rxBytesM2func / 1000000) / simSeconds),
+      ADD_STAT(txM2funcEffectiveBandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+                "TX Effective Bandwidth by M2func (MB/s)",
+                ((txBytesM2funcData + txBytesM2funcDesc + txBytesM2funcBitMask) / 1000000) / simSeconds),
+      ADD_STAT(rxM2funcEffectiveBandwidth, statistics::units::Rate<
+                    statistics::units::Byte, statistics::units::Second>::get(),
+                "RX Effective Bandwidth by M2func (MB/s)",
+                ((rxBytesM2funcData + rxBytesM2funcDesc) / 1000000) / simSeconds),
       ADD_STAT(txIpChecksums, statistics::units::Count::get(),
                "Number of tx IP Checksums done by device"),
       ADD_STAT(rxIpChecksums, statistics::units::Count::get(),
@@ -261,12 +300,22 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
         .precision(0);
     rxFifoNotEmptyRSSBad
         .precision(0);
+    
+    rxPacketComeDistance
+        .init(100)
+        .flags(statistics::pdf);
+    rxM2funcReadDistance
+        .init(100)
+        .flags(statistics::pdf);
+    rxRingBufferStartDMADistance
+        .init(100)
+        .flags(statistics::pdf);
 
-    rxEnd2EndClk.init(100);
-    rxEtherLinkClk.init(100);
-    rxPort2FifoClk.init(100);
-    rxFifo2DmaClk.init(100);
-    rxDma2CoreClk.init(100);
+    // rxEnd2EndClk.init(100);
+    // rxEtherLinkClk.init(100);
+    // rxPort2FifoClk.init(100);
+    // rxFifo2DmaClk.init(100);
+    // rxDma2CoreClk.init(100);
 
     postedInterrupts
         .precision(0);
@@ -300,6 +349,30 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
     
     rxTailWriteBytes
         .prereq(rxTailWriteBytes);
+
+    txTailWriteBytes
+        .prereq(txTailWriteBytes);
+    
+    txBytesM2func
+        .prereq(txBytesM2func);
+    
+    rxBytesM2func
+        .prereq(rxBytesM2func);
+
+    txBytesM2funcData
+        .prereq(txBytesM2funcData);
+    
+    rxBytesM2funcData
+        .prereq(rxBytesM2funcData);
+    
+    txBytesM2funcDesc
+        .prereq(txBytesM2funcDesc);
+    
+    rxBytesM2funcDesc
+        .prereq(rxBytesM2funcDesc);
+    
+    txBytesM2funcBitMask
+        .prereq(txBytesM2funcBitMask);
 
     txPackets
         .prereq(txBytes);
@@ -387,6 +460,22 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
     txTailWriteBandwidth
         .precision(0)
         .prereq(txTailWriteBytes);
+    
+    txM2funcBandwidth
+        .precision(0)
+        .prereq(txBytesM2func);
+    
+    rxM2funcBandwidth
+        .precision(0)
+        .prereq(rxBytesM2func);
+    
+    txM2funcEffectiveBandwidth
+        .precision(0)
+        .prereq(txBytesM2funcData);
+    
+    rxM2funcEffectiveBandwidth
+        .precision(0)
+        .prereq(rxBytesM2funcData);
     
     totBandwidth
         .precision(0)

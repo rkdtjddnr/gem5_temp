@@ -1275,6 +1275,22 @@ class Packet : public Printable
     }
 
     /**
+     * Copy data into the packet from the provided pointer. 
+     * For the given size
+     * 
+     */
+    void
+    setData(const uint8_t *p, size_t size)
+    {
+        assert(p != getPtr<uint8_t>() || flags.isSet(STATIC_DATA));
+        assert(size <= getSize());
+
+        if (p != getPtr<uint8_t>()) {
+            std::memcpy(getPtr<uint8_t>(), p, size);
+        }
+    }
+
+    /**
      * Copy data into the packet from the provided block pointer,
      * which is aligned to the given block size.
      */

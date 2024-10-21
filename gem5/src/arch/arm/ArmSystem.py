@@ -70,7 +70,8 @@ class ArmSystem(System):
         "True if ASID is 16 bits in AArch64 (ARMv8)")
     have_sve = Param.Bool(True,
         "True if SVE is implemented (ARMv8)")
-    sve_vl = Param.SveVectorLength(1,
+    # JM - to set vector length as 64B
+    sve_vl = Param.SveVectorLength(4,
         "SVE vector length in quadwords (128-bit)")
     have_lse = Param.Bool(True,
         "True if LSE is implemented (ARMv8.1)")

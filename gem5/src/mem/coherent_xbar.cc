@@ -423,6 +423,13 @@ CoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
                 reqLayers[mem_side_port_id]->dataOccupancy += packetFinishTime - curTick();
             } else {
                 reqLayers[mem_side_port_id]->headerOccupancy += packetFinishTime - curTick();
+                if (pkt->cmd == MemCmd::WriteReq || pkt->cmd == MemCmd::WriteLineReq) {
+                    reqLayers[mem_side_port_id]->writeReqHeaderOccupancy += packetFinishTime - curTick();
+                } else if (pkt->cmd == MemCmd::ReadReq) {
+                    reqLayers[mem_side_port_id]->readReqHeaderOccupancy += packetFinishTime - curTick();
+                } else {
+                    reqLayers[mem_side_port_id]->elseHeaderOccupancy += packetFinishTime - curTick();
+                }
             }
         }
 
@@ -637,6 +644,13 @@ CoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
         respLayers[cpu_side_port_id]->dataOccupancy += packetFinishTime - curTick();
     } else {
         respLayers[cpu_side_port_id]->headerOccupancy += packetFinishTime - curTick();
+        if (pkt->cmd == MemCmd::WriteResp) {
+            respLayers[cpu_side_port_id]->writeRespHeaderOccupancy += packetFinishTime - curTick();
+        } else if (pkt->cmd == MemCmd::ReadResp) {
+            respLayers[cpu_side_port_id]->readRespHeaderOccupancy += packetFinishTime - curTick();
+        } else {
+            respLayers[cpu_side_port_id]->elseHeaderOccupancy += packetFinishTime - curTick();
+        }
     }
 
     // stats updates

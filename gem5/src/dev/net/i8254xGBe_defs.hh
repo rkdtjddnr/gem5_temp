@@ -77,6 +77,7 @@ const uint32_t REG_RDTR     = 0x02820;
 const uint32_t REG_RXDCTL   = 0x02828;
 const uint32_t REG_RQDPC    = 0x02830;
 const uint32_t REG_RADV     = 0x0282C;
+const uint32_t REG_RXM2FUNC = 0x02840; 
 const uint32_t REG_TCTL     = 0x00400;
 /* RSS registers */
 const uint32_t REG_MRQC     = 0x05818; /* Multiple Receive Control - RW */
@@ -95,6 +96,7 @@ const uint32_t REG_TXDCTL   = 0x03828;
 const uint32_t REG_TADV     = 0x0382C;
 const uint32_t REG_TDWBAL   = 0x03838;
 const uint32_t REG_TDWBAH   = 0x0383C;
+const uint32_t REG_TXM2FUNC = 0x03840;
 const uint32_t REG_CRCERRS  = 0x04000;
 const uint32_t REG_RXCSUM   = 0x05000;
 const uint32_t REG_RLPML    = 0x05004;
@@ -212,6 +214,8 @@ inline uint32_t E1000_RXDCTL(int _n) { return ((_n) < 4 ? (REG_RXDCTL + ((_n) * 
 				 (0x0C028 + ((_n) * 0x40))); }
 inline uint32_t E1000_RQDPC(int _n) { return ((_n) < 4 ? (REG_RQDPC + ((_n) * 0x100)) : \
 			 (0x0C030 + ((_n) * 0x40))); }
+inline uint32_t E1000_RXM2FUNC(int _n) { return ((_n) < 4 ? (REG_RXM2FUNC + ((_n) * 0x100)) : \
+                         (0x0C040 + ((_n) * 0x40))); }
 inline uint32_t E1000_TDBAL(int _n) { return ((_n) < 4 ? (REG_TDBAL + ((_n) * 0x100)) : \
 			 (0x0E000 + ((_n) * 0x40))); }
 inline uint32_t E1000_TDBAH(int _n) { return ((_n) < 4 ? (REG_TDBAH + ((_n) * 0x100)) : \
@@ -230,6 +234,8 @@ inline uint32_t E1000_TDWBAL(int _n) { return ((_n) < 4 ? (REG_TDWBAL + ((_n) * 
 				 (0x0E038 + ((_n) * 0x40))); }
 inline uint32_t E1000_TDWBAH(int _n) { return ((_n) < 4 ? (REG_TDWBAH + ((_n) * 0x100)) : \
 				 (0x0E03C + ((_n) * 0x40))); }
+inline uint32_t E1000_TXM2FUNC(int _n) { return ((_n) < 4 ? (REG_TXM2FUNC + ((_n) * 0x100)) : \
+                         (0x0E040 + ((_n) * 0x40))); }
 
 /* RSS RETA */
 inline uint32_t E1000_RETA(int _n) { return (REG_RETA + ((_n) * 4)); }
@@ -303,6 +309,44 @@ struct RxDesc
     };
 };
 
+struct RxM2funcDesc
+{
+    union
+    {
+        struct
+        {
+            uint16_t len;
+            uint16_t csum;
+            uint8_t status;
+            uint8_t errors;
+            uint16_t vlan; 
+            // total 64 bits (8 bytes)
+        } legacy;
+        struct
+        {
+            uint16_t rss_type:4;
+            uint16_t pkt_type:12;
+            uint16_t __reserved1:5;
+            uint16_t header_len:10;
+            uint16_t sph:1;
+            union
+            {
+                struct
+                {
+                    uint16_t id;
+                    uint16_t csum;
+                };
+                uint32_t rss_hash;
+            };
+            uint32_t status:20;
+            uint32_t errors:12;
+            uint16_t pkt_len;
+            uint16_t vlan_tag;
+            // total 128 bits (16 bytes)
+        } adv_wb ; 
+    };
+};
+
 struct TxDesc
 {
     uint64_t d1;
@@ -371,6 +415,60 @@ inline int getTsoLen(TxDesc *d) { assert(isType(d, TXD_ADVDATA)); return bits(d-
 inline int utcmd(TxDesc *d) { assert(isContext(d)); return bits(d->d2,24,31); }
 } // namespace txd_op
 
+
+// CXL.mem tx descriptor parsing
+namespace cxlMemTxdOp
+{
+const uint8_t CXL_M_TXD_CNXT = 0x0;
+const uint8_t CXL_M_TXD_DATA = 0x1;
+const uint8_t CXL_M_TXD_ADVCNXT = 0x2;
+const uint8_t CXL_M_TXD_ADVDATA = 0x3;
+
+inline bool cxlIsLegacy(uint64_t d) { return !bits(d,29,29); }
+inline uint8_t cxlGetType(uint64_t d) { return bits(d, 23,20); }
+inline bool cxlIsType(uint64_t d, uint8_t type) { return cxlGetType(d) == type; }
+inline bool cxlIsTypes(uint64_t d, uint8_t t1, uint8_t t2) { return cxlIsType(d, t1) || cxlIsType(d, t2); }
+inline bool cxlIsAdvDesc(uint64_t d) { return !cxlIsLegacy(d) && cxlIsTypes(d, CXL_M_TXD_ADVDATA, CXL_M_TXD_ADVCNXT);  }
+inline bool cxlIsContext(uint64_t d) { return !cxlIsLegacy(d) && cxlIsTypes(d, CXL_M_TXD_CNXT, CXL_M_TXD_ADVCNXT); }
+inline bool cxlIsData(uint64_t d) { return !cxlIsLegacy(d) && cxlIsTypes(d, CXL_M_TXD_DATA, CXL_M_TXD_ADVDATA); }
+
+inline Addr cxlGetLen(uint64_t d) { if (cxlIsLegacy(d)) return bits(d,15,0); else return bits(d, 17,0); }
+
+inline bool cxlIde(uint64_t d)  { return bits(d, 31,31) && (cxlGetType(d) == CXL_M_TXD_DATA || cxlIsLegacy(d)); }
+inline bool cxlVle(uint64_t d)  { assert(cxlIsLegacy(d) || cxlIsData(d)); return bits(d, 30,30); }
+inline bool cxlRs(uint64_t d)   { return bits(d, 27,27); }
+inline bool cxlIc(uint64_t d)   { assert(cxlIsLegacy(d) || cxlIsData(d)); return cxlIsLegacy(d) && bits(d, 26,26); }
+inline bool cxlTse(uint64_t d)  {
+    if (cxlIsTypes(d, CXL_M_TXD_CNXT, CXL_M_TXD_DATA))
+        return bits(d, 26,26);
+    if (cxlIsType(d, CXL_M_TXD_ADVDATA))
+        return bits(d, 31, 31);
+    return false;
+}
+
+inline bool cxlIfcs(uint64_t d) { assert(cxlIsLegacy(d) || cxlIsData(d)); return bits(d, 25,25); }
+inline bool cxlEop(uint64_t d)  { assert(cxlIsLegacy(d) || cxlIsData(d)); return bits(d, 24,24); }
+inline bool cxlIp(uint64_t d)   { assert(cxlIsContext(d)); return bits(d, 25,25); }
+inline bool cxlTcp(uint64_t d)  { assert(cxlIsContext(d)); return bits(d, 24,24); }
+
+inline uint8_t cxlGetCso(uint64_t d) { assert(cxlIsLegacy(d)); return bits(d, 23,16); }
+inline uint8_t cxlGetCss(uint64_t d) { assert(cxlIsLegacy(d)); return bits(d, 47,40); }
+
+inline bool cxlIxsm(uint64_t d)  { return cxlIsData(d) && bits(d, 40,40); }
+inline bool cxlTxsm(uint64_t d)  { return cxlIsData(d) && bits(d, 41,41); }
+
+inline int cxlMss(uint64_t d) { assert(cxlIsContext(d)); return bits(d, 63,48); }
+inline int cxlHdrlen(uint64_t d1, uint64_t d2) {
+    assert(cxlIsContext(d2));
+    if (!cxlIsAdvDesc(d2))
+        return bits(d2,47,40);
+    return bits(d2, 47,40) + bits(d1, 8,0) + bits(d1, 15, 9);
+
+}
+
+inline int cxlGetTsoLen(uint64_t d) { assert(cxlIsType(d, CXL_M_TXD_ADVDATA)); return bits(d, 63,46); }
+inline int cxlUtcmd(uint64_t d) { assert(cxlIsContext(d)); return bits(d,24,31); }
+} // namespace cxlMemTxdOp
 
 #define ADD_FIELD32(NAME, OFFSET, BITS) \
     inline uint32_t NAME() { return bits(_data, OFFSET+BITS-1, OFFSET); } \

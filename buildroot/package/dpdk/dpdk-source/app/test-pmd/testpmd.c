@@ -2009,6 +2009,7 @@ flush_fwd_rx_queues(void)
 				*/
 				prev_tsc = rte_rdtsc();
 				do {
+					printf("flush_fwd_rx_queues: rte_eth_rx_burst j=%d, rxp=%d, rxq=%d\n", j, rxp, rxq);
 					nb_rx = rte_eth_rx_burst(port_id, rxq,
 						pkts_burst, MAX_PKT_BURST);
 					for (i = 0; i < nb_rx; i++)

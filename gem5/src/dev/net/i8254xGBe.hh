@@ -97,6 +97,16 @@ class IGbE : public EtherDevice
     bool txTick;
     bool txFifoTick;
 
+    enum class CommunicationType : uint8_t {
+      RING = 0,
+      M2FUNC = 1
+    };
+    CommunicationType commType = CommunicationType::RING;
+
+    bool is_dpdk_setup_step;
+
+    unsigned flitSize; // Flit size in bytes
+
     //jm - this should be multiple arrays
     // bool rxDmaPacket;
     bool rxDmaPacketArray[MAX_QUEUE_SIZE];
@@ -172,6 +182,8 @@ class IGbE : public EtherDevice
     int candidateTxQueue;
     bool successTxQueueSend;
     void updateDropFSM(int rxFifoFull, int rxRingFull, int txRingFull, int txFifoFull);
+    void updateDropFSMM2func(int rxFifoFull, int pcieBusy, int txRingFull);
+    double getPCIeUtilization();
     void txWire();
 
     /** Write an interrupt into the interrupt pending register and check mask
@@ -590,6 +602,160 @@ class IGbE : public EtherDevice
     //jm - this should be multiple arrays
     TxDescCache *txDescCacheArray[MAX_QUEUE_SIZE];
 
+    class RxM2funcContext : public Serializable
+    {
+      protected:
+        IGbE *igbe;
+        int queueID;
+        int rxContextFifoSize;
+        std::string _name;
+
+        /** To handle the case when the ethernet packet size is larger than CXL flit size
+         * and the packet is split into multiple flits. It indicates whether the packet is split or not
+         */
+        bool remainPacket;
+
+        /** Bytes of packet that have been sent to the host */
+        unsigned bytesSent;
+
+        /** Variable to head with header/data completion events */
+        int splitCount;        
+
+        /** Number of rx packet received */
+        uint64_t rxCount;   
+
+        struct m2funcRxFifoEntry {
+          uint64_t rxCount;
+          uint64_t packetLength; // Bytes - this includes the dummy bytes to align the packet size to flit size
+          uint64_t descLength;
+          uint64_t dataLength;
+          uint8_t * packetData;
+        };
+        // M2func Rx Queue - store the packet, that is received from Ethernet and processed by NIC
+        std::deque<m2funcRxFifoEntry> m2funcRxFifo;  
+
+        // For stat
+        Tick lastRxM2funcReadTick; // last tick when the M2func RD request is comming from host
+        
+
+      public:
+        RxM2funcContext(IGbE *i, std::string n, int _rxContextFifoSize, int qid);
+        ~RxM2funcContext();
+        std::string name() { return _name; }
+
+        // Check m2funcRxFifo size is full or not
+        bool m2funcRxFifoFull() { return m2funcRxFifo.size() >= rxContextFifoSize; }
+        // it corresponds to writePacket in RxDescCache
+        void processRxPacket(EthPacketPtr packet); 
+        bool rxM2funcStateMachine();
+        void readM2funcPacket(PacketPtr pkt); // receive packet from host and make response 
+
+        void updateRxM2funcReadStat(Tick tick) { 
+          if (lastRxM2funcReadTick != 0) {
+            Tick diff = tick - lastRxM2funcReadTick;
+            igbe->etherDeviceStats.rxM2funcReadDistance.sample(diff);
+          }
+
+          lastRxM2funcReadTick = tick;
+        }
+
+        void serialize(CheckpointOut &cp) const override;
+        void unserialize(CheckpointIn &cp) override;    
+    };
+
+    RxM2funcContext *rxM2funcContextArray[MAX_QUEUE_SIZE];
+
+    class TxM2funcContext : public Serializable
+    {
+      protected:
+        IGbE *igbe;
+        int queueID;
+        int txContextFifoSize;
+        std::string _name;
+
+        /** Set when the packet is ready to be transmitted through txFifo */
+        bool pktDone;
+        /** The ethernet packet size that is set within TX descriptor, currently processing */
+        uint64_t ethPktSize;
+        /** The TX descriptor, currently processing */
+        uint64_t txDesc;
+        /** The received packet size. We have to connect received packet from host until the length of ethPktSize to send through txFifo */
+        uint64_t receivedPktSize;
+
+        /** descriptor size (Bytes) of TX */
+        size_t descSize;
+
+        bool isTcp; // ?
+        bool pktWaiting; // ?
+        bool pktMultiDesc; // ?
+
+        // Make struct for tso variables
+        struct TSOEntry {
+          bool tsoEnabled;
+          bool txPktExists;
+          uint32_t mss; //Maximum Segment Size
+          uint32_t headerLen; //header len (10 bits)
+          uint32_t totalLen; //paylen
+          //below is control variables used in NIC
+          //set after header packet is sent
+          bool loadedHeader;
+          //set after header is included in ethpacket
+          bool ethPacketHasHeader;
+          //updated when each packet is sent
+          uint32_t usedLen;
+          uint32_t prevSeq;
+          int tsoPkts;
+        };
+        TSOEntry tsoEntry;
+
+        /** Number of tx packet sent */
+        uint64_t txCount;
+
+        struct m2funcTxFifoEntry {
+          uint64_t txCount;
+          uint64_t packetLength; // Bytes
+          uint8_t * packetData;
+        };
+
+        // Store the packet, that is from host and this will be processed to make it as Ethernet packet, and then push to txFifo
+        std::deque<m2funcTxFifoEntry> m2funcTxFifo;
+
+        // bitmask - indicating the packet success/fail to send
+        static const int bitmask_expand_factor = 2; // expansion factor for bitmask
+        static const int bitmask_window_size_bits = 32; // size of window for each read request (32-bit)
+        static const int initial_bitmask_size_bytes = 64; // initial size of bitmask in bytes (64 bytes)
+        
+        struct bitmaskWrapper {
+          uint8_t * bitmask; // bitmask
+          uint64_t bitmaskSize; // size of bitmask in bits
+          uint64_t updateCursor; // Cursor for update the bitmask
+          uint64_t readCursor; // Cursor for read the bitmask
+        };
+        bitmaskWrapper bitmaskWrap;
+
+      public:
+        TxM2funcContext(IGbE *i, std::string n, int _txContextFifoSize, int qid);
+        ~TxM2funcContext();
+        std::string name() { return _name; }
+
+        // Check m2funcTxFifo size is full or not
+        bool m2funcTxFifoFull() { return m2funcTxFifo.size() >= txContextFifoSize; }
+        void processTxPacket(EthPacketPtr ethpkt, int dataSize, uint8_t* data, bool isHeader, bool ixsm, bool txsm);
+        bool txM2funcStateMachine();
+        void writeM2funcPacket(PacketPtr pkt); // receive packet from host and push it to txCXLMemFifo
+
+        bool ethPktDone() { return pktDone; }
+
+        void expandBitmask();
+        void updateBitmask(bool success);
+        void readBitmask(PacketPtr pkt);
+
+        void serialize(CheckpointOut &cp) const override;
+        void unserialize(CheckpointIn &cp) override;
+    };
+
+    TxM2funcContext *txM2funcContextArray[MAX_QUEUE_SIZE];
+
   public:
     PARAMS(IGbE);
 
@@ -610,11 +776,34 @@ class IGbE : public EtherDevice
     bool ethRxPkt(EthPacketPtr packet);
     void ethTxDone();
 
+    Tick lastRxM2funcPacketComeTick; // last tick when the ethernet packet is ready to be sent to host
+    Tick lastRxDMAStartTick; // last tick when the DMA start
+
+    void updateRxPacketReceiveStat(Tick tick) { 
+      if (lastRxM2funcPacketComeTick != 0) {
+        Tick diff = tick - lastRxM2funcPacketComeTick;
+        etherDeviceStats.rxPacketComeDistance.sample(diff);
+      }
+
+      lastRxM2funcPacketComeTick = tick;
+    }
+    
+    void updateRxRingBufferDMAStartStat(Tick tick) {
+      if (lastRxDMAStartTick != 0) { 
+        Tick diff = tick - lastRxDMAStartTick;
+        etherDeviceStats.rxRingBufferStartDMADistance.sample(diff);
+      }
+
+      lastRxDMAStartTick = tick;
+    }
+
     void serialize(CheckpointOut &cp) const override;
     void unserialize(CheckpointIn &cp) override;
 
     DrainState drain() override;
     void drainResume() override;
+    // For M2func
+    void enableSmTx();
 
 };
 

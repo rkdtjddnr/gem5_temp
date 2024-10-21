@@ -55,6 +55,7 @@
 #include "sim/system.hh"
 // Loadgen debug flag for DPDK
 #include "debug/EthernetDpdk.hh"
+#include "i8254xGBe.hh"
 
 namespace gem5
 {
@@ -65,7 +66,7 @@ using namespace networking;
 IGbE::IGbE(const Params &p)
     : EtherDevice(p), adq(p.adq_idx), etherInt(NULL), numQueues(p.num_queues),     // SHIN. add adq // jm. add numQueues
       rxFifo(p.rx_fifo_size, true), txFifo(p.tx_fifo_size, false), inTick(false),
-      rxTick(false), txTick(false), txFifoTick(false), //rxDmaPacket(false), pktOffset(0), 
+      rxTick(false), txTick(false), txFifoTick(false), flitSize(p.flit_size), // TODO - JM: add flitSize 
       fetchDelay(p.fetch_delay), wbDelay(p.wb_delay),
       fetchCompDelay(p.fetch_comp_delay), wbCompDelay(p.wb_comp_delay),
       rxWriteDelay(p.rx_write_delay), txReadDelay(p.tx_read_delay),
@@ -86,14 +87,46 @@ IGbE::IGbE(const Params &p)
         panic("Number of queues exceeds maximum allowed\n");
     }
 
-    // Initialize rxDescCacheArray and txDescCacheArray
-    for (int i = 0; i < numQueues; i++) {
-        rxDescCacheArray[i] = new RxDescCache(this, name()+".RxDescArray"+std::to_string(i), p.rx_desc_cache_size, i);
-        txDescCacheArray[i] = new TxDescCache(this, name()+".TxDescArray"+std::to_string(i), p.tx_desc_cache_size, i);
-    }
     DPRINTF(EthernetDpdk, "Number of queues: %d\n", numQueues);
 
+    // Set communication type
+    if (p.is_m2func) {
+        commType = CommunicationType::M2FUNC;
+    } else {
+        commType = CommunicationType::RING;
+    }
+    printf("Communication Type: %s\n", commType == CommunicationType::RING ? "RING" : "M2FUNC");
+
+    // Initialize rxDescCacheArray and txDescCacheArray
+    for (int i = 0; i < numQueues; i++) {
+        if (commType == CommunicationType::RING) {
+            rxDescCacheArray[i] = new RxDescCache(this, name()+".RxDescArray"+std::to_string(i), p.rx_desc_cache_size, i);
+            txDescCacheArray[i] = new TxDescCache(this, name()+".TxDescArray"+std::to_string(i), p.tx_desc_cache_size, i);
+        } else if (commType == CommunicationType::M2FUNC) {
+            // JM. For now, just set m2funcFifo size to 2. Maybe 1 is enough.
+            rxM2funcContextArray[i] = new RxM2funcContext(this, name()+".RxM2funcContextArray"+std::to_string(i), 2, i);
+            txM2funcContextArray[i] = new TxM2funcContext(this, name()+".TxM2funcContextArray"+std::to_string(i), 2, i);
+            if (!rxM2funcContextArray[i] || !txM2funcContextArray[i]) {
+                panic("Failed to initialize RxM2funcContext or TxM2funcContext for queue %d\n", i);
+            } else {
+                printf("Successfully initialized RxM2funcContext and TxM2funcContext for queue %d with rxM2funcContextArray[%d]: %p, txM2funcContextArray[%d]: %p\n", i, i, rxM2funcContextArray[i], i, txM2funcContextArray[i]);
+            }
+        } else {
+            panic("Invalid communication type\n");
+        }
+    }
+
+    if (p.is_dpdk_setup_step) {
+        is_dpdk_setup_step = true;
+        printf("This is DPDK setup step!!! So RDT, TDT will act as normal DPDK\n");
+    } else {
+        is_dpdk_setup_step = false;
+        printf("This is not DPDK setup step!!! So RDT, TDT will act as M2func\n");
+    }
+
     lastInterrupt = 0;
+    lastRxM2funcPacketComeTick = 0;
+    lastRxDMAStartTick = 0;
     prevRSSQueue = 0;
     candidateTxQueue = 0;
     successTxQueueSend = false; // set to true when the candidateTxQueue's packet is successfully sent to the txFifo
@@ -103,7 +136,7 @@ IGbE::IGbE(const Params &p)
     // Initialize rxPacketArray & txPacketArray
     for (int i = 0; i < MAX_QUEUE_SIZE; i++) {
         rxPacketArray[i] = nullptr;
-        txPacketArray[i] = NULL;
+        txPacketArray[i] = nullptr;
     }
 
     // Initialize pktOffsetArray
@@ -241,9 +274,10 @@ IGbE::read(PacketPtr pkt)
     assert(bar == 0);
 
     // Only 32bit accesses allowed
-    assert(pkt->getSize() == 4);
+    // assert(pkt->getSize() == 4);
 
-    DPRINTF(Ethernet, "Read device register %#X\n", daddr);
+    DPRINTF(Ethernet, "Read device register addr : %#X daddr: %#X with size: %d\n", pkt->getAddr(), daddr, pkt->getSize());
+    // printf("Read device register addr : %#X daddr: %#X with size: %d\n", pkt->getAddr(), daddr, pkt->getSize());
 
     //
     // Handle read of register here
@@ -338,8 +372,10 @@ IGbE::read(PacketPtr pkt)
       case REG_RDTR:
         pkt->setLE<uint32_t>(regs.rdtr());
         if (regs.rdtr.fpd()) {
-            for (int i = 0; i < numQueues; i++) {
-                rxDescCacheArray[i]->writeback(0);
+            if (commType == CommunicationType::RING) {
+                for (int i = 0; i < numQueues; i++) {
+                    rxDescCacheArray[i]->writeback(0);
+                }
             }
             // rxDescCache.writeback(0);
             DPRINTF(EthernetIntr,
@@ -450,6 +486,16 @@ IGbE::read(PacketPtr pkt)
             pkt->setLE<uint32_t>(regs.rdt_array[queueid]());
             uint32_t rdt = regs.rdt_array[queueid]();
             DPRINTF(EthernetDpdk, "Read RDT[%d]: %d\n", queueid, rdt);
+        } else if (isRegisterAddress<E1000_RXM2FUNC>(daddr, queueid, numQueues)) {
+            assert(queueid < numQueues);
+            assert(queueid >= 0);
+            if (commType == CommunicationType::M2FUNC) {
+                DPRINTF(EthernetDpdk, "RXM2func[%d] Read Comming from host to RXM2FUNC with length: %d\n", queueid, pkt->getSize());
+                // printf("RXM2func[%d] Read Comming from host to RXM2FUNC with length: %d\n", queueid, pkt->getSize());
+                rxM2funcContextArray[queueid]->readM2funcPacket(pkt);
+            } else {
+                panic("Invalid communication type with - RXM2FUNC read!!!\n");
+            }
         } else if (isRegisterAddress<E1000_RXDCTL>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
@@ -488,6 +534,17 @@ IGbE::read(PacketPtr pkt)
             pkt->setLE<uint32_t>(regs.tdt_array[queueid]());
             uint32_t tdt = regs.tdt_array[queueid]();
             DPRINTF(EthernetDpdk, "Read TDT[%d]: %d\n", queueid, tdt);
+        } else if (isRegisterAddress<E1000_TXM2FUNC>(daddr, queueid, numQueues)) {
+            assert(queueid < numQueues);
+            assert(queueid >= 0);
+            if (commType == CommunicationType::M2FUNC) {
+                DPRINTF(EthernetDpdk, "TXM2func[%d] Read Comming from host to TXM2FUNC with length: %d\n", queueid, pkt->getSize());
+                // printf("TXM2func[%d] Read Comming from host to TXM2FUNC with length: %d\n", queueid, pkt->getSize());
+                // Set bitmask as response
+                txM2funcContextArray[queueid]->readBitmask(pkt);
+            } else {
+                panic("Invalid communication type with - TXM2FUNC read!!!\n");
+            }
         } else if (isRegisterAddress<E1000_TXDCTL>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
@@ -524,7 +581,7 @@ IGbE::read(PacketPtr pkt)
             !IN_RANGE(daddr, REG_RAL, RCV_ADDRESS_TABLE_SIZE*8) &&
             !IN_RANGE(daddr, REG_MTA, MULTICAST_TABLE_SIZE*4) &&
             !IN_RANGE(daddr, REG_CRCERRS, STATS_REGS_SIZE))
-            panic("Read request to unknown register number: %#x\n", daddr);
+            panic("Read request to unknown register number: %#x, size: %d\n", daddr, pkt->getSize());
         else
             pkt->setLE<uint32_t>(0);
       }
@@ -549,18 +606,21 @@ IGbE::write(PacketPtr pkt)
     assert(bar == 0);
 
     // Only 32bit accesses allowed
-    assert(pkt->getSize() == sizeof(uint32_t));
+    // assert(pkt->getSize() == sizeof(uint32_t));
 
-    DPRINTF(Ethernet, "Wrote device register %#X value %#X\n",
-            daddr, pkt->getLE<uint32_t>());
+    // DPRINTF(Ethernet, "Wrote device register %#X value %#X\n",
+            // daddr, pkt->getLE<uint32_t>());
     // printf("Wrote device register %#X value %#X\n", daddr, pkt->getLE<uint32_t>());
 
     //printf("Wrote value %X to address %X\n", pkt->getLE<uint32_t>(), daddr);
-
+    // printf("Write to address: %#X, daddr: %#X, size: %d\n", pkt->getAddr(), daddr, pkt->getSize());
     //
     // Handle write of register here
     //
-    uint32_t val = pkt->getLE<uint32_t>();
+    uint32_t val = 0;
+    if (pkt->getSize() == sizeof(uint32_t)) {
+        val = pkt->getLE<uint32_t>();
+    }
 
     Regs::RCTL oldrctl;
     Regs::TCTL oldtctl;
@@ -704,8 +764,10 @@ IGbE::write(PacketPtr pkt)
         oldrctl = regs.rctl;
         regs.rctl = val;
         if (regs.rctl.rst()) {
-            for (int i = 0; i < numQueues; i++) {
-                rxDescCacheArray[i]->reset();
+            if (commType == CommunicationType::RING) {
+                for (int i = 0; i < numQueues; i++) {
+                    rxDescCacheArray[i]->reset();
+                }
             }
             // rxDescCache.reset();
             DPRINTF(EthernetSM, "RXS: Got RESET!\n");
@@ -728,7 +790,8 @@ IGbE::write(PacketPtr pkt)
         restartClock();
         if (regs.tctl.en() && !oldtctl.en()) {
             for (int i = 0; i < numQueues; i++) {
-                txDescCacheArray[i]->reset();
+                if (commType == CommunicationType::RING)
+                    txDescCacheArray[i]->reset();
             }
             // txDescCache.reset();
         }
@@ -886,21 +949,24 @@ IGbE::write(PacketPtr pkt)
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.rdba_array[queueid].rdbal(val & ~mask(4));
-            rxDescCacheArray[queueid]->areaChanged();
+            if (commType == CommunicationType::RING) 
+                rxDescCacheArray[queueid]->areaChanged();
             uint32_t rdbal = regs.rdba_array[queueid].rdbal();
             DPRINTF(EthernetDpdk, "Write RDBAL[%d]: %#x\n", queueid, rdbal);
         } else if (isRegisterAddress<E1000_RDBAH>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.rdba_array[queueid].rdbah(val);
-            rxDescCacheArray[queueid]->areaChanged();
+            if (commType == CommunicationType::RING) 
+                rxDescCacheArray[queueid]->areaChanged();
             uint32_t rdbah = regs.rdba_array[queueid].rdbah();
             DPRINTF(EthernetDpdk, "Write RDBAH[%d]: %#x\n", queueid, rdbah);
         } else if (isRegisterAddress<E1000_RDLEN>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.rdlen_array[queueid] = val & ~mask(7);
-            rxDescCacheArray[queueid]->areaChanged();
+            if (commType == CommunicationType::RING) 
+                rxDescCacheArray[queueid]->areaChanged();
             uint32_t rdlen = regs.rdlen_array[queueid]();
             DPRINTF(EthernetDpdk, "Write RDLEN[%d]: %#x\n", queueid, rdlen);
         } else if (isRegisterAddress<E1000_SRRCTL>(daddr, queueid, numQueues)) {
@@ -911,7 +977,8 @@ IGbE::write(PacketPtr pkt)
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.rdh_array[queueid] = val;
-            rxDescCacheArray[queueid]->areaChanged();
+            if (commType == CommunicationType::RING)
+                rxDescCacheArray[queueid]->areaChanged();
             DPRINTF(EthernetDpdk, "Write RDH[%d]: %d\n", queueid, regs.rdh_array[queueid]());
         } else if (isRegisterAddress<E1000_RDT>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
@@ -920,12 +987,23 @@ IGbE::write(PacketPtr pkt)
             DPRINTF(EthernetDpdk, "RXS: RDT Updated.\n");
             DPRINTF(EthernetDpdk, "Write RDT[%d]: %d\n", queueid, regs.rdt_array[queueid]());
             etherDeviceStats.rxTailWriteBytes += pkt->getSize();
-            if (drainState() == DrainState::Running) {
-                DPRINTF(EthernetDpdk, "RXS: RDT Fetching Descriptors! in queue %d\n",
-                        queueid);
-                rxDescCacheArray[queueid]->fetchDescriptors();
+            if (commType == CommunicationType::RING) {
+                if (drainState() == DrainState::Running) {
+                    DPRINTF(EthernetDpdk, "RXS: RDT Fetching Descriptors! in queue %d\n",
+                            queueid);
+                    rxDescCacheArray[queueid]->fetchDescriptors();
+                } else {
+                    printf("RXS: RDT NOT Fetching Desc b/c draining! in queue %d\n", queueid);
+                }
+            }
+        } else if (isRegisterAddress<E1000_RXM2FUNC>(daddr, queueid, numQueues)) {
+            assert(queueid < numQueues);
+            assert(queueid >= 0);
+            if (commType == CommunicationType::M2FUNC) {
+                DPRINTF(EthernetDpdk, "RXM2func[%d] Write Comming from host to RXM2FUNC with length: %d But we ignore it\n", queueid, pkt->getSize());
+                // printf("RXM2func[%d] Write Comming from host to RXM2FUNC with length: %d But we ignore it\n", queueid, pkt->getSize());
             } else {
-                printf("RXS: RDT NOT Fetching Desc b/c draining! in queue %d\n", queueid);
+                panic("Invalid communication type with - RXM2FUNC write!!!\n");
             }
         } else if (isRegisterAddress<E1000_RXDCTL>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
@@ -935,25 +1013,29 @@ IGbE::write(PacketPtr pkt)
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.tdba_array[queueid].tdbal(val & ~mask(4));
-            txDescCacheArray[queueid]->areaChanged();
+            if (commType == CommunicationType::RING)
+                txDescCacheArray[queueid]->areaChanged();
             DPRINTF(EthernetDpdk, "Write TDBAL[%d]: %#x\n", queueid, regs.tdba_array[queueid].tdbal());
         } else if (isRegisterAddress<E1000_TDBAH>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.tdba_array[queueid].tdbah(val);
-            txDescCacheArray[queueid]->areaChanged();
+            if (commType == CommunicationType::RING)
+                txDescCacheArray[queueid]->areaChanged();
             DPRINTF(EthernetDpdk, "Write TDBAH[%d]: %#x\n", queueid, regs.tdba_array[queueid].tdbah());
         } else if (isRegisterAddress<E1000_TDLEN>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.tdlen_array[queueid] = val & ~mask(7);
-            txDescCacheArray[queueid]->areaChanged();
+            if (commType == CommunicationType::RING)
+                txDescCacheArray[queueid]->areaChanged();
             DPRINTF(EthernetDpdk, "Write TDLEN[%d]: %#x\n", queueid, regs.tdlen_array[queueid]());
         } else if (isRegisterAddress<E1000_TDH>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.tdh_array[queueid] = val;
-            txDescCacheArray[queueid]->areaChanged();
+            if (commType == CommunicationType::RING)
+                txDescCacheArray[queueid]->areaChanged();
             DPRINTF(EthernetDpdk, "Write TDH[%d]: %d\n", queueid, regs.tdh_array[queueid]());
         } else if (isRegisterAddress<E1000_TXDCA_CTL>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
@@ -968,13 +1050,30 @@ IGbE::write(PacketPtr pkt)
             DPRINTF(EthernetDpdk, "TXS: TX Tail pointer updated in queue %d\n", queueid);
             DPRINTF(EthernetDpdk, "Write TDT[%d]: %d\n", queueid, regs.tdt_array[queueid]());
             etherDeviceStats.txTailWriteBytes += pkt->getSize();
-            if (drainState() == DrainState::Running) {
-                DPRINTF(EthernetDpdk, "TXS: TDT Fetching Descriptors! in queue %d\n", queueid);  
-                txDescCacheArray[queueid]->fetchDescriptors();
-            } else {
-                printf("TXS: TDT NOT Fetching Desc b/c draining! in queue %d\n", queueid);
+            if (commType == CommunicationType::RING) {
+                if (drainState() == DrainState::Running) {
+                    DPRINTF(EthernetDpdk, "TXS: TDT Fetching Descriptors! in queue %d\n", queueid);  
+                    txDescCacheArray[queueid]->fetchDescriptors();
+                } else {
+                    printf("TXS: TDT NOT Fetching Desc b/c draining! in queue %d\n", queueid);
+                }
             }
-        } else if (isRegisterAddress<E1000_TXDCTL>(daddr, queueid, numQueues)) {
+        } else if (isRegisterAddress<E1000_TXM2FUNC>(daddr, queueid, numQueues)) {
+            assert(queueid < numQueues);
+            assert(queueid >= 0);
+            if (commType == CommunicationType::M2FUNC) {
+                DPRINTF(EthernetDpdk, "TXM2func[%d]: TX Write comming from host!! with length: %d\n", queueid, pkt->getSize());
+                // printf("TXM2func[%d]: TX Write comming from host!! with length: %d\n", queueid, pkt->getSize());
+                
+                txM2funcContextArray[queueid]->writeM2funcPacket(pkt);
+
+                enableSmTx();
+                checkDrain();
+            } else {
+                panic("Invalid communication type with - TXM2FUNC write!!!\n");
+            }
+        }
+        else if (isRegisterAddress<E1000_TXDCTL>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.txdctl_array[queueid] = val;
@@ -983,15 +1082,19 @@ IGbE::write(PacketPtr pkt)
             assert(queueid >= 0);
             regs.tdwba_array[queueid] &= ~mask(32);
             regs.tdwba_array[queueid] |= val;
-            txDescCacheArray[queueid]->completionWriteback(regs.tdwba_array[queueid] & ~mask(1),
-                                                           regs.tdwba_array[queueid] & mask(1));
+            if (commType == CommunicationType::RING) {
+                txDescCacheArray[queueid]->completionWriteback(regs.tdwba_array[queueid] & ~mask(1),
+                                                            regs.tdwba_array[queueid] & mask(1));
+            }
         } else if (isRegisterAddress<E1000_TDWBAH>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.tdwba_array[queueid] &= mask(32);
             regs.tdwba_array[queueid] |= (uint64_t)val << 32;
-            txDescCacheArray[queueid]->completionWriteback(regs.tdwba_array[queueid] & ~mask(1),
-                                                           regs.tdwba_array[queueid] & mask(1));
+            if (commType == CommunicationType::RING) {
+                txDescCacheArray[queueid]->completionWriteback(regs.tdwba_array[queueid] & ~mask(1),
+                                                            regs.tdwba_array[queueid] & mask(1));
+            }
         } else if (isRETAAddress(daddr, retaIndex)) {
             assert(retaIndex < (RETA_SIZE / 4));
             union e1000_reta {
@@ -1089,13 +1192,15 @@ IGbE::cpuPostInt()
     //jm - this part would not be used. Because of DPDK PMD. Also, rxt0 is for RX queue 0 receiver timer interrupt. 
     //If want to interrupt for other queues, have to use extended interrupt cause (EICR)
     // So, for now, just check the rdtrEvent and radvEvent of queue 0
-    if (rxDescCacheArray[0]->_radvEvent.scheduled()) {
-        regs.icr.rxt0(1);
-        deschedule(rxDescCacheArray[0]->_radvEvent);
-    }
-    if (rxDescCacheArray[0]->_rdtrEvent.scheduled()) {
-        regs.icr.rxt0(1);
-        deschedule(rxDescCacheArray[0]->_rdtrEvent);
+    if (commType == CommunicationType::RING) {
+        if (rxDescCacheArray[0]->_radvEvent.scheduled()) {
+            regs.icr.rxt0(1);
+            deschedule(rxDescCacheArray[0]->_radvEvent);
+        }
+        if (rxDescCacheArray[0]->_rdtrEvent.scheduled()) {
+            regs.icr.rxt0(1);
+            deschedule(rxDescCacheArray[0]->_rdtrEvent);
+        }
     }
     // if (tadvEvent.scheduled()) {
     //     regs.icr.txdw(1);
@@ -1107,13 +1212,15 @@ IGbE::cpuPostInt()
     // }
     //txdw: TX descriptor write-back interrupt
     for (int i = 0; i < numQueues; i++) {
-        if (txDescCacheArray[i]->_tadvEvent.scheduled()) {
-            regs.icr.txdw(1);
-            deschedule(txDescCacheArray[i]->_tadvEvent);
-        }
-        if (txDescCacheArray[i]->_tidvEvent.scheduled()) {
-            regs.icr.txdw(1);
-            deschedule(txDescCacheArray[i]->_tidvEvent);
+        if (commType == CommunicationType::RING) {
+            if (txDescCacheArray[i]->_tadvEvent.scheduled()) {
+                regs.icr.txdw(1);
+                deschedule(txDescCacheArray[i]->_tadvEvent);
+            }
+            if (txDescCacheArray[i]->_tidvEvent.scheduled()) {
+                regs.icr.txdw(1);
+                deschedule(txDescCacheArray[i]->_tidvEvent);
+            }
         }
     }
 
@@ -1308,7 +1415,6 @@ IGbE::DescCache<T>::fetchDescriptors()
         max_to_fetch = descLen() - cachePnt;
     }
 
-    // size_t free_cache = size - usedCache.size() - unusedCache.size(); // JM - TODO: Check this - it seems underflow
     // Fix the underflow
     size_t totalUsed = usedCache.size() + unusedCache.size();
     size_t free_cache = (static_cast<size_t>(size) >= totalUsed) ? (static_cast<size_t>(size) - totalUsed) : 0;
@@ -1890,16 +1996,16 @@ IGbE::RxDescCache::pktComplete()
             uint64_t rxFifo2DMAStartTime = pktPtr->rxDMAStartTick - pktPtr->rxFifoTick;
             uint64_t rxDMATime = pktPtr->rxDMAEndTick - pktPtr->rxDMAStartTick;
             // printf("RXD[%d] RX Total Time: %ld, EtherLink Time: %ld, Port2Fifo Time: %ld, Fifo2DMAStart Time: %ld, DMA Time: %ld\n", queueID, rxTotalTime, rxEtherLinkTime, rxPort2FifoTime, rxFifo2DMAStartTime, rxDMATime);
-            float rxTotalTimeInSec = (float)rxTotalTime / 10.0e8;
-            float rxEtherLinkTimeInSec = (float)rxEtherLinkTime / 10.0e8;
-            float rxPort2FifoTimeInSec = (float)rxPort2FifoTime / 10.0e8;
-            float rxFifo2DMAStartTimeInSec = (float)rxFifo2DMAStartTime / 10.0e8;
-            float rxDMATimeInSec = (float)rxDMATime / 10.0e8;
-            igbe->etherDeviceStats.rxEnd2EndClk.sample(rxTotalTimeInSec);
-            igbe->etherDeviceStats.rxEtherLinkClk.sample(rxEtherLinkTimeInSec);
-            igbe->etherDeviceStats.rxPort2FifoClk.sample(rxPort2FifoTimeInSec);
-            igbe->etherDeviceStats.rxFifo2DmaClk.sample(rxFifo2DMAStartTimeInSec);
-            igbe->etherDeviceStats.rxDma2CoreClk.sample(rxDMATimeInSec);
+            float rxTotalTimeInSec = (float)rxTotalTime / 10.0e12;
+            float rxEtherLinkTimeInSec = (float)rxEtherLinkTime / 10.0e12;
+            float rxPort2FifoTimeInSec = (float)rxPort2FifoTime / 10.0e12;
+            float rxFifo2DMAStartTimeInSec = (float)rxFifo2DMAStartTime / 10.0e12;
+            float rxDMATimeInSec = (float)rxDMATime / 10.0e12;
+            // igbe->etherDeviceStats.rxEnd2EndClk.sample(rxTotalTimeInSec);
+            // igbe->etherDeviceStats.rxEtherLinkClk.sample(rxEtherLinkTimeInSec);
+            // igbe->etherDeviceStats.rxPort2FifoClk.sample(rxPort2FifoTimeInSec);
+            // igbe->etherDeviceStats.rxFifo2DmaClk.sample(rxFifo2DMAStartTimeInSec);
+            // igbe->etherDeviceStats.rxDma2CoreClk.sample(rxDMATimeInSec);
         }
     }
 
@@ -2524,6 +2630,957 @@ IGbE::TxDescCache::hasOutstandingEvents()
         fetchEvent.scheduled();
 }
 
+///////////////////////////// IGbE::RxM2funcContext //////////////////////////////
+
+IGbE::RxM2funcContext::RxM2funcContext(IGbE *i, std::string n, int _rxContextFifoSize, int qid)
+    : igbe(i), _name(n), rxContextFifoSize(_rxContextFifoSize), queueID(qid),
+      remainPacket(false), splitCount(0), bytesSent(0), rxCount(0)
+{
+    m2funcRxFifo.clear();
+
+    lastRxM2funcReadTick = 0;
+
+}
+
+IGbE::RxM2funcContext::~RxM2funcContext()
+{
+    // Clear the m2funcRxFifo
+    for (auto it = m2funcRxFifo.begin(); it != m2funcRxFifo.end(); it++) {
+        delete[] it->packetData;
+    }
+    m2funcRxFifo.clear();
+}
+
+void
+IGbE::RxM2funcContext::processRxPacket(EthPacketPtr packet)
+{
+    /*
+     * This function processes the packet in the M2func context. If offload is needed,
+     * it will be done here. Make a data packet from the EthPacket 
+     */
+    DPRINTF(EthernetDpdk, "RXM2func[%d]: Processing packet %p of length: %d\n", queueID, packet.get(), packet->length);
+
+    unsigned buf_len, hdr_len;
+
+    // do pktComplete() things - setting descriptor 
+    uint16_t crcfixup = igbe->regs.rctl.secrc() ? 0 : 4 ;
+    DPRINTF(EthernetDpdk, "RxM2func[%d] CRC offset: %d total packet length: %d %d\n", 
+    queueID, crcfixup, htole((uint16_t)(packet->length + crcfixup)), (uint16_t)(packet->length + crcfixup));
+
+    uint16_t status = RXDS_DD;
+    uint8_t err = 0;
+    uint16_t ext_err = 0;
+    uint16_t csum = 0;
+    uint16_t ptype = 0;
+    uint16_t ip_id = 0;
+
+    // Assume ethpacket is within MTU size. So always set EOP
+    status |= RXDS_EOP;
+
+    IpPtr ip(packet);
+    Ip6Ptr ip6(packet);
+
+    if (ip || ip6) {
+        if (ip) {
+            DPRINTF(EthernetDesc, "Proccesing Ip packet with Id=%d\n",
+                    ip->id());
+            ptype |= RXDP_IPV4;
+            ip_id = ip->id();
+        }
+        if (ip6)
+            ptype |= RXDP_IPV6;
+
+        if (ip && igbe->regs.rxcsum.ipofld()) {
+            DPRINTF(EthernetDesc, "Checking IP checksum\n");
+            status |= RXDS_IPCS;
+            csum = htole(cksum(ip));
+            igbe->etherDeviceStats.rxIpChecksums++;
+            if (cksum(ip) != 0) {
+                err |= RXDE_IPE;
+                ext_err |= RXDEE_IPE;
+                DPRINTF(EthernetDesc, "Checksum is bad!!\n");
+            }
+        }
+        TcpPtr tcp = ip ? TcpPtr(ip) : TcpPtr(ip6);
+        if (tcp && igbe->regs.rxcsum.tuofld()) {
+            DPRINTF(EthernetDesc, "Checking TCP checksum\n");
+            status |= RXDS_TCPCS;
+            ptype |= RXDP_TCP;
+            csum = htole(cksum(tcp));
+            igbe->etherDeviceStats.rxTcpChecksums++;
+            if (cksum(tcp) != 0) {
+                DPRINTF(EthernetDesc, "Checksum is bad!!\n");
+                err |= RXDE_TCPE;
+                ext_err |= RXDEE_TCPE;
+            }
+        }
+
+        UdpPtr udp = ip ? UdpPtr(ip) : UdpPtr(ip6);
+        if (udp && igbe->regs.rxcsum.tuofld()) {
+            DPRINTF(EthernetDesc, "Checking UDP checksum\n");
+            status |= RXDS_UDPCS;
+            ptype |= RXDP_UDP;
+            csum = htole(cksum(udp));
+            igbe->etherDeviceStats.rxUdpChecksums++;
+            if (cksum(udp) != 0) {
+                DPRINTF(EthernetDesc, "Checksum is bad!!\n");
+                ext_err |= RXDEE_TCPE;
+                err |= RXDE_TCPE;
+            }
+        }
+    } else {
+        DPRINTF(EthernetDpdk, "RxM2func[%d]: Non-IP packet\n", queueID);
+    }
+
+    RxM2funcDesc rxDesc;
+    unsigned desc_len = 8;
+    switch (igbe->regs.srrctl_array[queueID].desctype()) {
+      case RXDT_LEGACY:
+      {
+        DPRINTF(EthernetDpdk, "RxM2func[%d]: processPacket with LEGACY\n", queueID);
+        
+        desc_len = 8;
+
+        rxDesc.legacy.len = htole((uint16_t)(packet->length + crcfixup));
+        rxDesc.legacy.csum = htole(0);
+        rxDesc.legacy.status = htole(status);
+        rxDesc.legacy.errors = htole(err);
+        // No vlan support at this point... just set it to 0
+        rxDesc.legacy.vlan = 0;
+        break;
+      }
+      case RXDT_ADV_ONEBUF:
+      { 
+        DPRINTF(EthernetDpdk, "RxM2func[%d]: processPacket with ADV_ONEBUF\n", queueID);
+
+        desc_len = 16;
+
+        buf_len = igbe->regs.rctl.lpe() ? igbe->regs.srrctl_array[queueID].bufLen() :
+            igbe->regs.rctl.descSize();
+        DPRINTF(EthernetDpdk, "RxM2func[%d] ADV_ONEBUF LPE: %d Packet Length: %d srrctl: %#x Desc Size: %d\n",
+                queueID, igbe->regs.rctl.lpe(), packet->length, igbe->regs.srrctl_array[queueID](), buf_len);
+        assert(packet->length < buf_len);
+
+        rxDesc.adv_wb.rss_type = htole(0);
+        rxDesc.adv_wb.pkt_type = htole(ptype);
+        rxDesc.adv_wb.__reserved1 = htole(0);
+        rxDesc.adv_wb.header_len = htole(0);
+        rxDesc.adv_wb.sph = htole(0);
+        rxDesc.adv_wb.pkt_len = htole((uint16_t)(packet->length));
+        if (igbe->regs.rxcsum.pcsd()) {
+            // no rss support right now
+            rxDesc.adv_wb.rss_hash = htole(0);
+        } else {
+            rxDesc.adv_wb.id = htole(ip_id);
+            rxDesc.adv_wb.csum = htole(csum);
+        }
+        rxDesc.adv_wb.status = htole(status);
+        rxDesc.adv_wb.errors = htole(ext_err);
+        // no vlan support
+        rxDesc.adv_wb.vlan_tag = htole(0);
+        break;
+      }
+      case RXDT_ADV_SPLIT_A:
+      {
+        DPRINTF(EthernetDpdk, "RxM2func[%d]: processPacket with ADV_SPLIT_A\n", queueID);
+        
+        desc_len = 16;
+
+        buf_len = igbe->regs.rctl.lpe() ? igbe->regs.srrctl_array[queueID].bufLen() :
+            igbe->regs.rctl.descSize();
+        hdr_len = igbe->regs.rctl.lpe() ? igbe->regs.srrctl_array[queueID].hdrLen() : 0;
+
+        rxDesc.adv_wb.rss_type = htole(0);
+        rxDesc.adv_wb.pkt_type = htole(0);
+        rxDesc.adv_wb.__reserved1 = htole(0);
+        rxDesc.adv_wb.header_len = htole(0);
+        rxDesc.adv_wb.sph = htole(0);
+        rxDesc.adv_wb.rss_hash = htole(0);
+        rxDesc.adv_wb.status = htole(0);
+        rxDesc.adv_wb.errors = htole(0);
+        rxDesc.adv_wb.pkt_len = htole(0);
+        rxDesc.adv_wb.vlan_tag = htole(0); 
+        panic("Not implemented yet\n");
+        break;
+      }
+      default:
+        panic("Unimplemnted RX receive buffer type %d\n",
+              igbe->regs.srrctl_array[queueID].desctype());
+    }
+
+    // Pack descriptor & EthPacket into a single packet
+    uint8_t *src = packet->data;
+    int ethPkt_size = packet->length;
+    int cxlPkt_size = desc_len + ethPkt_size;
+    // Make cxlPkt_size multiple of flitSize
+    cxlPkt_size = ((cxlPkt_size + igbe->flitSize - 1) / igbe->flitSize) * igbe->flitSize;
+    uint8_t * cxl_packet = new uint8_t[cxlPkt_size];
+    memset(cxl_packet, 0, cxlPkt_size);
+    DPRINTF(EthernetDpdk, "RxM2func[%d]: ethPkt_size: %d desc_len: %d cxlPkt_size: %d\n", queueID, ethPkt_size, desc_len, cxlPkt_size);
+    
+    // Put rxDesc to the beginning of the packet
+    if (igbe->regs.srrctl_array[queueID].desctype() == RXDT_LEGACY) {
+        DPRINTF(EthernetDpdk, "RxM2func[%d]: Copying legacy descriptor\n", queueID);
+        memcpy(cxl_packet, &rxDesc.legacy, (size_t) desc_len);
+    } else {
+        DPRINTF(EthernetDpdk, "RxM2func[%d]: Copying advanced descriptor\n", queueID);
+        memcpy(cxl_packet, &rxDesc.adv_wb, (size_t) desc_len);
+    }
+
+    // Put the EthPacket to the end of the packet
+    memcpy(cxl_packet + desc_len, src, (size_t) ethPkt_size);
+
+    // Push to rxM2funcFifo
+    // Make m2funcRXEntry
+    m2funcRxFifoEntry entry;
+    entry.packetData = cxl_packet;
+    entry.packetLength = cxlPkt_size;
+    entry.descLength = desc_len;
+    entry.dataLength = ethPkt_size;
+    entry.rxCount = rxCount;
+    m2funcRxFifo.push_back(entry);
+    DPRINTF(EthernetDpdk, "RxM2func[%d]: Packet pushed to m2funcRxFifo, with rxCount: %ld\n", queueID, rxCount);
+    
+    rxCount++;
+    
+    igbe->checkDrain();
+
+}
+
+bool
+IGbE::RxM2funcContext::rxM2funcStateMachine()
+{
+    /*
+     * This function is the main state machine for the M2func context. It
+     * processes the packets in the M2func context and moves them to the
+     * m2funcRxFifo.
+     * Get the EthPacket from rxPacketArray[queueID] and process it.
+     * 
+     */
+    if (igbe->rxPacketArray[queueID] == nullptr) {
+        DPRINTF(EthernetDpdk, "RXM2func[%d]: No packet to process\n", queueID);
+
+        return true; // It means this context may need to keep ticking
+    }
+    // Check if m2funcRxFifo is full or not
+    if (m2funcRxFifoFull()) {
+        DPRINTF(EthernetDpdk, "RXM2func[%d]: m2funcRxFifo is full\n", queueID);
+
+        return true; // It means this context may need to keep ticking
+    } else {
+        EthPacketPtr pkt = igbe->rxPacketArray[queueID];
+        processRxPacket(pkt);
+        DPRINTF(EthernetDpdk, "RXM2func[%d]: Processing packet of length: %d\n", queueID, pkt->length);
+        DPRINTF(EthernetDpdk, "RXM2func[%d]: Packet processed & moved to m2funcRxFifo. pop out from rxPacketArray\n", queueID);
+        igbe->rxPacketArray[queueID] = nullptr;
+
+        return true; // It means this context may need to keep ticking
+    }
+}
+
+void
+IGbE::RxM2funcContext::readM2funcPacket(PacketPtr pkt)
+{   
+    assert(pkt->getSize() == igbe->flitSize);
+    updateRxM2funcReadStat(curTick());
+    if (m2funcRxFifo.empty()) {
+        DPRINTF(EthernetDpdk, "RXM2func[%d]: No packet to read! set packet with size: %d\n", queueID, igbe->flitSize);
+        // Make DD bit 0 in the descriptor and set the packet's data to 0
+        uint8_t *cxl_packet = new uint8_t[igbe->flitSize];
+        memset(cxl_packet, 0, igbe->flitSize);
+        RxM2funcDesc rxDesc;
+        unsigned desc_len = 8;
+        switch (igbe->regs.srrctl_array[queueID].desctype()) {
+            case RXDT_LEGACY:
+            {
+                desc_len = 8;
+                rxDesc.legacy.len = htole(0);
+                rxDesc.legacy.csum = htole(0);
+                rxDesc.legacy.status = htole(0);
+                rxDesc.legacy.errors = htole(0);
+                rxDesc.legacy.vlan = htole(0);
+
+                memcpy(cxl_packet, &rxDesc.legacy, (size_t) desc_len);
+                break;
+            }
+            case RXDT_ADV_ONEBUF:
+            case RXDT_ADV_SPLIT_A:
+            { 
+                desc_len = 16;
+                rxDesc.adv_wb.status = htole(0); // Set DD bit to 0
+                rxDesc.adv_wb.rss_type = htole(0);
+                rxDesc.adv_wb.pkt_type = htole(0);
+                rxDesc.adv_wb.__reserved1 = htole(0);
+                rxDesc.adv_wb.header_len = htole(0);
+                rxDesc.adv_wb.sph = htole(0);
+                rxDesc.adv_wb.rss_hash = htole(0);
+                rxDesc.adv_wb.errors = htole(0);
+                rxDesc.adv_wb.pkt_len = htole(0);
+                rxDesc.adv_wb.vlan_tag = htole(0);
+
+                memcpy(cxl_packet, &rxDesc.adv_wb, (size_t) desc_len);
+                break;
+            }
+            default:
+                panic("Unimplemnted RX receive buffer type %d\n",
+                    igbe->regs.srrctl_array[queueID].desctype());
+        }
+        pkt->setData(cxl_packet);
+
+        // Update stat
+        igbe->etherDeviceStats.rxBytesM2func += igbe->flitSize;
+        igbe->etherDeviceStats.rxBytesM2funcDesc += desc_len;
+
+
+        // Free the memory
+        delete[] cxl_packet;
+    } else {
+        // Pop the packet from m2funcRxFifo
+        m2funcRxFifoEntry entry = m2funcRxFifo.front();
+        uint64_t packetLength = entry.packetLength;
+        uint64_t descLength = entry.descLength; // For stat
+        uint64_t dataLength = entry.dataLength; // For stat
+        uint8_t *packetData = entry.packetData;
+
+        // Check remainPacket to check if the packet is remained
+        if (remainPacket) {
+            DPRINTF(EthernetDpdk, "RXM2func[%d]: Remain packet is true\n", queueID);
+            // Copy the remaining packet
+            if (packetLength > bytesSent) {
+                DPRINTF(EthernetDpdk, "RXM2func[%d]: Ethernet Packet length: %ld bytesSent: %ld\n", queueID, packetLength, bytesSent);
+                uint64_t remainLength = packetLength - bytesSent;
+                uint64_t copyLength = remainLength > igbe->flitSize ? igbe->flitSize : remainLength;
+                DPRINTF(EthernetDpdk, "RXM2func[%d]: Set Packet response with remaining packet with length: %ld\n", queueID, copyLength);
+                pkt->setData(packetData + bytesSent, copyLength);
+                bytesSent += copyLength;
+
+                // Update stat
+                igbe->etherDeviceStats.rxBytesM2func += copyLength;
+
+                if (bytesSent == packetLength) {
+                    remainPacket = false;
+                    bytesSent = 0;
+                    delete[] packetData;
+                    m2funcRxFifo.pop_front();
+
+                    // Update stat
+                    igbe->etherDeviceStats.rxBytesM2funcDesc += descLength;
+                    igbe->etherDeviceStats.rxBytesM2funcData += dataLength;
+                }
+            } else {
+                remainPacket = false;
+                bytesSent = 0;
+                delete[] packetData;
+                m2funcRxFifo.pop_front();
+
+                // Update stat
+                igbe->etherDeviceStats.rxBytesM2funcDesc += descLength;
+                igbe->etherDeviceStats.rxBytesM2funcData += dataLength;
+            }
+        } else {
+            DPRINTF(EthernetDpdk, "RXM2func[%d]: Remain packet is false\n", queueID);
+            // Copy the packet
+            if (packetLength > igbe->flitSize) {
+                DPRINTF(EthernetDpdk, "RXM2func[%d]: Ethernet Packet length: %ld\n", queueID, packetLength);
+                pkt->setData(packetData, igbe->flitSize);
+                remainPacket = true;
+                bytesSent = igbe->flitSize;
+
+                // Update stat
+                igbe->etherDeviceStats.rxBytesM2func += igbe->flitSize;
+            } else {
+                DPRINTF(EthernetDpdk, "RXM2func[%d]: Set Packet response with packet with length: %ld\n", queueID, packetLength);
+                pkt->setData(packetData, packetLength);
+                delete[] packetData;
+                m2funcRxFifo.pop_front();
+
+                // Update stat
+                igbe->etherDeviceStats.rxBytesM2func += packetLength;
+                igbe->etherDeviceStats.rxBytesM2funcDesc += descLength;
+                igbe->etherDeviceStats.rxBytesM2funcData += dataLength;
+            }
+        }
+
+    }
+}
+
+void
+IGbE::RxM2funcContext::serialize(CheckpointOut &cp) const
+{
+    SERIALIZE_SCALAR(queueID);
+    SERIALIZE_SCALAR(rxContextFifoSize);
+    SERIALIZE_SCALAR(remainPacket);
+    SERIALIZE_SCALAR(bytesSent);
+    SERIALIZE_SCALAR(splitCount);
+    SERIALIZE_SCALAR(rxCount);
+
+    // Serialize m2funcRxFifo
+    uint64_t m2funcRxFifoSize = m2funcRxFifo.size();
+    SERIALIZE_SCALAR(m2funcRxFifoSize);
+    for (uint64_t i = 0; i < m2funcRxFifoSize; i++) {
+        const m2funcRxFifoEntry &entry = m2funcRxFifo[i];
+        paramOut(cp, csprintf("m2funcRxFifo[%d].rxCount", i), entry.rxCount);
+        paramOut(cp, csprintf("m2funcRxFifo[%d].packetLength", i), entry.packetLength);
+        paramOut(cp, csprintf("m2funcRxFifo[%d].descLength", i), entry.descLength);
+        paramOut(cp, csprintf("m2funcRxFifo[%d].dataLength", i), entry.dataLength);
+        arrayParamOut(cp, csprintf("m2funcRxFifo[%d].packetData", i), entry.packetData, entry.packetLength);
+    }
+}
+
+void
+IGbE::RxM2funcContext::unserialize(CheckpointIn &cp)
+{
+    UNSERIALIZE_SCALAR(queueID);
+    UNSERIALIZE_SCALAR(rxContextFifoSize);
+    UNSERIALIZE_SCALAR(remainPacket);
+    UNSERIALIZE_SCALAR(bytesSent);
+    UNSERIALIZE_SCALAR(splitCount);
+    UNSERIALIZE_SCALAR(rxCount);
+
+    // Unserialize m2funcRxFifo
+    uint64_t m2funcRxFifoSize = 0;
+    UNSERIALIZE_SCALAR(m2funcRxFifoSize);
+    m2funcRxFifo.resize(m2funcRxFifoSize);
+    for (uint64_t i = 0; i < m2funcRxFifoSize; i++) {
+        m2funcRxFifoEntry &entry = m2funcRxFifo[i];
+        paramIn(cp, csprintf("m2funcRxFifo[%d].rxCount", i), entry.rxCount);
+        paramIn(cp, csprintf("m2funcRxFifo[%d].packetLength", i), entry.packetLength);
+        paramIn(cp, csprintf("m2funcRxFifo[%d].descLength", i), entry.descLength);
+        paramIn(cp, csprintf("m2funcRxFifo[%d].dataLength", i), entry.dataLength);
+        arrayParamIn(cp, csprintf("m2funcRxFifo[%d].packetData", i), entry.packetData, entry.packetLength);
+    }
+}
+///////////////////////////// IGbE::TxM2funcContext //////////////////////////////
+
+IGbE::TxM2funcContext::TxM2funcContext(IGbE *i, std::string n, int _txContextFifoSize, int qid)
+    : igbe(i), _name(n), txContextFifoSize(_txContextFifoSize), queueID(qid),
+      pktDone(false), ethPktSize(0), txDesc(0), receivedPktSize(0), descSize(8), isTcp(false), pktWaiting(false), pktMultiDesc(false), txCount(0)
+{    
+    tsoEntry.tsoEnabled = false;
+    tsoEntry.txPktExists = false;
+    tsoEntry.headerLen = 0;
+    tsoEntry.mss = 0;
+    tsoEntry.totalLen = 0;
+    tsoEntry.usedLen = 0;
+    tsoEntry.prevSeq = 0;
+    tsoEntry.loadedHeader = false;
+    tsoEntry.ethPacketHasHeader = false;
+    tsoEntry.tsoPkts = 0;
+
+    // Initialize bitmask
+    bitmaskWrap.bitmaskSize = (initial_bitmask_size_bytes * 8);
+    bitmaskWrap.bitmask = (uint8_t*)malloc(initial_bitmask_size_bytes);
+    if (bitmaskWrap.bitmask == NULL) {
+        panic("Failed to allocate bitmask\n");
+    }
+    memset(bitmaskWrap.bitmask, 0, initial_bitmask_size_bytes);
+    bitmaskWrap.readCursor = 0;
+    bitmaskWrap.updateCursor = 0;
+
+    m2funcTxFifo.clear();
+}
+
+IGbE::TxM2funcContext::~TxM2funcContext()
+{
+    // Free bitmask
+    free(bitmaskWrap.bitmask);
+
+    // Free m2funcTxFifo's packetData
+    for (auto it = m2funcTxFifo.begin(); it != m2funcTxFifo.end(); it++) {
+        delete[] it->packetData;
+    }
+    m2funcTxFifo.clear();
+}
+
+void 
+IGbE::TxM2funcContext::processTxPacket(EthPacketPtr ethpkt, int dataSize, uint8_t* data, bool isHeader, bool ixsm, bool txsm)
+{
+    /**
+     * This function processes the packet in the M2func context. If offload is needed,
+     * it will be done here. Make a EthPacket from the cxl_packet
+     */
+    DPRINTF(EthernetDpdk, "TXM2func[%d]: Processing Ethpacket %p of length: %d\n", queueID, ethpkt.get(), dataSize);
+    if (isHeader) {
+        panic("TSO header processing is not implemented yet\n");
+    } else {
+        uint8_t *dest = ethpkt->data + ethpkt->length;
+        memcpy(dest, data, (size_t) dataSize);
+
+        // Update the ethpkt length
+        ethpkt->length += dataSize;
+        ethpkt->simLength += dataSize;
+
+        DPRINTF(EthernetDpdk, "TXM2func[%d]: Ethpacket length updated to: %d\n", queueID, ethpkt->length);
+        if (tsoEntry.tsoEnabled) {
+            panic("TSO processing is not implemented yet\n");
+        }
+        
+        // Offload checksums
+        if (ixsm || txsm) {
+            DPRINTF(EthernetDpdk, "TXM2func[%d]: Offloading checksums\n", queueID);
+            IpPtr ip(ethpkt);
+            Ip6Ptr ip6(ethpkt);
+            assert(ip || ip6);      
+            if (ip && ixsm) {
+                ip->sum(0);
+                ip->sum(cksum(ip));
+                igbe->etherDeviceStats.txIpChecksums++;
+                DPRINTF(EthernetDpdk, "TXM2func[%d]: Calculated IP checksum\n", queueID);
+            }
+            if (txsm) {
+                TcpPtr tcp = ip ? TcpPtr(ip) : TcpPtr(ip6);
+                UdpPtr udp = ip ? UdpPtr(ip) : UdpPtr(ip6);
+                if (tcp) {
+                    tcp->sum(0);
+                    tcp->sum(cksum(tcp));
+                    igbe->etherDeviceStats.txTcpChecksums++;
+                    DPRINTF(EthernetDpdk, "TXM2func[%d]: Calculated TCP checksum\n", queueID);
+                } else if (udp) {
+                    assert(udp);
+                    udp->sum(0);
+                    udp->sum(cksum(udp));
+                    igbe->etherDeviceStats.txUdpChecksums++;
+                    DPRINTF(EthernetDpdk, "TXM2func[%d]: Calculated UDP checksum\n", queueID);
+                } else {
+                    panic("TXM2func: Told to checksum, but don't know how\n");
+                }
+            }
+        }
+
+        igbe->checkDrain();
+        return;
+    }
+
+}
+        
+bool 
+IGbE::TxM2funcContext::txM2funcStateMachine()
+{
+    //Check m2funcTxFifo and process the packets in the m2funcTxFifo & push to the txFifo
+    
+    // Check if txPacket is available to push to txFifo
+    if (igbe->txPacketArray[queueID] && pktDone && receivedPktSize) {
+        assert(ethPktSize == receivedPktSize);
+        if (igbe->candidateTxQueue != queueID) {
+            DPRINTF(EthernetDpdk, "TXM2func[%d]: Packet available to push FIFO, but not for this queue, candidate is %d\n", queueID, igbe->candidateTxQueue);
+
+            return true; // It means this context needs to keep ticking
+        } else {
+            DPRINTF(EthernetDpdk, "TXM2func[%d]: packet placed in TX FIFO\n", queueID);
+            bool success =
+                (igbe->txFifo).push(igbe->txPacketArray[queueID]);
+            igbe->txFifoTick = true && igbe->drainState() != DrainState::Draining;
+            assert(success);
+            
+            // set successTxQueueSend to true
+            igbe->successTxQueueSend = true;
+
+            // unset processed packet
+            igbe->txPacketArray[queueID] = nullptr;
+            pktDone = false;
+            ethPktSize = 0;
+            receivedPktSize = 0;
+            txDesc = 0;
+
+            return true; // It means this context needs to keep ticking
+        }
+    }
+
+    if (m2funcTxFifo.empty()) {
+        DPRINTF(EthernetDpdk, "TXM2func[%d]: No packet to process\n", queueID);
+
+        return true; // It means this context may need to keep ticking
+    } else {
+        // Pop the packet from m2funcTxFifo
+        // Check if there is a packet, which is partially processed
+        if (igbe->txPacketArray[queueID]) {
+            // There is a EthPacket, which is currently being processed
+            // If this condition is true, the corresponding txDesc and ethPktSize should be set
+            DPRINTF(EthernetDpdk, "TXM2func[%d]: Partially processed packet exists\n", queueID);
+            // Check if the packet is partially processed
+            assert(ethPktSize > 0);
+            assert(receivedPktSize > 0);
+            assert(!pktDone);
+            assert(txDesc != 0);
+            assert(ethPktSize != receivedPktSize);
+
+            // Process the packet
+            m2funcTxFifoEntry entry = m2funcTxFifo.front();
+            uint64_t cxl_pkt_size = entry.packetLength;
+            uint64_t total_cxl_pkt_size = cxl_pkt_size; // For stat
+            uint8_t *cxl_pkt_data = entry.packetData;
+            // Manage cxl_pkt_size to not exceed the remaining packet size
+            cxl_pkt_size = cxl_pkt_size > (ethPktSize - receivedPktSize) ? (ethPktSize - receivedPktSize) : cxl_pkt_size;
+            DPRINTF(EthernetDpdk, "TXM2func[%d]: Processing cxl_packet of length: %ld, current receivedPktSize: %ld, ethPktSize: %ld\n", queueID, cxl_pkt_size, receivedPktSize, ethPktSize);
+            processTxPacket(igbe->txPacketArray[queueID], cxl_pkt_size, cxl_pkt_data, 
+                false, cxlMemTxdOp::cxlIxsm(txDesc), cxlMemTxdOp::cxlTxsm(txDesc));
+            
+            // Update stats
+            igbe->etherDeviceStats.txBytesM2func += total_cxl_pkt_size;
+            igbe->etherDeviceStats.txBytesM2funcData += cxl_pkt_size;
+            
+            m2funcTxFifo.pop_front();
+            delete[] cxl_pkt_data;
+            // Update the current processing ethpkt stats
+            receivedPktSize += cxl_pkt_size;
+            // Check if the packet is fully processed
+            if (receivedPktSize == ethPktSize) {
+                // The packet is fully processed
+                pktDone = true;
+                // Update bitmask
+                updateBitmask(1);
+                DPRINTF(EthernetDpdk, "TXM2func[%d]: Packet is fully processed and update bitmask\n", queueID);
+            }
+
+            return true; // It means this context may need to keep ticking
+        } else {
+            // There is no EthPacket, which is currently being processed
+            
+            m2funcTxFifoEntry entry = m2funcTxFifo.front();
+            uint64_t cxl_pkt_size = entry.packetLength;
+            uint64_t total_cxl_pkt_size = cxl_pkt_size; // For stat
+            uint8_t *cxl_pkt_data = entry.packetData;
+            assert(cxl_pkt_size > descSize);
+            assert(txDesc == 0);
+            assert(ethPktSize == 0);
+            assert(receivedPktSize == 0);
+            assert(!pktDone);
+            // for CXL, place d2 part at first and d1 part at second - to match with not context case
+            // Get first 8 bytes of the cxl_pkt_data
+            txDesc = *(uint64_t*)cxl_pkt_data;
+            // First check if this cxl_packet is for context packet
+            if (cxlMemTxdOp::cxlIsContext(txDesc)) {
+                // This is a context descriptor
+                // Pkt size is 16 bytes
+                assert(cxl_pkt_size >= 16);
+                // TSO is used for the context descriptor
+                // Set TSO entry
+                uint64_t descData2 = *(uint64_t*)(cxl_pkt_data); //d2 part is at first for m2func
+                uint64_t descData1 = *(uint64_t*)(cxl_pkt_data + 8); //d1 part is at second for m2func
+
+                DPRINTF(EthernetDpdk, "TXM2func[%d]: Context descriptor received, descData2: %#X, descData1: %#X\n", queueID, descData2, descData1);
+
+                if (!tsoEntry.tsoEnabled) {
+                    tsoEntry.headerLen = cxlMemTxdOp::cxlHdrlen(descData1, descData2);
+                    tsoEntry.mss = cxlMemTxdOp::cxlMss(descData2);
+                    DPRINTF(EthernetDpdk, "TXM2func[%d]: TCP offload enabled for packet hdrlen: "
+                            "%d mss: %d\n", queueID, tsoEntry.headerLen, tsoEntry.mss);
+                    if (cxlMemTxdOp::cxlIsType(descData2, cxlMemTxdOp::CXL_M_TXD_CNXT) && 
+                        cxlMemTxdOp::cxlTse(descData2)) {
+                        DPRINTF(EthernetDpdk, "TXM2func[%d]: TCP offload enabled for packet hdrlen: "
+                                "%d mss: %d paylen %d\n", queueID, tsoEntry.headerLen,
+                                tsoEntry.mss, cxlMemTxdOp::cxlGetLen(descData2));
+                        tsoEntry.tsoEnabled = true;
+                        tsoEntry.totalLen = cxlMemTxdOp::cxlGetLen(descData2);
+                        tsoEntry.loadedHeader = false;
+                        tsoEntry.usedLen = 0;
+                        tsoEntry.prevSeq = 0;
+                        tsoEntry.txPktExists = false;
+                        tsoEntry.ethPacketHasHeader = false;
+                        tsoEntry.tsoPkts = 0;
+                    } 
+                } else {
+                    DPRINTF(EthernetDpdk, "TXM2func[%d]: TCP offload already enabled\n", queueID);
+                }
+                m2funcTxFifo.pop_front();
+                delete[] cxl_pkt_data;
+                return true; // It means this context may need to keep ticking
+            } else {
+                // This is a cxl_packet that is with TX descriptor and payload
+                // descriptor comes first and payload comes later
+                // descriptor size is 8 bytes
+
+                // Parse the descriptor to know the ethPktSize
+                ethPktSize = cxlMemTxdOp::cxlGetLen(txDesc);
+                
+                // Check txFifo space
+                if (ethPktSize > 0 && (igbe->txFifo.avail() > (ethPktSize))) {
+                    // Can process the packet
+                    // Make a new EthPacket
+                    igbe->txPacketArray[queueID] = std::make_shared<EthPacketData>(16384);
+
+                    // Check TSO is enabled
+                    if (tsoEntry.tsoEnabled) {
+                        panic("TSO is not supported yet\n");
+                    } else {
+                        // Not using TSO. Just copy the data to the EthPacket
+                        // Reserve txFifo
+                        igbe->txFifo.reserve(ethPktSize);
+                        DPRINTF(EthernetDpdk, "TXM2func[%d]: Reserving %ld bytes in FIFO and "
+                                "beginning processing of new EthPacket\n", queueID, ethPktSize);
+                        // Set the current processing packet status
+                        receivedPktSize = 0;
+                        pktDone = false;
+                        
+                        // process the packet
+                        cxl_pkt_size = cxl_pkt_size - descSize;
+                        cxl_pkt_size = std::min(cxl_pkt_size, ethPktSize);
+                        DPRINTF(EthernetDpdk, "TXM2func[%d]: Processing cxl_packet of length: %ld, current receivedPktSize: %ld, ethPktSize: %ld\n", queueID, cxl_pkt_size, receivedPktSize, ethPktSize);
+                        processTxPacket(igbe->txPacketArray[queueID], cxl_pkt_size, (cxl_pkt_data + descSize), 
+                            false, cxlMemTxdOp::cxlIxsm(txDesc), cxlMemTxdOp::cxlTxsm(txDesc));
+                        
+                        // Update stat
+                        igbe->etherDeviceStats.txBytesM2func += total_cxl_pkt_size;
+                        igbe->etherDeviceStats.txBytesM2funcDesc += descSize;
+                        igbe->etherDeviceStats.txBytesM2funcData += cxl_pkt_size;
+                        
+                        m2funcTxFifo.pop_front();
+                        delete[] cxl_pkt_data;
+
+                        // Update the current processing ethpkt stats
+                        receivedPktSize += cxl_pkt_size;
+                        // Check if the packet is fully processed
+                        if (receivedPktSize == ethPktSize) {
+                            // The packet is fully processed
+                            pktDone = true;
+                            // Update bitmask
+                            updateBitmask(1);
+                            DPRINTF(EthernetDpdk, "TXM2func[%d]: Packet is fully processed and update bitmask\n", queueID);
+                        }
+
+                        return true; // It means this context may need to keep ticking                        
+                    }
+
+                } else if (ethPktSize > 0) {
+                    // Cannot process the packet. FIFO is full
+                    igbe->etherDeviceStats.txFifoFullCount++;
+                    DPRINTF(EthernetDpdk, "TXM2func[%d]: FIFO full, stopping ticking until space "
+                            "available in FIFO\n", queueID);
+                    // Reset the context
+                    txDesc = 0;
+                    ethPktSize = 0;
+                    receivedPktSize = 0;
+                    pktDone = false;
+
+                    return true; // It means this context may need to keep ticking
+                }
+            }
+
+        }
+    }
+}
+
+void 
+IGbE::TxM2funcContext::writeM2funcPacket(PacketPtr pkt)
+{
+    /**
+     * Receive packet from the host (TX) and push it to the m2funcTxFifo
+     */
+    assert(pkt->getSize() == igbe->flitSize);
+
+    m2funcTxFifoEntry entry;
+    entry.packetLength = pkt->getSize();
+    entry.packetData = new uint8_t[entry.packetLength];
+    entry.txCount = txCount;
+    memcpy(entry.packetData, pkt->getPtr<uint8_t>(), (size_t) (entry.packetLength));
+    // TODO - JM : have to check m2funcTxFifo size?
+    // Just make stats for the max size of m2funcTxFifo
+    m2funcTxFifo.push_back(entry);
+    uint64_t currM2funcTxFifoSize = m2funcTxFifo.size();
+    uint64_t maxM2funcTxFifoSize = igbe->etherDeviceStats.m2funcTxFifoMaxLen.value();
+    if (currM2funcTxFifoSize > maxM2funcTxFifoSize) {
+        igbe->etherDeviceStats.m2funcTxFifoMaxLen = currM2funcTxFifoSize;
+    }
+    DPRINTF(EthernetDpdk, "TXM2func[%d]: Packet %p pushed to m2funcTxFifo with length: %ld with txCount: %ld. Current m2funcTxFifo max len: %ld\n", queueID, pkt, entry.packetLength, txCount, maxM2funcTxFifoSize);
+    txCount++;
+
+}
+
+void 
+IGbE::TxM2funcContext::expandBitmask()
+{
+    /**
+     * Expand the bitmask when the updateCursor exceeds the current size
+     * 
+     */
+    bitmaskWrap.bitmaskSize *= bitmask_expand_factor; // Double the size
+
+    // Reallocate the bitmask
+    uint8_t* new_bitmask = reinterpret_cast<uint8_t*>(realloc(bitmaskWrap.bitmask, (bitmaskWrap.bitmaskSize / 8)));
+    if (new_bitmask == NULL) {
+        panic("Failed to expand bitmask\n");
+    }
+
+    // Update the bitmask pointer only after realloc succeeds
+    bitmaskWrap.bitmask = new_bitmask;
+
+    // Initialize the newly allocated portion
+    memset(
+        bitmaskWrap.bitmask + (bitmaskWrap.bitmaskSize / (bitmask_expand_factor * 8)), // Start of the newly allocated part
+        0,
+        (bitmaskWrap.bitmaskSize / (bitmask_expand_factor * 8))  // Newly allocated size in bytes
+    );
+}
+
+void 
+IGbE::TxM2funcContext::updateBitmask(bool success)
+{
+    /**
+     * Update the bitmask with success or failure for the current TX packet
+     * 
+     */
+
+    // Check if the updateCursor exceeds the current size
+    if (bitmaskWrap.updateCursor >= bitmaskWrap.bitmaskSize) {
+        expandBitmask();
+    }
+
+    // Set the corresponding bit in the bitmask
+    if (success) {
+        bitmaskWrap.bitmask[bitmaskWrap.updateCursor / 8] |= (1 << (bitmaskWrap.updateCursor % 8));
+    } else {
+        bitmaskWrap.bitmask[bitmaskWrap.updateCursor / 8] &= ~(1 << (bitmaskWrap.updateCursor % 8));
+    }
+
+    // Increment the updateCursor
+    bitmaskWrap.updateCursor++;
+}
+
+void 
+IGbE::TxM2funcContext::readBitmask(PacketPtr pkt)
+{
+    /**
+     * Set the window size bitmask to pkt
+     * 
+     */
+    uint64_t pktSize = pkt->getSize();
+
+    uint64_t startIdx = bitmaskWrap.readCursor;
+    uint8_t response[pktSize];
+    memset(response, 0, pktSize);
+
+    assert(bitmaskWrap.readCursor < bitmaskWrap.updateCursor);
+    assert((pktSize * 8) >= bitmask_window_size_bits);
+
+    // Check whether bit is zero within the window size
+    bool has_zero = false;
+    uint64_t zero_idx = 0;
+    for (uint64_t i = 0; i < bitmask_window_size_bits; i++) {
+        uint64_t bitIdx = startIdx + i;
+
+        if (bitmaskWrap.bitmask[bitIdx / 8] & (1 << (bitIdx % 8))) {
+            // Bit is 1
+            response[i / 8] |= (1 << (i % 8));
+        } else {
+            // Bit is 0
+            if (!has_zero) {
+                // First zero bit
+                has_zero = true;
+                zero_idx = bitIdx;
+            }
+        }
+    } 
+
+    pkt->setData(response);
+
+    // Update stat
+    igbe->etherDeviceStats.txBytesM2func += pktSize;
+    igbe->etherDeviceStats.txBytesM2funcBitMask += (bitmask_window_size_bits / 8);
+
+    // Update the readCursor
+    if (has_zero) {
+        bitmaskWrap.readCursor = zero_idx;
+    } else {
+        bitmaskWrap.readCursor += bitmask_window_size_bits;
+    }
+
+    if (bitmaskWrap.readCursor == startIdx) {
+        // Warning: No progress
+        DPRINTF(EthernetDpdk, "TXM2func[%d]: No progress in reading bitmask\n", queueID);
+        printf("TXM2func[%d]: No progress in reading bitmask\n", queueID);
+    }
+
+}
+
+void 
+IGbE::TxM2funcContext::serialize(CheckpointOut &cp) const
+{
+    SERIALIZE_SCALAR(queueID);
+    SERIALIZE_SCALAR(txContextFifoSize);
+    SERIALIZE_SCALAR(pktDone);
+    SERIALIZE_SCALAR(ethPktSize);
+    SERIALIZE_SCALAR(txDesc);
+    SERIALIZE_SCALAR(receivedPktSize);
+    SERIALIZE_SCALAR(descSize);
+    SERIALIZE_SCALAR(isTcp);
+    SERIALIZE_SCALAR(pktWaiting);
+    SERIALIZE_SCALAR(pktMultiDesc);
+
+    paramOut(cp, csprintf("tsoEntry.tsoEnabled"), tsoEntry.tsoEnabled);
+    paramOut(cp, csprintf("tsoEntry.txPktExists"), tsoEntry.txPktExists);
+    paramOut(cp, csprintf("tsoEntry.mss"), tsoEntry.mss);
+    paramOut(cp, csprintf("tsoEntry.headerLen"), tsoEntry.headerLen);
+    paramOut(cp, csprintf("tsoEntry.totalLen"), tsoEntry.totalLen);
+    paramOut(cp, csprintf("tsoEntry.loadedHeader"), tsoEntry.loadedHeader);
+    paramOut(cp, csprintf("tsoEntry.ethPacketHasHeader"), tsoEntry.ethPacketHasHeader);
+    paramOut(cp, csprintf("tsoEntry.usedLen"), tsoEntry.usedLen);
+    paramOut(cp, csprintf("tsoEntry.prevSeq"), tsoEntry.prevSeq);
+    paramOut(cp, csprintf("tsoEntry.tsoPkts"), tsoEntry.tsoPkts);
+
+    SERIALIZE_SCALAR(txCount);
+
+    // Serialize m2funcTxFifo
+    uint64_t m2funcTxFifoSize = m2funcTxFifo.size();
+    SERIALIZE_SCALAR(m2funcTxFifoSize);
+    for (uint64_t i = 0; i < m2funcTxFifoSize; i++) {
+        const m2funcTxFifoEntry &entry = m2funcTxFifo[i];
+        paramOut(cp, csprintf("m2funcTxFifo[%d].txCount", i), entry.txCount);
+        paramOut(cp, csprintf("m2funcTxFifo[%d].packetLength", i), entry.packetLength);
+        arrayParamOut(cp, csprintf("m2funcTxFifo[%d].packetData", i), entry.packetData, entry.packetLength);
+    }
+
+    // Serialize bitmask
+    SERIALIZE_SCALAR(bitmaskWrap.bitmaskSize);
+    SERIALIZE_SCALAR(bitmaskWrap.updateCursor);
+    SERIALIZE_SCALAR(bitmaskWrap.readCursor);
+    arrayParamOut(cp, "bitmaskWrap.bitmask", bitmaskWrap.bitmask, bitmaskWrap.bitmaskSize / 8);
+}
+
+void
+IGbE::TxM2funcContext::unserialize(CheckpointIn &cp)
+{
+    UNSERIALIZE_SCALAR(queueID);
+    UNSERIALIZE_SCALAR(txContextFifoSize);
+    UNSERIALIZE_SCALAR(pktDone);
+    UNSERIALIZE_SCALAR(ethPktSize);
+    UNSERIALIZE_SCALAR(txDesc);
+    UNSERIALIZE_SCALAR(receivedPktSize);
+    UNSERIALIZE_SCALAR(descSize);
+    UNSERIALIZE_SCALAR(isTcp);
+    UNSERIALIZE_SCALAR(pktWaiting);
+    UNSERIALIZE_SCALAR(pktMultiDesc);
+
+    paramIn(cp, csprintf("tsoEntry.tsoEnabled"), tsoEntry.tsoEnabled);
+    paramIn(cp, csprintf("tsoEntry.txPktExists"), tsoEntry.txPktExists);
+    paramIn(cp, csprintf("tsoEntry.mss"), tsoEntry.mss);
+    paramIn(cp, csprintf("tsoEntry.headerLen"), tsoEntry.headerLen);
+    paramIn(cp, csprintf("tsoEntry.totalLen"), tsoEntry.totalLen);
+    paramIn(cp, csprintf("tsoEntry.loadedHeader"), tsoEntry.loadedHeader);
+    paramIn(cp, csprintf("tsoEntry.ethPacketHasHeader"), tsoEntry.ethPacketHasHeader);
+    paramIn(cp, csprintf("tsoEntry.usedLen"), tsoEntry.usedLen);
+    paramIn(cp, csprintf("tsoEntry.prevSeq"), tsoEntry.prevSeq);
+    paramIn(cp, csprintf("tsoEntry.tsoPkts"), tsoEntry.tsoPkts);
+
+    UNSERIALIZE_SCALAR(txCount);
+
+    // Unserialize m2funcTxFifo
+    uint64_t m2funcTxFifoSize = 0;
+    UNSERIALIZE_SCALAR(m2funcTxFifoSize);
+    m2funcTxFifo.resize(m2funcTxFifoSize);
+    for (uint64_t i = 0; i < m2funcTxFifoSize; i++) {
+        m2funcTxFifoEntry &entry = m2funcTxFifo[i];
+        paramIn(cp, csprintf("m2funcTxFifo[%d].txCount", i), entry.txCount);
+        paramIn(cp, csprintf("m2funcTxFifo[%d].packetLength", i), entry.packetLength);
+        arrayParamIn(cp, csprintf("m2funcTxFifo[%d].packetData", i), entry.packetData, entry.packetLength);
+    }
+
+    // Unserialize bitmask
+    UNSERIALIZE_SCALAR(bitmaskWrap.bitmaskSize);
+    UNSERIALIZE_SCALAR(bitmaskWrap.updateCursor);
+    UNSERIALIZE_SCALAR(bitmaskWrap.readCursor);
+    bitmaskWrap.bitmask = (uint8_t*)malloc((bitmaskWrap.bitmaskSize / 8));
+    arrayParamIn(cp, "bitmaskWrap.bitmask", bitmaskWrap.bitmask, bitmaskWrap.bitmaskSize / 8);
+}
 
 ///////////////////////////////////// IGbE /////////////////////////////////
 
@@ -2544,18 +3601,20 @@ IGbE::drain()
     //     count++;
     // }
     //Check rxDescCacheArray and txDescCacheArray
-    bool rxDescCacheOutstanding = false;
-    bool txDescCacheOutstanding = false;
-    for (int i = 0; i < numQueues; i++) {
-        if (rxDescCacheArray[i]->hasOutstandingEvents()) {
-            rxDescCacheOutstanding = true;
+    if (commType == CommunicationType::RING) {
+        bool rxDescCacheOutstanding = false;
+        bool txDescCacheOutstanding = false;
+        for (int i = 0; i < numQueues; i++) {
+            if (rxDescCacheArray[i]->hasOutstandingEvents()) {
+                rxDescCacheOutstanding = true;
+            }
+            if (txDescCacheArray[i]->hasOutstandingEvents()) {
+                txDescCacheOutstanding = true;
+            }
         }
-        if (txDescCacheArray[i]->hasOutstandingEvents()) {
-            txDescCacheOutstanding = true;
+        if (rxDescCacheOutstanding || txDescCacheOutstanding) {
+            count++;
         }
-    }
-    if (rxDescCacheOutstanding || txDescCacheOutstanding) {
-        count++;
     }
 
     txFifoTick = false;
@@ -2601,19 +3660,30 @@ IGbE::checkDrain()
     //     signalDrainDone();
     // }
     //Check rxDescCacheArray and txDescCacheArray
-    bool rxDescCacheOutstanding = false;
-    bool txDescCacheOutstanding = false;
-    for (int i = 0; i < numQueues; i++) {
-        if (rxDescCacheArray[i]->hasOutstandingEvents()) {
-            rxDescCacheOutstanding = true;
+    if (commType == CommunicationType::RING) {
+        bool rxDescCacheOutstanding = false;
+        bool txDescCacheOutstanding = false;
+        for (int i = 0; i < numQueues; i++) {
+            if (rxDescCacheArray[i]->hasOutstandingEvents()) {
+                rxDescCacheOutstanding = true;
+            }
+            if (txDescCacheArray[i]->hasOutstandingEvents()) {
+                txDescCacheOutstanding = true;
+            }
         }
-        if (txDescCacheArray[i]->hasOutstandingEvents()) {
-            txDescCacheOutstanding = true;
+        if (!rxDescCacheOutstanding && !txDescCacheOutstanding) {
+            DPRINTF(Drain, "IGbE done draining, processing drain event\n");
+            signalDrainDone();
         }
     }
-    if (!rxDescCacheOutstanding && !txDescCacheOutstanding) {
-        DPRINTF(Drain, "IGbE done draining, processing drain event\n");
-        signalDrainDone();
+}
+
+void 
+IGbE::enableSmTx() 
+{
+    if (drainState() != DrainState::Draining) {
+        txTick = true;
+        restartClock();
     }
 }
 
@@ -2652,7 +3722,7 @@ IGbE::txStateMachine(int queueID)
             txFifoTick = true && drainState() != DrainState::Draining;
             assert(success);
             // txPacket = NULL;
-            txPacketArray[queueID] = NULL;
+            txPacketArray[queueID] = nullptr;
             // txDescCache.writeback((cacheBlockSize()-1)>>4);
             txDescCacheArray[queueID]->writeback((cacheBlockSize()-1)>>4);
             // return;
@@ -2989,6 +4059,20 @@ IGbE::doRSS(EthPacketPtr pkt)
             prevRSSQueue = 0;
         }
         DPRINTF(EthernetDpdk, "At doRSS: Packet(%p) is not an IP packet, using round-robin, prevRSSQueue is %d\n", pkt.get(), prevRSSQueue);
+
+        // Check target queue is empty. If not, find the next empty queue
+        if (rxPacketArray[prevRSSQueue] != nullptr) {
+            for (int i = 0; i < numQueues; i++) {
+                if (rxPacketArray[i] == nullptr) {
+                    // Find the empty queue
+                    // set prevRSSQueue to the empty queue
+                    prevRSSQueue = i;
+                    DPRINTF(EthernetDpdk, "At doRSS: Packet(%p) find new empty prevRSSQueue is %d\n", pkt.get(), prevRSSQueue);
+                    break;
+                }
+            }
+        }
+
         return prevRSSQueue;
     }
 }
@@ -3046,14 +4130,26 @@ IGbE::txPackettoTxFifo() {
     // a multidescriptor packet) just give the credit
     for (int i = 0; i < numQueues; i++) {
         int queueID = (candidateTxQueue + i) % numQueues;
-        if (txPacketArray[queueID] && txDescCacheArray[queueID]->packetAvailable()
-            && !txDescCacheArray[queueID]->packetMultiDesc() && txPacketArray[queueID]->length) {
-            DPRINTF(EthernetSM, "TXF[%d]: packet can be placed in TX FIFO, so get the credit!\n", queueID);
-            DPRINTF(EthernetDpdk, "TXF[%d]: packet can be placed in TX FIFO, so get the credit!\n", queueID);
+        if (commType == CommunicationType::RING) {
+            if (txPacketArray[queueID] && txDescCacheArray[queueID]->packetAvailable()
+                && !txDescCacheArray[queueID]->packetMultiDesc() && txPacketArray[queueID]->length) {
+                DPRINTF(EthernetSM, "TXF[%d]: packet can be placed in TX FIFO, so get the credit!\n", queueID);
+                DPRINTF(EthernetDpdk, "TXF[%d]: packet can be placed in TX FIFO, so get the credit!\n", queueID);
 
-            candidateTxQueue = queueID;
-            //just select the queue, not push the packet to the fifo here
-            return;
+                candidateTxQueue = queueID;
+                //just select the queue, not push the packet to the fifo here
+                return;
+            }
+        } else if (commType == CommunicationType::M2FUNC) {
+            if (txPacketArray[queueID] && txM2funcContextArray[queueID]->ethPktDone()) {
+                DPRINTF(EthernetDpdk, "TXF[%d]: packet can be placed in TX FIFO, so get the credit!\n", queueID);
+
+                candidateTxQueue = queueID;
+                //just select the queue, not push the packet to the fifo here
+                return;
+            }
+        } else {
+            panic("Communication type not supported - txPackettoTxFifo\n");
         }
     }
 }
@@ -3370,6 +4466,227 @@ IGbE::updateDropFSM(int rxFifoFull, int rxRingFull, int txRingFull, int txFifoFu
     currState = nextState;
 }
 
+char currStateM2func = 'A', nextStateM2func;
+void
+IGbE::updateDropFSMM2func(int rxFifoFull, int pcieBusy, int txRingFull)
+{
+    // State Encoding: rxFifoFull,pcieBusy,txRingFull
+    // 000 -> "A" || 001 -> "B" || 010 -> "C" || 011 = "D"
+    // 100 -> "E" || 101 -> "F" || 110 -> "G" || 111 = "H"
+    // rxFifoFull==1 && pcieBusy==1 -> DMA Drop (PCIe Drop)
+    // rxFifoFull==1 && pcieBusy==0 -> Core Drop (Core Drop). (Because pcie is not busy, but rxFifo is full)
+    // rxFifoFull==0 && pcieBusy==1 -> potential DMA Drop (PCIe Drop)
+
+    switch(currStateM2func) {
+        case 'A': {
+           if (!rxFifoFull && !pcieBusy && txRingFull) { // 001
+            nextStateM2func = 'B';
+           }
+           else if (!rxFifoFull && pcieBusy && !txRingFull) { //010
+            // Potential DMA Drop
+            nextStateM2func = 'C';
+           }
+           else if (!rxFifoFull && pcieBusy && txRingFull) { //011
+            // Potential DMA Drop
+            nextStateM2func = 'D';           
+           } else if (rxFifoFull && !pcieBusy && !txRingFull) { //100
+            // Core Drop
+            nextStateM2func = 'E';
+            etherDeviceStats.coreDrops++; 
+           } else if (rxFifoFull && !pcieBusy && txRingFull) { //101
+            // Core Drop
+            nextStateM2func = 'F';
+            etherDeviceStats.coreDrops++; 
+           } else if (rxFifoFull && pcieBusy && !txRingFull) { //110
+            // DMA Drop
+            nextStateM2func = 'G';
+            etherDeviceStats.dmaDrops++; 
+           } else if (rxFifoFull && pcieBusy && txRingFull) { //111
+            // TX Drop
+            nextStateM2func = 'H';
+            etherDeviceStats.txDrops++; 
+           } else {
+            nextStateM2func = 'A';
+           }
+           break; 
+        }
+        case 'B': {
+            if (!rxFifoFull && !pcieBusy && !txRingFull) { // 000
+               nextStateM2func = 'A';
+            } else if (!rxFifoFull && pcieBusy && !txRingFull) { // 010
+                nextStateM2func = 'C';
+            } else if (!rxFifoFull && pcieBusy && txRingFull) { // 011
+                nextStateM2func = 'D';
+            } else if (rxFifoFull && !pcieBusy && !txRingFull) { // 100
+                nextStateM2func = 'E';
+                etherDeviceStats.coreDrops++;
+            } else if (rxFifoFull && !pcieBusy && txRingFull) { // 101
+                nextStateM2func = 'F';
+                etherDeviceStats.coreDrops++;
+            } else if (rxFifoFull && pcieBusy && !txRingFull) { // 110
+                nextStateM2func = 'G';
+                etherDeviceStats.dmaDrops++;
+            } else if (rxFifoFull && pcieBusy && txRingFull) { // 111
+                nextStateM2func = 'H';
+                etherDeviceStats.txDrops++;
+            } else {
+                nextStateM2func = 'B';
+            }
+            break;
+        }
+        case 'C': { //potential DMA Drop
+            if (!rxFifoFull && !pcieBusy && !txRingFull) { // 000
+                nextStateM2func = 'A';
+            } else if (!rxFifoFull && !pcieBusy && txRingFull) { // 001
+                nextStateM2func = 'B';
+            } else if (!rxFifoFull && pcieBusy && txRingFull) { // 011
+                nextStateM2func = 'D';
+            } else if (rxFifoFull && !pcieBusy && !txRingFull) { // 100
+                // As current state is C, it is potential DMA Drop
+                nextStateM2func = 'E';
+                etherDeviceStats.dmaDrops++;
+            } else if (rxFifoFull && !pcieBusy && txRingFull) { // 101
+                // As current state is C, it is potential DMA Drop
+                nextStateM2func = 'F';
+                etherDeviceStats.dmaDrops++;
+            } else if (rxFifoFull && pcieBusy && !txRingFull) { // 110
+                nextStateM2func = 'G';
+                etherDeviceStats.dmaDrops++;
+            } else if (rxFifoFull && pcieBusy && txRingFull) { // 111
+                nextStateM2func = 'H';
+                etherDeviceStats.dmaDrops++;
+            } else {
+                nextStateM2func = 'C';
+            }
+            break;
+        }
+        case 'D': { //potential DMA Drop
+            if (!rxFifoFull && !pcieBusy && !txRingFull) { // 000
+                nextStateM2func = 'A';
+            } else if (!rxFifoFull && !pcieBusy && txRingFull) { //001
+                nextStateM2func = 'B';
+            } else if (!rxFifoFull && pcieBusy && !txRingFull) { //010
+                nextStateM2func = 'C';
+            } else if (rxFifoFull && !pcieBusy && !txRingFull) { // 100
+                // As current state is D, it is potential DMA Drop
+                nextStateM2func = 'E';
+                etherDeviceStats.dmaDrops++;
+            } else if (rxFifoFull && !pcieBusy && txRingFull) { // 101
+                // As current state is D, it is potential DMA Drop
+                nextStateM2func = 'F';
+                etherDeviceStats.dmaDrops++;
+            } else if (rxFifoFull && pcieBusy && !txRingFull) { // 110
+                nextStateM2func = 'G';
+                etherDeviceStats.dmaDrops++;
+            } else if (rxFifoFull && pcieBusy && txRingFull) { // 111
+                nextStateM2func = 'H';
+                etherDeviceStats.txDrops++;
+            } else {
+                nextStateM2func = 'D';
+            }
+            break;
+        }
+        case 'E': {
+            if (!rxFifoFull && !pcieBusy && !txRingFull) { // 000
+                nextStateM2func = 'A';
+            } else if (!rxFifoFull && !pcieBusy && txRingFull) { //001
+                nextStateM2func = 'B';
+            } else if (!rxFifoFull && pcieBusy && !txRingFull) { // 010
+                nextStateM2func = 'C';
+            } else if (!rxFifoFull && pcieBusy && txRingFull) { // 011
+                nextStateM2func = 'D';
+            } else if (rxFifoFull && !pcieBusy && txRingFull) { // 101
+                nextStateM2func = 'F';
+                etherDeviceStats.coreDrops++;
+            } else if (rxFifoFull && pcieBusy && !txRingFull) { // 110
+                nextStateM2func = 'G';
+                etherDeviceStats.dmaDrops++;
+            } else if (rxFifoFull && pcieBusy && txRingFull) { // 111
+                nextStateM2func = 'H';
+                etherDeviceStats.txDrops++;
+            } else {
+                nextStateM2func = 'E';
+                etherDeviceStats.coreDrops++;
+            }
+            break;
+        }
+        case 'F': {
+            if (!rxFifoFull && !pcieBusy && !txRingFull) { // 000
+                nextStateM2func = 'A';
+            } else if (!rxFifoFull && !pcieBusy && txRingFull) { //001
+                nextStateM2func = 'B';
+            } else if (!rxFifoFull && pcieBusy && !txRingFull) { // 010
+                nextStateM2func = 'C';
+            } else if (!rxFifoFull && pcieBusy && txRingFull) { // 011
+                nextStateM2func = 'D';
+            } else if (rxFifoFull && !pcieBusy && !txRingFull) { // 100
+                nextStateM2func = 'E';
+                etherDeviceStats.coreDrops++;
+            } else if (rxFifoFull && pcieBusy && !txRingFull) { // 110
+                nextStateM2func = 'G';
+                etherDeviceStats.dmaDrops++;
+            } else if (rxFifoFull && pcieBusy && txRingFull) { // 111
+                nextStateM2func = 'H';
+                etherDeviceStats.txDrops++;
+            } else { //101
+                nextStateM2func = 'F';
+                etherDeviceStats.coreDrops++;
+            }
+            break;
+        }
+        case 'G': {
+            if (!rxFifoFull && !pcieBusy && !txRingFull) { // 000
+               nextStateM2func = 'A';
+            } else if (!rxFifoFull && !pcieBusy && txRingFull) { //001
+                nextStateM2func = 'B';
+            } else if (!rxFifoFull && pcieBusy && !txRingFull) { // 010
+                nextStateM2func = 'C';
+            } else if (!rxFifoFull && pcieBusy && txRingFull) { // 011
+                nextStateM2func = 'D';
+            } else if (rxFifoFull && !pcieBusy && !txRingFull) { // 100
+                nextStateM2func = 'E';
+                etherDeviceStats.coreDrops++;
+            } else if (rxFifoFull && !pcieBusy && txRingFull) { // 101
+                nextStateM2func = 'F';
+                etherDeviceStats.coreDrops++;
+            } else if (rxFifoFull && pcieBusy && txRingFull) { // 111
+                nextStateM2func = 'H';
+                etherDeviceStats.txDrops++;
+            } else {
+                nextStateM2func = 'G';
+                etherDeviceStats.dmaDrops++;
+            }
+            break;
+        }
+        case 'H': {
+            if (!rxFifoFull && !pcieBusy && !txRingFull) { // 000
+                nextStateM2func = 'A';
+            } else if (!rxFifoFull && !pcieBusy && txRingFull) { //001
+                nextStateM2func = 'B';
+            } else if (!rxFifoFull && pcieBusy && !txRingFull) { // 010
+                nextStateM2func = 'C';
+            } else if (!rxFifoFull && pcieBusy && txRingFull) { // 011
+                nextStateM2func = 'D';
+            } else if (rxFifoFull && !pcieBusy && !txRingFull) { // 100
+                // Core Drop
+                nextStateM2func = 'E';
+                etherDeviceStats.coreDrops++;
+            } else if (rxFifoFull && !pcieBusy && txRingFull) { // 101
+                // Core Drop
+                nextStateM2func = 'F';
+                etherDeviceStats.coreDrops++;
+            } else if (rxFifoFull && pcieBusy && !txRingFull) { // 110
+                nextStateM2func = 'G';
+                etherDeviceStats.dmaDrops++;
+            } else {
+                nextStateM2func = 'H';
+                etherDeviceStats.txDrops++;
+            }
+            break;
+        }
+    }
+    currStateM2func = nextStateM2func;
+}
 
 bool
 IGbE::ethRxPkt(EthPacketPtr pkt)
@@ -3377,6 +4694,8 @@ IGbE::ethRxPkt(EthPacketPtr pkt)
     
     etherDeviceStats.rxBytes += pkt->length;
     etherDeviceStats.rxPackets++;
+    
+    updateRxPacketReceiveStat(curTick());
 
     DPRINTF(Ethernet, "RxFIFO: Receiving packet from wire\n");
     DPRINTF(EthernetDpdk, "RxFIFO: Receiving packet from wire\n");
@@ -3390,7 +4709,6 @@ IGbE::ethRxPkt(EthPacketPtr pkt)
     // int txRingFull = ((!txDescCache.packetWaiting() && txDescCache.descLeft() == 0) ? 1 : 0);
     // int rxFifoFull = (rxFifo.full() ? 1 : 0);
     // int rxFifoFull = (!rxFifo.push(pkt) ? 1 : 0);
-    // call updateDropFSM(rxFifo.full(), txRingFull)
     // updateDropFSM(rxFifoFull, rxRingFull, txRingFull);
 
 
@@ -3410,47 +4728,90 @@ IGbE::ethRxPkt(EthPacketPtr pkt)
                 "RXS: received packet into fifo, starting ticking\n");
         restartClock();
     }
-    int rxRingFull = 0;
-    int txRingFull = 0;
+    
     // int rxRingFull = ((rxDescCache.descLeft() == 0) ? 1 : 0); // RX Path: CPU Produces Descriptors and NIC Consumes/Uses
     // int txRingFull = ((!txDescCache.packetWaiting() && txDescCache.descLeft() == 1024) ? 1 : 0); // TX Path: CPU Produces Packets and NIC Consumes/Uses
+    
     // check rxDescCacheArray and txDescCacheArray
-    bool rxDescCacheFull = true;
-    bool txDescCacheFull = true;
-    for (int i = 0; i < numQueues; i++) {
-        if (rxDescCacheArray[i]->descLeft() > 0) {
-            rxDescCacheFull = false;
+    int rxRingFull = 0;
+    int txRingFull = 0;
+    if (commType == CommunicationType::RING) {
+        bool rxDescCacheFull = true;
+        bool txDescCacheFull = true;
+        for (int i = 0; i < numQueues; i++) {
+            if (rxDescCacheArray[i]->descLeft() > 0) {
+                rxDescCacheFull = false;
+            }
+            if (txDescCacheArray[i]->packetWaiting() || txDescCacheArray[i]->descLeft() < 1024) {
+                txDescCacheFull = false;
+            }
         }
-        if (txDescCacheArray[i]->packetWaiting() || txDescCacheArray[i]->descLeft() < 1024) {
-            txDescCacheFull = false;
+        if (rxDescCacheFull) {
+            rxRingFull = 1; // Have to check - Maybe, we can only check target RX queue (results of RSS)
+        }
+        if (txDescCacheFull) {
+            txRingFull = 1;
         }
     }
-    if (rxDescCacheFull) {
-        rxRingFull = 1; //Have to check - Maybe, we can only check target RX queue (results of RSS)
+
+    // Set PCIe busy 
+    int pcieBusy = 0;
+    if (commType == CommunicationType::M2FUNC) {
+        double pcieUtil = getPCIeUtilization();
+        if (pcieUtil > 0.8) {
+            DPRINTF(EthernetDpdk, "ethRXPkt: PCIe is busy. pcieUtil: %f\n", pcieUtil);
+            pcieBusy = 1;
+        } else {
+            DPRINTF(EthernetDpdk, "ethRXPkt: PCIe is not busy. pcieUtil: %f\n", pcieUtil);
+        }
     }
-    if (txDescCacheFull) {
-        txRingFull = 1;
-    }
+
+    // Set rxFifoFull and txFifoFull
     int rxFifoFull = 0;
     int txFifoFull = 0;
     if (!rxFifo.push(pkt)) {
         rxFifoFull = 1;
         etherDeviceStats.rxFifoFullCount++;
-        updateDropFSM(rxFifoFull, rxRingFull, txRingFull, txFifoFull);
+        if (commType == CommunicationType::RING) {
+            updateDropFSM(rxFifoFull, rxRingFull, txRingFull, txFifoFull);
+        } else if (commType == CommunicationType::M2FUNC) {
+            //M2FUNC, now don't care txRingFull. It will always 0
+            updateDropFSMM2func(rxFifoFull, pcieBusy, 0);
+        } else {
+            panic("Communication type not supported - ethRxPkt\n");
+        }
         DPRINTF(Ethernet, "RxFIFO: Packet won't fit in fifo... dropped\n");
         DPRINTF(EthernetDpdk, "RxFIFO: Packet won't fit in fifo... dropped\n");
         postInterrupt(IT_RXO, true);
         return false;
     }
-    // else
-        // rxFifoFull=0;
-    updateDropFSM(rxFifoFull, rxRingFull, txRingFull, txFifoFull);
+
+    if (commType == CommunicationType::RING) {
+        updateDropFSM(rxFifoFull, rxRingFull, txRingFull, txFifoFull);
+    } else if (commType == CommunicationType::M2FUNC) {
+        //M2FUNC, now don't care txRingFull. It will always 0
+        updateDropFSMM2func(rxFifoFull, pcieBusy, 0);
+    } else {
+        panic("Communication type not supported - ethRxPkt\n");
+    }
 
     if (pkt->rxFifoTick == 0) {
         pkt->rxFifoTick = curTick();
     }
 
     return true;
+}
+
+double 
+IGbE::getPCIeUtilization()
+{
+    PortID reqID = 18; 
+    PortID respID = 2;
+    double pcieReqUtil = getPCIeReqLayerUtil(reqID);
+    double pcieRespUtil = getPCIeRespLayerUtil(respID);
+    double pcieUtil = (pcieReqUtil + pcieRespUtil) / 2;
+
+    return pcieUtil;
 }
 
 
@@ -3627,7 +4988,7 @@ IGbE::rxStateMachine(int queueID)
 
     // EthPacketPtr pkt;
     // pkt = rxFifo.front();
-
+    
     // pktOffset = rxDescCache.writePacket(pkt, pktOffset);
     pktOffsetArray[queueID] = rxDescCacheArray[queueID]->writePacket(pkt, pktOffsetArray[queueID]);
     DPRINTF(EthernetSM, "RXS[%d]: Writing packet into memory\n", queueID);
@@ -3640,6 +5001,9 @@ IGbE::rxStateMachine(int queueID)
         pktOffsetArray[queueID] = 0;
         // rxFifo.pop();
         rxPacketArray[queueID] = nullptr;
+
+        // Stat
+        updateRxRingBufferDMAStartStat(curTick());
     }
 
     DPRINTF(EthernetSM, "RXS[%d]: stopping ticking until packet DMA completes\n", queueID);
@@ -3694,18 +5058,26 @@ IGbE::tick()
         // rxStateMachine();
         bool rxTickQueue = rxTick;
         for (int i = 0; i < numQueues; i++) {
-            rxTickQueue |= rxStateMachine(i);
+            if (commType == CommunicationType::RING) {
+                rxTickQueue |= rxStateMachine(i);
+            } else if (commType == CommunicationType::M2FUNC) {
+                rxTickQueue |= rxM2funcContextArray[i]->rxM2funcStateMachine();
+            } else {
+                panic("Communication type not supported - tick\n");
+            }
         }
         // Move pkt from rxFifo to rxPacketArray
         rxFifotoRxDesc();
 
         rxTick = rxTickQueue;
     } else {
-        for (int i = 0; i < numQueues; i++) {
-            if (rxDmaPacketArray[i] && rxPacketArray[i] != nullptr) {
-                if (rxPacketArray[i]->rxFifoNotEmptyDmaBusyChecked == false) {
-                    rxPacketArray[i]->rxFifoNotEmptyDmaBusyChecked = true;
-                    etherDeviceStats.rxFifoNotEmptyDmaBusy++;
+        if (commType == CommunicationType::RING) {
+            for (int i = 0; i < numQueues; i++) {
+                if (rxDmaPacketArray[i] && rxPacketArray[i] != nullptr) {
+                    if (rxPacketArray[i]->rxFifoNotEmptyDmaBusyChecked == false) {
+                        rxPacketArray[i]->rxFifoNotEmptyDmaBusyChecked = true;
+                        etherDeviceStats.rxFifoNotEmptyDmaBusy++;
+                    }
                 }
             }
         }
@@ -3717,7 +5089,13 @@ IGbE::tick()
         txPackettoTxFifo();
         bool txTickQueue = txTick;
         for (int i = 0; i < numQueues; i++) {
-            txTickQueue |= txStateMachine(i);
+            if (commType == CommunicationType::RING) {
+                txTickQueue |= txStateMachine(i);
+            } else if (commType == CommunicationType::M2FUNC) {
+                txTickQueue |= txM2funcContextArray[i]->txM2funcStateMachine();
+            } else {
+                panic("Communication type not supported - tick\n");
+            }
         }
         txTick = txTickQueue;
         if (successTxQueueSend) {
@@ -3753,8 +5131,16 @@ IGbE::ethTxDone()
     //     txTick = true;
     // check txDescCacheArray
     for (int i = 0; i < numQueues; i++) {
-        if (txDescCacheArray[i]->descLeft() != 0 && drainState() != DrainState::Draining)
-            txTick = true;
+        if (commType == CommunicationType::RING) {
+            if (txDescCacheArray[i]->descLeft() != 0 && drainState() != DrainState::Draining)
+                txTick = true;
+        } else if (commType == CommunicationType::M2FUNC) {
+            // TODO - JM: have to check
+            if (drainState() != DrainState::Draining)
+                txTick = true;
+        } else {
+            panic("Communication type not supported - ethTxDone\n");
+        }
     }
 
     if (!inTick)
@@ -3781,11 +5167,6 @@ IGbE::serialize(CheckpointOut &cp) const
 
     SERIALIZE_SCALAR(numQueues);
 
-    // bool txPktExists = txPacket != nullptr;
-    // SERIALIZE_SCALAR(txPktExists);
-    // if (txPktExists)
-    //     txPacket->serialize("txpacket", cp);
-    //Serialize txPacketArray
     for (int i = 0; i < numQueues; i++) {
         bool txPktExists = txPacketArray[i] != nullptr;
         if (txPktExists) {
@@ -3809,22 +5190,6 @@ IGbE::serialize(CheckpointOut &cp) const
     // Tick rdtr_time = 0, radv_time = 0, tidv_time = 0, tadv_time = 0,
     Tick inter_time = 0;
 
-    // if (rdtrEvent.scheduled())
-    //     rdtr_time = rdtrEvent.when();
-    // SERIALIZE_SCALAR(rdtr_time);
-
-    // if (radvEvent.scheduled())
-    //     radv_time = radvEvent.when();
-    // SERIALIZE_SCALAR(radv_time);
-
-    // if (tidvEvent.scheduled())
-    //     tidv_time = tidvEvent.when();
-    // SERIALIZE_SCALAR(tidv_time);
-
-    // if (tadvEvent.scheduled())
-    //     tadv_time = tadvEvent.when();
-    // SERIALIZE_SCALAR(tadv_time);
-
     if (interEvent.scheduled())
         inter_time = interEvent.when();
     SERIALIZE_SCALAR(inter_time);
@@ -3839,8 +5204,15 @@ IGbE::serialize(CheckpointOut &cp) const
     // rxDescCache.serializeSection(cp, "RxDescCache");
     //Serialize rxDescCacheArray and txDescCacheArray
     for (int i = 0; i < numQueues; i++) {
-        txDescCacheArray[i]->serializeSection(cp, csprintf("TxDescCache%d", i));
-        rxDescCacheArray[i]->serializeSection(cp, csprintf("RxDescCache%d", i));
+        if (commType == CommunicationType::RING) {
+            txDescCacheArray[i]->serializeSection(cp, csprintf("TxDescCache%d", i));
+            rxDescCacheArray[i]->serializeSection(cp, csprintf("RxDescCache%d", i));
+        } else if (commType == CommunicationType::M2FUNC) {
+            txM2funcContextArray[i]->serializeSection(cp, csprintf("TxM2funcContext%d", i));
+            rxM2funcContextArray[i]->serializeSection(cp, csprintf("RxM2funcContext%d", i));
+        } else {
+            panic("Communication type not supported - serialize\n");
+        }
     }
 }
 
@@ -3931,9 +5303,16 @@ IGbE::unserialize(CheckpointIn &cp)
     // rxDescCache.unserializeSection(cp, "RxDescCache");
     //Unserialize rxDescCacheArray and txDescCacheArray
     for (int i = 0; i < numQueues; i++) {
-        txDescCacheArray[i]->unserializeSection(cp, csprintf("TxDescCache%d", i));
-        rxDescCacheArray[i]->unserializeSection(cp, csprintf("RxDescCache%d", i));
+        if (commType == CommunicationType::RING) {
+            txDescCacheArray[i]->unserializeSection(cp, csprintf("TxDescCache%d", i));
+            rxDescCacheArray[i]->unserializeSection(cp, csprintf("RxDescCache%d", i));
+        } else if (commType == CommunicationType::M2FUNC) {
+            txM2funcContextArray[i]->unserializeSection(cp, csprintf("TxM2funcContext%d", i));
+            rxM2funcContextArray[i]->unserializeSection(cp, csprintf("RxM2funcContext%d", i));
+        }
     }
 }
 
 } // namespace gem5
+
+

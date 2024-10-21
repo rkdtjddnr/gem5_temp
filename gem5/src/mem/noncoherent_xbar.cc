@@ -100,6 +100,24 @@ NoncoherentXBar::~NoncoherentXBar()
         delete l;
 }
 
+double
+NoncoherentXBar::getReqLayerUtilization(PortID id) const
+{
+    double total = 0;
+    if (id < reqLayers.size())
+        total += reqLayers[id]->getUtilization();
+    return total;
+}
+
+double
+NoncoherentXBar::getRespLayerUtilization(PortID id) const
+{
+    double total = 0;
+    if (id < respLayers.size())
+        total += respLayers[id]->getUtilization();
+    return total;
+}
+
 bool
 NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
 {
@@ -111,10 +129,16 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
 
     // determine the destination based on the address
     PortID mem_side_port_id = findPort(pkt->getAddrRange());
+    PortID pcie_req_side_port_id = mem_side_port_id;
+    // JM - to make pio and dma use the same reqLayer for PCIe model
+    if (isIOXBar && mem_side_port_id == 17) {
+        // PCIe reqLayer only uses 18 layer
+        pcie_req_side_port_id = 18;
+    }
 
     // test if the layer should be considered occupied for the current
     // port
-    if (!reqLayers[mem_side_port_id]->tryTiming(src_port)) {
+    if (!reqLayers[pcie_req_side_port_id]->tryTiming(src_port)) {
         DPRINTF(NoncoherentXBar, "recvTimingReq: src %s %s 0x%x BUSY\n",
                 src_port->name(), pkt->cmdString(), pkt->getAddr());
         // if (cpu_side_port_id == 2 && pkt->getSize() == 64 && pkt->cmd == MemCmd::WriteReq) {
@@ -173,11 +197,11 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         pkt->headerDelay = old_header_delay;
 
         // occupy until the header is sent
-        reqLayers[mem_side_port_id]->failedTiming(src_port,
+        reqLayers[pcie_req_side_port_id]->failedTiming(src_port,
                                                 clockEdge(Cycles(1)));
 
         // JM 
-        reqLayers[mem_side_port_id]->failOccupancy += clockEdge(Cycles(1)) - curTick();
+        reqLayers[pcie_req_side_port_id]->failOccupancy += clockEdge(Cycles(1)) - curTick();
 
         return false;
     }
@@ -188,13 +212,20 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         routeTo[pkt->req] = cpu_side_port_id;
     }
 
-    reqLayers[mem_side_port_id]->succeededTiming(packetFinishTime);
+    reqLayers[pcie_req_side_port_id]->succeededTiming(packetFinishTime);
 
     // JM
     if (pkt_size > 0) {
-        reqLayers[mem_side_port_id]->dataOccupancy += packetFinishTime - curTick();
+        reqLayers[pcie_req_side_port_id]->dataOccupancy += packetFinishTime - curTick();
     } else {
-        reqLayers[mem_side_port_id]->headerOccupancy += packetFinishTime - curTick();
+        reqLayers[pcie_req_side_port_id]->headerOccupancy += packetFinishTime - curTick();
+        if (pkt->cmd == MemCmd::WriteReq || pkt->cmd == MemCmd::WriteLineReq) {
+            reqLayers[pcie_req_side_port_id]->writeReqHeaderOccupancy += packetFinishTime - curTick();
+        } else if (pkt->cmd == MemCmd::ReadReq) {
+            reqLayers[pcie_req_side_port_id]->readReqHeaderOccupancy += packetFinishTime - curTick();
+        } else {
+            reqLayers[pcie_req_side_port_id]->elseHeaderOccupancy += packetFinishTime - curTick();
+        }   
     }
 
     // stats updates
@@ -218,9 +249,16 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
     assert(cpu_side_port_id != InvalidPortID);
     assert(cpu_side_port_id < respLayers.size());
 
+    PortID pcie_resp_side_port_id = cpu_side_port_id;
+    // JM - to make pio and dma use the same respLayer for PCIe model
+    if (isIOXBar && cpu_side_port_id == 0) {
+        // PCIe respLayer only uses layer 2
+        pcie_resp_side_port_id = 2;
+    }
+
     // test if the layer should be considered occupied for the current
     // port
-    if (!respLayers[cpu_side_port_id]->tryTiming(src_port)) {
+    if (!respLayers[pcie_resp_side_port_id]->tryTiming(src_port)) {
         DPRINTF(NoncoherentXBar, "recvTimingResp: src %s %s 0x%x BUSY\n",
                 src_port->name(), pkt->cmdString(), pkt->getAddr());
         // if (cpu_side_port_id == 2 && pkt->getSize() == 64 && pkt->cmd == MemCmd::WriteResp) {
@@ -269,13 +307,20 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
     // remove the request from the routing table
     routeTo.erase(route_lookup);
 
-    respLayers[cpu_side_port_id]->succeededTiming(packetFinishTime);
+    respLayers[pcie_resp_side_port_id]->succeededTiming(packetFinishTime);
 
     // JM
     if (pkt_size > 0) {
-        respLayers[cpu_side_port_id]->dataOccupancy += packetFinishTime - curTick();
+        respLayers[pcie_resp_side_port_id]->dataOccupancy += packetFinishTime - curTick();
     } else {
-        respLayers[cpu_side_port_id]->headerOccupancy += packetFinishTime - curTick();
+        respLayers[pcie_resp_side_port_id]->headerOccupancy += packetFinishTime - curTick();
+        if (pkt->cmd == MemCmd::WriteResp) {
+            respLayers[pcie_resp_side_port_id]->writeRespHeaderOccupancy += packetFinishTime - curTick();
+        } else if (pkt->cmd == MemCmd::ReadResp) {
+            respLayers[pcie_resp_side_port_id]->readRespHeaderOccupancy += packetFinishTime - curTick();
+        } else {
+            respLayers[pcie_resp_side_port_id]->elseHeaderOccupancy += packetFinishTime - curTick();
+        }
     }
 
     // stats updates
@@ -292,7 +337,16 @@ NoncoherentXBar::recvReqRetry(PortID mem_side_port_id)
     // responses never block on forwarding them, so the retry will
     // always be coming from a port to which we tried to forward a
     // request
-    reqLayers[mem_side_port_id]->recvRetry();
+    
+    // JM - If IOXbar, the we have to use reqLayer 18 for PCIe model
+    PortID pcie_req_side_port_id = mem_side_port_id;
+
+    if (isIOXBar && mem_side_port_id == 17) {
+        // PCIe reqLayer only uses 18 layer
+        pcie_req_side_port_id = 18;
+    }
+
+    reqLayers[pcie_req_side_port_id]->recvRetry();
 }
 
 Tick

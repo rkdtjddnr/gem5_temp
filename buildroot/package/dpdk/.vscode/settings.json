@@ -1,0 +1,19 @@
+{
+    "files.associations": {
+        "istream": "c",
+        "ostream": "c",
+        "array": "c",
+        "string": "c",
+        "functional": "c",
+        "tuple": "c",
+        "type_traits": "c",
+        "utility": "c",
+        "rte_pci.h": "c",
+        "rte_bus_pci.h": "c",
+        "rte_memcpy.h": "c",
+        "rte_memory.h": "c",
+        "rte_common.h": "c",
+        "rte_byteorder.h": "c",
+        "rte_interrupts.h": "c"
+    }
+}

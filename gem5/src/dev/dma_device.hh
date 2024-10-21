@@ -239,6 +239,16 @@ class DmaPort : public RequestPort, public Drainable
 
     bool dmaPending() const { return pendingCount > 0; }
 
+    double
+    getPCIeReqLayerUtil(PortID id) {
+        return getIOXBarReqLayerUtilization(id);
+    }
+
+    double
+    getPCIeRespLayerUtil(PortID id) {
+        return getIOXBarRespLayerUtilization(id);
+    }
+
     DrainState drain() override;
 };
 
@@ -340,6 +350,14 @@ class DmaDevice : public PioDevice
     void init() override;
 
     unsigned int cacheBlockSize() const { return sys->cacheLineSize(); }
+
+    double getPCIeReqLayerUtil(PortID id) {
+        return dmaPort.getPCIeReqLayerUtil(id);
+    }
+
+    double getPCIeRespLayerUtil(PortID id) {
+        return dmaPort.getPCIeRespLayerUtil(id);
+    }
 
     Port &getPort(const std::string &if_name,
                   PortID idx=InvalidPortID) override;

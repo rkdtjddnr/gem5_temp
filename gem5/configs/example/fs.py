@@ -103,6 +103,8 @@ def build_test_system(np):
                 bootloader=args.bootloader,
                 num_nics=args.num_nics,
                 num_qs=args.num_queues,
+                m2func=args.is_m2func,
+                dpdk_setup=args.is_dpdk_setup_step,
                 # Loadgens.
                 num_loadgens=args.num_loadgens,
                 load_generator_type="Simple",
@@ -128,6 +130,8 @@ def build_test_system(np):
                 bootloader=args.bootloader,
                 num_nics=args.num_nics,
                 num_qs=args.num_queues,
+                m2func=args.is_m2func,
+                dpdk_setup=args.is_dpdk_setup_step,
                 # Loadgens.
                 num_loadgens=args.num_loadgens,
                 loadgen_stack_mode=args.loadgen_stack,

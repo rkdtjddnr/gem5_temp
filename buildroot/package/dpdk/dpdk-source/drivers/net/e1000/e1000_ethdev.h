@@ -511,10 +511,16 @@ void eth_em_tx_init(struct rte_eth_dev *dev);
 uint16_t eth_em_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 		uint16_t nb_pkts);
 
+uint16_t eth_em_xmit_pkts_m2func(void *tx_queue, struct rte_mbuf **tx_pkts,
+		uint16_t nb_pkts);
+
 uint16_t eth_em_prep_pkts(void *txq, struct rte_mbuf **tx_pkts,
 		uint16_t nb_pkts);
 
 uint16_t eth_em_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
+		uint16_t nb_pkts);
+
+uint16_t eth_em_recv_pkts_m2func(void *rx_queue, struct rte_mbuf **rx_pkts,
 		uint16_t nb_pkts);
 
 uint16_t eth_em_recv_scattered_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,

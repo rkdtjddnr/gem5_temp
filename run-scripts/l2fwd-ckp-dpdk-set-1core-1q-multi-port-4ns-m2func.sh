@@ -39,14 +39,14 @@ function run_simulation {
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
   --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
-  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues"\
+  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --is-m2func \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 
   "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
   --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
-  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues"\
+  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --is-m2func \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 }
 
@@ -57,7 +57,7 @@ fi
 
 GEM5_DIR=${GIT_ROOT}/gem5
 # RESOURCES=${GIT_ROOT}/resources
-RESOURCES=${GIT_ROOT}/resources-dpdk
+RESOURCES=${GIT_ROOT}/resources-dpdk-m2func-wo-printf
 GUEST_SCRIPT_DIR=${GIT_ROOT}/guest-scripts
 
 # parse command line arguments
@@ -116,7 +116,7 @@ while true; do
   esac
 done
 
-CKPT_DIR=${GIT_ROOT}/ckpts/"241014-"$num_nics"NIC"-$num_queues"Qs"-$GUEST_SCRIPT
+CKPT_DIR=${GIT_ROOT}/ckpts/"m2func-"$num_nics"NIC"-$num_queues"Qs"-$GUEST_SCRIPT-"wo-printf"
 if [[ -z "$num_nics" ]]; then
   echo "Error: missing argument --num-nics" >&2
   usage
@@ -128,14 +128,14 @@ fi
 
 if [[ -n "$checkpoint" ]]; then
   # RUNDIR=${GIT_ROOT}/rundir/$num_nics"NIC-ckp"-$GUEST_SCRIPT
-  RUNDIR=${GIT_ROOT}/rundir/241014-SingleQueue/$num_nics"NIC-"$num_queues"Qs-1core-ckp-"$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/m2func-SingleQueue-wo-printf/$num_nics"NIC-"$num_queues"Qs-1core-ckp-"$GUEST_SCRIPT
   setup_dirs
   echo "Taking Checkpoint for NICs=$num_nics Queues=$num_queues" >&2
   GEM5TYPE="fast"
   # packet-size = 0 leads to segfault
   PACKET_SIZE=48
   CPUTYPE="AtomicSimpleCPU"
-  CONFIGARGS="--max-checkpoints 3 --cpu-clock=$Freq --loadgen-start=2628842328231400"
+  CONFIGARGS="--max-checkpoints 3 --cpu-clock=$Freq --loadgen-start=2628842328231400 --is-dpdk-setup-step"
   # CONFIGARGS="--max-checkpoints 1 -r 1 --cpu-clock=$Freq --loadgen-start=2628842328231400"
   run_simulation > $RUNDIR/simout
   exit 0
@@ -150,7 +150,7 @@ else
     usage
   fi
   ((RATE = PACKET_RATE * PACKET_SIZE * 8 / 1024 / 1024 / 1024))
-  RUNDIR=${GIT_ROOT}/rundir/$(date +%Y%m%d)-dpdk-set-1core-l3-2port-4ns/$num_nics"NIC-"$num_queues"Qs-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/m2func-dpdk-set-1core-l3-2port-4ns-wo-printf-rd-distance/$num_nics"NIC-"$num_queues"Qs-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
   setup_dirs
 # /dpdk-testpmd-freq-scaling-test
   echo "Running NICs=$num_nics at $RATE GBPS" >&2
@@ -158,10 +158,11 @@ else
   GEM5TYPE="opt"
   # GEM5TYPE="debug"
   LOADGENMODE=${LOADGENMODE:-"Static"}
+  # DEBUG_FLAGS="--debug-flags=EthernetDpdk,LoadgenDebug"
   # DEBUG_FLAGS="--debug-flags=LoadgenDebug,EthernetDesc,EthernetDpdk" #--debug-start=33952834348" #EthernetAll,EthernetDesc,LoadgenDebug
   # CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=6497528130048 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   # --warmup-dpdk 200000000000"
-  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=11613827092665 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4585960466526 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   --warmup-dpdk 200000000000"
   run_simulation > ${RUNDIR}/simout
   exit

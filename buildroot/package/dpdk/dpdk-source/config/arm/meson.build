@@ -91,7 +91,7 @@ flags_n1generic_extra = [
 	['RTE_LIBRTE_VHOST_NUMA', false]]
 
 machine_args_generic = [
-	['default', ['-march=armv8-a+crc', '-moutline-atomics']],
+	['default', ['-march=armv8-a+crc+sve', '-moutline-atomics']],
 	['native', ['-march=native']],
 	['0xd03', ['-mcpu=cortex-a53']],
 	['0xd04', ['-mcpu=cortex-a35']],
@@ -207,6 +207,14 @@ else
 		endif
 	endforeach
 endif
+
+if cc.has_argument('-march=armv8-a+sve')
+    machine_args += '-march=armv8-a+sve'
+    dpdk_conf.set('RTE_ARM_USE_SVE', true)  # Setting the custom variable
+else
+    dpdk_conf.set('RTE_ARM_USE_SVE', false)  # Default to false if not supported
+endif
+
 message(machine_args)
 
 if (cc.get_define('__ARM_NEON', args: machine_args) != '' or

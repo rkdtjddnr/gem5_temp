@@ -162,6 +162,7 @@ class IGbE(EtherDevice):
         "Ethernet Hardware Address")
     rx_fifo_size = Param.MemorySize('4096KiB', "Size of the rx FIFO")
     tx_fifo_size = Param.MemorySize('4096KiB', "Size of the tx FIFO")
+    flit_size = Param.Int(64, "Size of the PCIe flit")
     rx_desc_cache_size = Param.Int(64,
         "Number of enteries in the rx descriptor cache")
     tx_desc_cache_size = Param.Int(64,
@@ -191,6 +192,11 @@ class IGbE(EtherDevice):
     adq_idx = Param.Int('-1', "target mlc")
     # jm - multi-queue
     num_queues = Param.UInt32(2, "Number of queues")
+    
+    # JM - communication type of the device
+    # Default is using the ring buffer
+    is_m2func = Param.Bool(False, "Is this device a M2Func device")
+    is_dpdk_setup_step = Param.Bool(False, "Is this device a DPDK setup step")
 
 class IGbE_e1000(IGbE):
     # Older Intel 8254x based gigabit ethernet adapter
@@ -203,6 +209,13 @@ class IGbE_e1000(IGbE):
     adq_idx = -1
     # jm - multi-queue
     num_queues = Param.UInt32(2, "Number of queues")
+    
+    # JM
+    flit_size = 64
+    
+    # JM
+    is_m2func = False
+    is_dpdk_setup_step = False
 
 class IGbE_igb(IGbE):
     # Newer Intel 8257x based gigabit ethernet adapter

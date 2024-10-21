@@ -43,7 +43,7 @@ then
 	export RUNSCRIPT_VAR=2
 
 	# Read the script for the checkpoint restored execution
-	echo "Loading new script..."
+	echo "Loading new script........"
 	/sbin/m5 readfile > /tmp/runscript
 	chmod 755 /tmp/runscript
 
