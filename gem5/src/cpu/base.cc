@@ -70,6 +70,7 @@
 
 // Hack
 #include "sim/stat_control.hh"
+#include "base.hh"
 
 namespace gem5
 {

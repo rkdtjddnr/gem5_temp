@@ -197,6 +197,11 @@ class IGbE(EtherDevice):
     # Default is using the ring buffer
     is_m2func = Param.Bool(False, "Is this device a M2Func device")
     is_dpdk_setup_step = Param.Bool(False, "Is this device a DPDK setup step")
+    enable_dta = Param.Bool(False, "Enable DTA")
+    cxl_mem_delay = Param.Latency('0ns', "CXL memory delay")
+    cxl_req_buf_size = Param.UInt32(1024, "CXL request buffer size")
+    # JM - for DTA
+    m2func_port = ResponsePort("M2Func port. Receive CXL.mem request from DTA")
 
 class IGbE_e1000(IGbE):
     # Older Intel 8254x based gigabit ethernet adapter
@@ -216,6 +221,9 @@ class IGbE_e1000(IGbE):
     # JM
     is_m2func = False
     is_dpdk_setup_step = False
+    enable_dta = False
+    cxl_mem_delay = "0ns"
+    cxl_req_buf_size = 1024
 
 class IGbE_igb(IGbE):
     # Newer Intel 8257x based gigabit ethernet adapter

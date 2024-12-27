@@ -141,6 +141,9 @@ struct em_rx_queue {
 	volatile uint32_t   *rdt_reg_addr; /**< RDT register address. */
 	volatile uint32_t   *rdh_reg_addr; /**< RDH register address. */
 	volatile uint32_t   *rx_m2func_reg_addr; /**< Address of M2FUNC register. */
+	volatile uint32_t   *dta_job_submit_reg_addr; /**< Address of DTA job submit register. */
+	rte_iova_t			completion_addr; /**< Address of completion array. */
+	int64_t            *completion_buffer; /**< Completion buffer. */
 	struct em_rx_entry *sw_ring;   /**< address of RX software ring. */
 	struct rte_mbuf *pkt_first_seg; /**< First segment of current packet. */
 	struct rte_mbuf *pkt_last_seg;  /**< Last segment of current packet. */
@@ -222,6 +225,11 @@ struct em_tx_queue {
 	struct em_tx_entry    *sw_ring; /**< virtual address of SW ring. */
 	volatile uint32_t      *tdt_reg_addr; /**< Address of TDT register. */
 	volatile uint32_t      *tx_m2func_reg_addr; /**< Address of M2FUNC register. */
+	volatile uint32_t      *dta_job_submit_reg_addr; /**< Address of DTA job submit register. */
+	rte_iova_t			   completion_addr; /**< Address of completion array. */
+	int64_t            	   *completion_buffer; /**< Completion buffer. */
+	rte_iova_t			   descriptor_addr; /**< Address of descriptor array. */
+	struct e1000_adv_tx_desc_m2func *descriptor_buffer; /**< Descriptor buffer. */
 	uint32_t               txd_type;      /**< Device-specific TXD type */
 	uint16_t               nb_tx_desc;    /**< number of TX descriptors. */
 	uint16_t               tx_tail;  /**< Current value of TDT register. */
@@ -541,6 +549,98 @@ em_set_xmit_ctx_m2func(struct em_tx_queue* txq,
 	// Send each 64-bit portion using E1000_PCI_REG_WRITE64B
 	E1000_PCI_REG_WRITE64B(txq->tx_m2func_reg_addr, ctx_buffer);
 
+}
+
+/*
+ * Populates TX context descriptor.
+ */
+static inline void
+em_set_xmit_ctx_m2func_dta(struct em_tx_queue* txq,
+		volatile struct e1000_adv_tx_context_desc *ctx_txd,
+		uint64_t ol_flags,
+		union em_vlan_macip hdrlen)
+{
+	// TODO - JM
+	uint32_t type_tucmd_mlhl;
+	uint32_t mss_l4len_idx;
+	uint32_t ctx_idx, ctx_curr;
+	uint32_t vlan_macip_lens;
+	union em_vlan_macip tx_offload_mask;
+
+	// ctx_idx = ctx_curr + txq->ctx_start;
+	ctx_idx = 0; //jm - we are not using multiple contexts
+
+	tx_offload_mask.data = 0;
+	type_tucmd_mlhl = 0;
+
+	/* Specify which HW CTX to upload. */
+	mss_l4len_idx = (ctx_idx << E1000_ADVTXD_IDX_SHIFT);
+
+	if (ol_flags & PKT_TX_VLAN_PKT)
+		tx_offload_mask.data |= TX_VLAN_CMP_MASK;
+
+	/* check if TCP segmentation required for this packet */
+	if (ol_flags & PKT_TX_TCP_SEG) {
+		/* implies IP cksum in IPv4 */
+		if (ol_flags & PKT_TX_IP_CKSUM)
+			type_tucmd_mlhl = E1000_ADVTXD_TUCMD_IPV4 |
+				E1000_ADVTXD_TUCMD_L4T_TCP |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+		else
+			type_tucmd_mlhl = E1000_ADVTXD_TUCMD_IPV6 |
+				E1000_ADVTXD_TUCMD_L4T_TCP |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+
+		tx_offload_mask.data |= TX_TSO_CMP_MASK;
+		mss_l4len_idx |= hdrlen.f.tso_segsz << E1000_ADVTXD_MSS_SHIFT;
+		mss_l4len_idx |= hdrlen.f.l4_len << E1000_ADVTXD_L4LEN_SHIFT;
+	} else { /* no TSO, check if hardware checksum is needed */
+		if (ol_flags & (PKT_TX_IP_CKSUM | PKT_TX_L4_MASK))
+			tx_offload_mask.data |= TX_MACIP_LEN_CMP_MASK;
+
+		if (ol_flags & PKT_TX_IP_CKSUM)
+			type_tucmd_mlhl = E1000_ADVTXD_TUCMD_IPV4;
+
+		switch (ol_flags & PKT_TX_L4_MASK) {
+		case PKT_TX_UDP_CKSUM:
+			type_tucmd_mlhl |= E1000_ADVTXD_TUCMD_L4T_UDP |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+			mss_l4len_idx |= sizeof(struct rte_udp_hdr)
+				<< E1000_ADVTXD_L4LEN_SHIFT;
+			break;
+		case PKT_TX_TCP_CKSUM:
+			type_tucmd_mlhl |= E1000_ADVTXD_TUCMD_L4T_TCP |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+			mss_l4len_idx |= sizeof(struct rte_tcp_hdr)
+				<< E1000_ADVTXD_L4LEN_SHIFT;
+			break;
+		case PKT_TX_SCTP_CKSUM:
+			type_tucmd_mlhl |= E1000_ADVTXD_TUCMD_L4T_SCTP |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+			mss_l4len_idx |= sizeof(struct rte_sctp_hdr)
+				<< E1000_ADVTXD_L4LEN_SHIFT;
+			break;
+		default:
+			type_tucmd_mlhl |= E1000_ADVTXD_TUCMD_L4T_RSV |
+				E1000_ADVTXD_DTYP_CTXT | E1000_ADVTXD_DCMD_DEXT;
+			break;
+		}
+	}
+
+	txq->ctx_cache.flags = ol_flags;
+	txq->ctx_cache.tx_offload.data =
+		tx_offload_mask.data & hdrlen.data;
+	txq->ctx_cache.tx_offload_mask = tx_offload_mask;
+
+	ctx_txd->type_tucmd_mlhl = rte_cpu_to_le_32(type_tucmd_mlhl);
+	vlan_macip_lens = (uint32_t)hdrlen.data;
+	ctx_txd->vlan_macip_lens = rte_cpu_to_le_32(vlan_macip_lens);
+	ctx_txd->mss_l4len_idx = rte_cpu_to_le_32(mss_l4len_idx);
+	ctx_txd->u.seqnum_seed = 0;
+
+	// txq->ctx_cache.flags = flags;
+	// txq->ctx_cache.cmp_mask = cmp_mask;
+	// txq->ctx_cache.hdrlen = hdrlen;
 }
 
 /*
@@ -1263,6 +1363,162 @@ end_of_tx:
     return nb_tx;
 }
 
+#define M2FUNC_DTA_FLIT_SIZE 64
+#define M2FUNC_DTA_FLIT_ARRAY_SIZE (M2FUNC_DTA_FLIT_SIZE / sizeof(uint64_t))
+#define M2FUNC_DTA_CACHLINE_SIZE 64  // 64B cacheline size
+
+#define M2FUNC_DTA_TX_JOB_FLIT_METADATA_SIZE 24  // 24B job flit metadata size (8B descriptor addr + 8B completion addr + 8B num packets)
+#define M2FUNC_DTA_TX_FIRST_FLIT_BATCH_SIZE ((M2FUNC_DTA_FLIT_SIZE - M2FUNC_DTA_TX_JOB_FLIT_METADATA_SIZE) / sizeof(uint64_t)) // 6 mbuf addresses in the first flit
+#define M2FUNC_DTA_TX_REST_FLIT_BATCH_SIZE (M2FUNC_DTA_FLIT_SIZE / sizeof(uint64_t)) // 8 mbuf addresses in the remaining flits
+
+uint16_t
+eth_em_xmit_pkts_m2func_dta(void *tx_queue, struct rte_mbuf **tx_pkts,
+		uint16_t nb_pkts)
+{
+	struct em_tx_queue *txq;
+	txq = tx_queue;
+    struct rte_mbuf     *tx_pkt;
+    uint32_t olinfo_status;
+    uint32_t cmd_type_len; 
+    uint32_t pkt_len;
+	uint64_t ol_flags;
+	uint64_t tx_ol_req;
+	uint32_t ctx;
+	uint32_t new_ctx;
+	union em_vlan_macip hdrlen;
+
+	uint64_t descriptor_addr = 0;
+	uint64_t completion_addr = 0;
+	struct e1000_adv_tx_desc_m2func *descriptor_buffer;
+	int64_t *completion_buffer;
+	uint64_t mbuf_addr_buffer[nb_pkts];
+	int64_t completed_pkts = 0;
+
+	uint16_t xmit_empty_threshold = 100;
+	uint16_t xmit_empty_count = 0;
+
+	struct e1000_adv_tx_desc_m2func txd;   
+
+	descriptor_buffer = txq->descriptor_buffer;
+	descriptor_addr = rte_cpu_to_le_64(txq->descriptor_addr);
+
+	completion_buffer = txq->completion_buffer;
+	completion_addr = rte_cpu_to_le_64(txq->completion_addr);
+
+	// Fill descriptor and mbuf address buffers
+	for (uint16_t i = 0; i < nb_pkts; i++) {
+		tx_pkt = *tx_pkts++;
+		// Descriptor
+		pkt_len = tx_pkt->pkt_len;
+		ol_flags = tx_pkt->ol_flags;
+		tx_ol_req = (ol_flags & E1000_TX_OFFLOAD_MASK);
+		if (tx_ol_req) {
+			hdrlen.f.vlan_tci = tx_pkt->vlan_tci;
+			hdrlen.f.l2_len = tx_pkt->l2_len;
+			hdrlen.f.l3_len = tx_pkt->l3_len;
+			hdrlen.f.l4_len = tx_pkt->l4_len;
+			hdrlen.f.tso_segsz = tx_pkt->tso_segsz;
+			tx_ol_req = check_tso_para(tx_ol_req, hdrlen);
+			ctx = what_ctx_update(txq, tx_ol_req, hdrlen);
+			new_ctx = (ctx == EM_CTX_NUM);
+		}
+		cmd_type_len = E1000_ADVTXD_DTYP_DATA | E1000_ADVTXD_DCMD_IFCS | E1000_ADVTXD_DCMD_DEXT;
+		if (tx_ol_req & PKT_TX_TCP_SEG)
+			pkt_len -= (tx_pkt->l2_len + tx_pkt->l3_len + tx_pkt->l4_len);
+		olinfo_status = (pkt_len << E1000_ADVTXD_PAYLEN_SHIFT);
+		if (tx_ol_req) {
+			if (new_ctx) {
+				// TODO - JM: Implement context descriptor
+			}
+			cmd_type_len  |= tx_desc_vlan_flags_to_cmdtype(tx_ol_req);
+			olinfo_status |= tx_desc_cksum_flags_to_olinfo(tx_ol_req);
+			olinfo_status |= (ctx << E1000_ADVTXD_IDX_SHIFT);
+		}
+		/* without scattered packets, EOP is set */
+		cmd_type_len |= E1000_ADVTXD_DCMD_EOP;
+		descriptor_buffer[i].cmd_type_len = rte_cpu_to_le_32(cmd_type_len | tx_pkt->data_len);
+		descriptor_buffer[i].olinfo_status = rte_cpu_to_le_32(olinfo_status);
+		
+		// Mbuf address
+		mbuf_addr_buffer[i] = rte_cpu_to_le_64(rte_mbuf_data_iova(tx_pkt));
+		
+	}
+
+	// Submit job to DTA
+	// Create a job submission packet
+	uint16_t total_packets = nb_pkts;
+	uint16_t packet_index = 0;
+	while (total_packets > 0) {
+		uint16_t current_batch_size = 0;
+
+		if (packet_index == 0) {
+			current_batch_size = total_packets > M2FUNC_DTA_TX_FIRST_FLIT_BATCH_SIZE ? M2FUNC_DTA_TX_FIRST_FLIT_BATCH_SIZE : total_packets;
+		} else {
+			current_batch_size = total_packets > M2FUNC_DTA_TX_REST_FLIT_BATCH_SIZE ? M2FUNC_DTA_TX_REST_FLIT_BATCH_SIZE : total_packets;
+		}
+
+		uint64_t job_packet[M2FUNC_DTA_FLIT_ARRAY_SIZE] = {0}; // 64B job packet
+		// Fill job packet
+		// Packet format
+		// 1. descriptor address (8B)
+		// 2. completion address (8B)
+		// 3. number of packets (8B)
+		// ---------24 bytes metadata---------
+		// 4. mbuf addresses (8B * x)
+
+		// If packet index is 0, fill the metadata
+		if (packet_index == 0) {
+			job_packet[0] = descriptor_addr;
+			job_packet[1] = completion_addr;
+			job_packet[2] = rte_cpu_to_le_64(total_packets);
+
+			// Add mbuf addresses
+			memcpy(&job_packet[3], mbuf_addr_buffer, current_batch_size * sizeof(uint64_t));
+		} else {
+			// Add mbuf addresses
+			memcpy(job_packet, &mbuf_addr_buffer[M2FUNC_DTA_TX_FIRST_FLIT_BATCH_SIZE + (packet_index - 1) * M2FUNC_DTA_TX_REST_FLIT_BATCH_SIZE], current_batch_size * sizeof(uint64_t));
+		}
+
+		printf("DPDK[TX]: Submitting job to DTA\n");
+		// Submit the job to DTA
+		E1000_PCI_REG_WRITE64B(txq->dta_job_submit_reg_addr, job_packet);
+
+		// Update counters
+		total_packets -= current_batch_size;
+		packet_index++;
+	}
+
+	// Poll for completion
+	while (completed_pkts < (int64_t) nb_pkts) {
+		completed_pkts = rte_le_to_cpu_64(*completion_buffer); //64B buffer
+		if (completed_pkts == -1) {
+			PMD_TX_LOG(ERR, "TX Error in DTA processing");
+			return 0;
+		} 
+		
+		if (completed_pkts == 0) {
+			xmit_empty_count++;
+			if (xmit_empty_count > xmit_empty_threshold) {
+				PMD_TX_LOG(ERR, "TX Timeout in DTA processing");
+				break;
+			}
+		} else {
+			xmit_empty_count = 0;
+		}
+	}
+
+	printf("DPDK[TX]: Completed %ld packets\n", completed_pkts);
+
+	if (completed_pkts == 0) {
+		printf("DPDK[TX]: No packets completed. So return\n");
+		return 0;
+	}
+
+	// Initialize the completion buffer
+	*completion_buffer = 0;
+
+	return nb_pkts;
+}
 
 /*********************************************************************
  *
@@ -1817,6 +2073,199 @@ eth_em_recv_pkts_m2func(void *rx_queue, struct rte_mbuf **rx_pkts,
 	return nb_rx;
 }
 
+#define M2FUNC_DTA_RX_JOB_FLIT_METADATA_SIZE 16 // 16B job flit metadata size (8B completion address + 8B number of packets)
+#define M2FUNC_DTA_RX_FIRST_FLIT_BATCH_SIZE ((M2FUNC_DTA_FLIT_SIZE - M2FUNC_DTA_RX_JOB_FLIT_METADATA_SIZE) / sizeof(uint64_t)) // 6 mbuf addresses in the first flit
+#define M2FUNC_DTA_RX_REST_FLIT_BATCH_SIZE (M2FUNC_DTA_FLIT_SIZE / sizeof(uint64_t)) // 8 mbuf addresses in the remaining flits
+
+uint16_t
+eth_em_recv_pkts_m2func_dta(void *rx_queue, struct rte_mbuf **rx_pkts,
+		uint16_t nb_pkts)
+{
+	struct em_rx_queue *rxq;
+	rxq = rx_queue;
+	struct rte_mbuf *nmb_list[nb_pkts]; // Pre-allocated mbuf list
+	uint64_t mbuf_addrs[nb_pkts]; // Pre-allocated mbuf addresses
+	uint16_t allocated = 0;
+	uint16_t submitted = 0;
+	uint64_t completion_addr = rxq->completion_addr; // Address of the completion descriptor
+	int64_t completed_pkts = 0;
+
+	uint8_t * desc_base = (uint8_t *)(completion_addr + M2FUNC_DTA_CACHLINE_SIZE); // Descriptor base address within the completion address range
+
+	union e1000_adv_rx_desc rxd;
+	uint64_t dma_addr;
+	uint32_t staterr; //jm
+	uint32_t hlen_type_rss; //jm
+	uint16_t pkt_len;
+	uint16_t nb_rx;
+	uint16_t nb_hold;
+	uint8_t status;
+	uint64_t pkt_flags; //jm
+	
+	uint16_t receive_empty_threshold = 100; // Receive empty threshold
+	uint16_t receive_empty_counter = 0; // Receive empty counter
+
+	nb_rx = 0;
+	nb_hold = 0;
+
+	// Step 1: Pre-allocate mbufs for the batch
+	while (allocated < nb_pkts) {
+		struct rte_mbuf *nmb = rte_mbuf_raw_alloc(rxq->mb_pool);
+		if (!nmb) {
+			PMD_RX_LOG(DEBUG, "RX mbuf alloc failed port_id=%u queue_id=%u",
+					   (unsigned) rxq->port_id, (unsigned) rxq->queue_id);
+			break;
+		}
+		nmb_list[allocated] = nmb;
+		mbuf_addrs[allocated] = rte_cpu_to_le_64(rte_mbuf_data_iova_default(nmb));
+		allocated++;
+	}
+
+	// Step 2: Submit job to DTA
+	if (allocated > 0) {
+		// Create a job submission packet
+		uint16_t total_packets = allocated;
+		uint16_t packet_index = 0;
+		while (total_packets > 0) {
+			uint16_t current_batch_size = 0;
+
+			if (packet_index == 0) {
+				current_batch_size = total_packets > M2FUNC_DTA_RX_FIRST_FLIT_BATCH_SIZE ? M2FUNC_DTA_RX_FIRST_FLIT_BATCH_SIZE : total_packets;
+			} else {
+				current_batch_size = total_packets > M2FUNC_DTA_RX_REST_FLIT_BATCH_SIZE ? M2FUNC_DTA_RX_REST_FLIT_BATCH_SIZE : total_packets;
+			}
+			
+			uint64_t job_packet[M2FUNC_DTA_FLIT_ARRAY_SIZE] = {0}; // 64B job packet
+			job_packet[0] = 0; // Initialize the header part
+			
+			// Packet format
+			// 1. completion address (64-bit)
+			// 2. number of packets (64-bit) 
+			// -------16 Bytes-------
+			// 3. mbuf addresses (64-bit * 6)
+
+			// If packet_index is 0, then completion address and the number of packets are added
+			if (packet_index == 0) {
+				job_packet[0] = completion_addr;
+				job_packet[1] = (uint64_t) allocated;
+
+				// Add mbuf addresses
+				memcpy(&job_packet[2], &mbuf_addrs[0], current_batch_size * sizeof(uint64_t));
+			} else {
+				// Add mbuf addresses
+				memcpy(&job_packet[0], &mbuf_addrs[M2FUNC_DTA_RX_FIRST_FLIT_BATCH_SIZE + (packet_index - 1) * M2FUNC_DTA_RX_REST_FLIT_BATCH_SIZE], current_batch_size * sizeof(uint64_t));
+			}
+
+			// Submit the job to DTA
+			printf("DPDK[RX]: Submitting job to DTA\n");
+			E1000_PCI_REG_WRITE64B(rxq->dta_job_submit_reg_addr, job_packet);
+
+			total_packets -= current_batch_size;
+			packet_index++;
+		}
+
+	} else {
+		PMD_RX_LOG(DEBUG, "No mbufs allocated for the batch");
+		return 0;
+	}
+
+	// Step 3: Poll completion address for results
+	completed_pkts = rxq->completion_buffer[0];
+	while (completed_pkts < (int64_t) allocated) {
+		completed_pkts = rxq->completion_buffer[0];
+		if (completed_pkts == -1) {
+			PMD_RX_LOG(ERR, "RX Error in DTA processing");
+			return 0;
+		}
+
+		if (completed_pkts == 0) {
+			receive_empty_counter++;
+			if (receive_empty_counter > receive_empty_threshold) {
+				PMD_RX_LOG(DEBUG, "RX Empty threshold reached");
+				break;
+			}
+		} else {
+			receive_empty_counter = 0;
+		}
+	}
+
+	printf("DPDK[RX]: Completed packets: %ld\n", completed_pkts);
+
+	if (completed_pkts == 0) {
+		// No packets received
+		// Free the allocated mbufs
+		for (int i = 0; i < allocated; i++) {
+			rte_pktmbuf_free(nmb_list[i]);
+		}
+		printf("DPDK[RX]: No packets received. So return\n");
+		return 0;
+	}
+
+	// Initialize the completion buffer
+	rxq->completion_buffer[0] = 0;
+
+	// Step 4: Read the processed descriptors and copy the descriptors to mbufs
+	for (int64_t i = 0; i < completed_pkts; i++) {
+		struct rte_mbuf *nmb = nmb_list[i];
+
+		rte_memcpy(&rxd, desc_base + i * sizeof(rxd), sizeof(rxd));
+
+		// Prefetch next mbuf while processing current one
+		if (i < completed_pkts - 1) {
+			rte_em_prefetch(nmb_list[i + 1]);
+		}
+
+		// When next RX descriptor is on a cache-line boundary, prefetch the next 4 RX descriptors.
+		if ((i & 0x3) == 0) {
+			rte_em_prefetch(desc_base + (i + 4) * sizeof(rxd));
+		}
+
+		// TODO - JM : maybe we can consider offloading the below code to DTA. Give the nmb address to DTA
+		staterr = rxd.wb.upper.status_error;
+		pkt_len = (uint16_t) (rte_le_to_cpu_16(rxd.wb.upper.length) - rxq->crc_len);
+
+		nmb->data_off = RTE_PKTMBUF_HEADROOM;
+		rte_packet_prefetch((char *)nmb->buf_addr + nmb->data_off);
+		nmb->nb_segs = 1;
+		nmb->next = NULL;
+		nmb->pkt_len = pkt_len;
+		nmb->data_len = pkt_len;
+		nmb->port = rxq->port_id;
+
+		nmb->hash.rss = rxd.wb.lower.hi_dword.rss;
+		hlen_type_rss = rte_le_to_cpu_32(rxd.wb.lower.lo_dword.data);
+
+		if ((staterr & rte_cpu_to_le_32(E1000_RXDEXT_STATERR_LB)) &&
+				(rxq->flags & 0x01)) {
+			nmb->vlan_tci = rte_be_to_cpu_16(rxd.wb.upper.vlan);
+		} else {
+			nmb->vlan_tci = rte_le_to_cpu_16(rxd.wb.upper.vlan);
+		}
+
+		pkt_flags = rx_desc_hlen_type_rss_to_pkt_flags(rxq, hlen_type_rss);
+		pkt_flags = pkt_flags | rx_desc_status_to_pkt_flags(staterr);
+		pkt_flags = pkt_flags | rx_desc_error_to_pkt_flags(staterr);
+		nmb->ol_flags = pkt_flags;
+		nmb->packet_type = em_rxd_pkt_info_to_pkt_type(rxd.wb.lower.
+						lo_dword.hs_rss.pkt_info);
+		
+		rx_pkts[nb_rx++] = nmb;
+	}
+
+	struct rte_ether_hdr *eth_hdr;
+	struct rte_mbuf *mb;
+	int i;
+	for (i = 0; i < nb_rx; i++) {
+		mb = rx_pkts[i];
+		eth_hdr = rte_pktmbuf_mtod(mb, struct rte_ether_hdr *);
+	}
+
+	return nb_rx;
+
+	
+}
+
+
 uint16_t
 eth_em_recv_scattered_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 			 uint16_t nb_pkts)
@@ -2337,12 +2786,35 @@ eth_em_tx_queue_setup(struct rte_eth_dev *dev,
 
 	txq->tdt_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_TDT(queue_idx));
 	txq->tx_m2func_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_TXM2FUNC(queue_idx));
+	txq->dta_job_submit_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_DTA_TX_JOB_SUBMIT(queue_idx));
 	printf("======== txq[%d]->tdt_reg_addr: 0x%lx ========\n", queue_idx, txq->tdt_reg_addr);
 	printf("======== txq[%d]->tx_m2func_reg_addr: 0x%lx ========\n", queue_idx, txq->tx_m2func_reg_addr);
+	printf("======== txq[%d]->dta_job_submit_reg_addr: 0x%lx ========\n", queue_idx, txq->dta_job_submit_reg_addr);
 	fflush(stdout);
 	txq->tx_ring_phys_addr = tz->iova;
 	// txq->tx_ring = (struct e1000_data_desc *) tz->addr;
 	txq->tx_ring = (union e1000_adv_tx_desc *) tz->addr; //jm
+
+	// For DTA
+	if ((txq->completion_buffer = rte_zmalloc("txq->completion_buffer",
+			RTE_CACHE_LINE_SIZE,
+			RTE_CACHE_LINE_SIZE)) == NULL) {
+		em_tx_queue_release(txq);
+		return -ENOMEM;
+	}
+	txq->completion_addr = rte_malloc_virt2iova(txq->completion_buffer);
+
+	if ((txq->descriptor_buffer = rte_zmalloc("txq->descriptor_buffer",
+			sizeof(struct e1000_adv_tx_desc_m2func) * (nb_desc / 8),
+			RTE_CACHE_LINE_SIZE)) == NULL) {
+		em_tx_queue_release(txq);
+		return -ENOMEM;
+	}
+	txq->descriptor_addr = rte_malloc_virt2iova(txq->descriptor_buffer);
+
+	printf("======== txq[%d]->completion_addr: 0x%lx ========\n", queue_idx, txq->completion_addr);
+	printf("======== txq[%d]->descriptor_addr: 0x%lx ========\n", queue_idx, txq->descriptor_addr);
+	fflush(stdout);
 
 	PMD_INIT_LOG(DEBUG, "sw_ring=%p hw_ring=%p dma_addr=0x%"PRIx64,
 		     txq->sw_ring, txq->tx_ring, txq->tx_ring_phys_addr);
@@ -2532,13 +3004,27 @@ eth_em_rx_queue_setup(struct rte_eth_dev *dev,
 	rxq->rdt_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_RDT(queue_idx));
 	rxq->rdh_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_RDH(queue_idx));
 	rxq->rx_m2func_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_RXM2FUNC(queue_idx));
+	rxq->dta_job_submit_reg_addr = E1000_PCI_REG_ADDR(hw, E1000_DTA_RX_JOB_SUBMIT(queue_idx));
 	printf("======== rxq[%d]->rdt_reg_addr: 0x%lx ========\n", queue_idx, rxq->rdt_reg_addr);
 	printf("======== rxq[%d]->rdh_reg_addr: 0x%lx ========\n", queue_idx, rxq->rdh_reg_addr);
 	printf("======== rxq[%d]->rx_m2func_reg_addr: 0x%lx ========\n", queue_idx, rxq->rx_m2func_reg_addr);
+	printf("======== rxq[%d]->dta_job_submit_reg_addr: 0x%lx ========\n", queue_idx, rxq->dta_job_submit_reg_addr);
 	fflush(stdout);
 	rxq->rx_ring_phys_addr = rz->iova;
 	// rxq->rx_ring = (struct e1000_rx_desc *) rz->addr;
 	rxq->rx_ring = (union e1000_adv_rx_desc *) rz->addr;
+
+	// For DTA, we have to malloc completion buffer - TODO: maybe we can consider making double buffer to avoid the cache coherency overhead
+	if ((rxq->completion_buffer = rte_zmalloc("rxq->completion_buffer",
+			sizeof (rxq->completion_buffer[0]) * (nb_desc/8),
+			RTE_CACHE_LINE_SIZE)) == NULL) {
+		em_rx_queue_release(rxq);
+		return -ENOMEM;
+	}
+	rxq->completion_addr = rte_malloc_virt2iova(rxq->completion_buffer);
+
+	printf("======== rxq[%d]->completion_addr: 0x%lx ========\n", queue_idx, rxq->completion_addr);
+	fflush(stdout);
 
 	PMD_INIT_LOG(DEBUG, "sw_ring=%p hw_ring=%p dma_addr=0x%"PRIx64,
 		     rxq->sw_ring, rxq->rx_ring, rxq->rx_ring_phys_addr);
@@ -2697,6 +3183,8 @@ em_dev_free_queues(struct rte_eth_dev *dev)
 	uint16_t i;
 
 	for (i = 0; i < dev->data->nb_rx_queues; i++) {
+		struct em_rx_queue *rxq = dev->data->rx_queues[i];
+		rte_free(rxq->completion_buffer);
 		eth_em_rx_queue_release(dev->data->rx_queues[i]);
 		dev->data->rx_queues[i] = NULL;
 		rte_eth_dma_zone_free(dev, "rx_ring", i);
@@ -2704,6 +3192,9 @@ em_dev_free_queues(struct rte_eth_dev *dev)
 	dev->data->nb_rx_queues = 0;
 
 	for (i = 0; i < dev->data->nb_tx_queues; i++) {
+		struct em_tx_queue *txq = dev->data->tx_queues[i];
+		rte_free(txq->completion_buffer);
+		rte_free(txq->descriptor_buffer);
 		eth_em_tx_queue_release(dev->data->tx_queues[i]);
 		dev->data->tx_queues[i] = NULL;
 		rte_eth_dma_zone_free(dev, "tx_ring", i);
@@ -3123,7 +3614,9 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 
 	// dev->rx_pkt_burst = (eth_rx_burst_t)eth_em_recv_pkts;
 	// JM - CHANGE
-	dev->rx_pkt_burst = (eth_rx_burst_t)eth_em_recv_pkts_m2func;
+	// dev->rx_pkt_burst = (eth_rx_burst_t)eth_em_recv_pkts_m2func;
+	// JM - CHANGE DTA + M2func
+	dev->rx_pkt_burst = (eth_rx_burst_t)eth_em_recv_pkts_m2func_dta;
 
 	/* Determine RX bufsize. */
 	rctl_bsize = EM_MAX_BUF_SIZE;

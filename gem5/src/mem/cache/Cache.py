@@ -69,6 +69,21 @@ class WriteAllocator(SimObject):
 
     block_size = Param.Int(Parent.cache_line_size, "block size in bytes")
 
+class DTA(ClockedObject):
+    type = 'DTA'
+    cxx_header = "mem/cache/base.hh"
+    cxx_class = 'gem5::DTA'
+    
+    sys = Param.System(Parent.any, "System this DTA belongs to")
+    
+    enable_dta = Param.Bool(False, "Enable DTA")
+    dta_rx_job_addr = Param.Addr(0x400028C0, "DTA RX Job Address")
+    dta_tx_job_addr = Param.Addr(0x400038C0, "DTA TX Job Address")
+    num_dta_worker = Param.Int(16, "Number of DTA worker")
+    cxl_req_threshold = Param.Int(128, "CXL request threshold")
+    cache_line_size = Param.Int(64, "Cache line size")
+    
+    ddio_enabled = Param.Bool(True, "Enabled DDIO?")
 
 class BaseCache(ClockedObject):
     type = 'BaseCache'
@@ -123,6 +138,8 @@ class BaseCache(ClockedObject):
     cpu_side_smt = ResponsePort("Upstream port closer to the CPU and/or device")
     mem_side_smt = RequestPort("Downstream port closer to memory")
     cpu_side_ports = VectorResponsePort("Upstream ports closer to the CPU and/or device")
+    io_side_port = RequestPort("Downstream port closer to NIC")
+    job_port = ResponsePort("Upstream port for DTA job")
 
     addr_ranges = VectorParam.AddrRange([AllMemory],
          "Address range for the CPU-side port (to allow striping)")
@@ -173,6 +190,12 @@ class BaseCache(ClockedObject):
     is_multiport = Param.Bool(False, "Is this cache multiport?")
     cpu_side_ports_connection_count = Param.Int(1, "Number of CPU-side ports")
     
+    # JM. for DTA
+    enable_dta = Param.Bool(False, "Enable DTA")
+    dta_rx_job_addr = Param.Addr(0x400028C0, "DTA RX Job Address")
+    dta_tx_job_addr = Param.Addr(0x400038C0, "DTA TX Job Address")
+    dta = Param.DTA(NULL, "DTA")
+    
 
 class Cache(BaseCache):
     type = 'Cache'
@@ -189,6 +212,13 @@ class Cache(BaseCache):
     # JM
     is_multiport = False
     cpu_side_ports_connection_count = 1
+    
+    # JM
+    enable_dta = False
+    # TODO - JM
+    dta_rx_job_addr = 0x400028C0
+    dta_tx_job_addr = 0x400038C0
+    
 
 class NoncoherentCache(BaseCache):
     type = 'NoncoherentCache'

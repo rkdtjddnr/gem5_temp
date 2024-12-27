@@ -908,6 +908,11 @@ Cache::serviceMSHRTargets(MSHR *mshr, const PacketPtr pkt, CacheBlk *blk)
                 assert(tgt_pkt->cpu_side_port_id < cpuSidePortList.size());
                 cpuSidePortList[tgt_pkt->cpu_side_port_id]->schedTimingResp(
                     tgt_pkt, completion_time);
+            } else if (isIOCache && tgt_pkt->isFromDTA()) {
+                // This packet is from DTA, send it to DTA
+                // Find the worker by using sender state
+                assert(dta != nullptr);
+                dta->recvTimingRespfromCache(tgt_pkt, completion_time);
             } else {
                 cpuSidePort.schedTimingResp(tgt_pkt, completion_time);
             }

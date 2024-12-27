@@ -116,6 +116,15 @@ CoherentXBar::CoherentXBar(const CoherentXBarParams &p)
     if (snoopFilter && snoopFilter->isForL3X) {
         isL3XBar = true;
         numL3XBarPorts = p.port_mem_side_ports_connection_count;
+        if (enableDTA) {
+            rx_dta_job_req_addr = p.dta_rx_job_addr; // TODO
+            tx_dta_job_req_addr = p.dta_tx_job_addr; // TODO
+            printf("L3XBar - enableDTA: rx_dta_job_req_addr: %lx, tx_dta_job_req_addr: %lx\n", rx_dta_job_req_addr, tx_dta_job_req_addr);
+        } else {
+            rx_dta_job_req_addr = 0;
+            tx_dta_job_req_addr = 0;
+            printf("L3XBar - disableDTA\n");
+        }
     } else {
         isL3XBar = false;
     }
@@ -174,8 +183,33 @@ CoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     // determine the destination based on the destination address range
     PortID mem_side_port_id = findPort(pkt->getAddrRange());
 
-    if (isL3XBar && numL3XBarPorts > 0) {
+    bool isDTAJobReq = false;
+    if (isL3XBar && enableDTA) {
+        assert(DTAJobPortID != InvalidPortID);
+        assert(rx_dta_job_req_addr != 0);
+        assert(tx_dta_job_req_addr != 0);
+    }
+    if (isL3XBar && mem_side_port_id == DTAJobPortID) {
+        isDTAJobReq = true;
+        printf("At L3XBar, receive DTA Job Request\n");
+        // set pkt's DTAJobReq flag
+        // Check the pkt's address
+        // If address is corresponding to the rx_dta_job_req_addr, set the pkt's RXJobReq flag
+        // If address is corresponding to the tx_dta_job_req_addr, set the pkt's TXJobReq flag
+        if (pkt->getAddr() == rx_dta_job_req_addr) {
+            pkt->setRXJobReq();
+            printf("This is RX Job Request\n");
+        } else if (pkt->getAddr() == tx_dta_job_req_addr) {
+            pkt->setTXJobReq();
+            printf("This is TX Job Request\n");
+        } else {
+            panic("Invalid DTA Job Request Address\n");
+        }
+    }
+
+    if (isL3XBar && numL3XBarPorts > 0 && !isDTAJobReq) {
         // If this is L3XBar, decide the memory port id based on the set index
+        // If DTA job request, the memory port id is already set - maybe go to the iocache's job_port
         mem_side_port_id = getMemSidePortIdForL3XBar(pkt->getAddr());
         assert(mem_side_port_id < reqLayers.size());
     }
@@ -1001,7 +1035,30 @@ CoherentXBar::recvAtomicBackdoor(PacketPtr pkt, PortID cpu_side_port_id,
     // perform the actual request at the destination
     PortID mem_side_port_id = findPort(pkt->getAddrRange());
 
-    if (isL3XBar && numL3XBarPorts > 0) {
+    bool isDTAJobReq = false;
+    if (isL3XBar && enableDTA) {
+        assert(DTAJobPortID != InvalidPortID);
+    }
+    if (isL3XBar && mem_side_port_id == DTAJobPortID) {
+        isDTAJobReq = true;
+        printf("At L3XBar, receive DTA Job Request\n");
+        // set pkt's DTAJobReq flag
+        // Check the pkt's address
+        // If address is corresponding to the rx_dta_job_req_addr, set the pkt's RXJobReq flag
+        // If address is corresponding to the tx_dta_job_req_addr, set the pkt's TXJobReq flag
+        if (pkt->getAddr() == rx_dta_job_req_addr) {
+            pkt->setRXJobReq();
+            printf("This is RX Job Request\n");
+        } else if (pkt->getAddr() == tx_dta_job_req_addr) {
+            pkt->setTXJobReq();
+            printf("This is TX Job Request\n");
+        } else {
+            panic("Invalid DTA Job Request Address\n");
+        }
+
+    }
+
+    if (isL3XBar && numL3XBarPorts > 0 && !isDTAJobReq) {
         // If this is L3XBar, decide the memory port id based on the set index
         // printf("XBar %s isL3XBar: %d, numL3XBarPorts: %d, addr: %lx, before mem_side_port_id: %d\n", name().c_str(), isL3XBar, numL3XBarPorts, pkt->getAddr(), mem_side_port_id);
         mem_side_port_id = getMemSidePortIdForL3XBar(pkt->getAddr());
@@ -1236,7 +1293,30 @@ CoherentXBar::recvFunctional(PacketPtr pkt, PortID cpu_side_port_id)
 
         PortID dest_id = findPort(pkt->getAddrRange());
 
-        if (isL3XBar && numL3XBarPorts > 0) {
+        bool isDTAJobReq = false;
+        if (isL3XBar && enableDTA) {
+            assert(DTAJobPortID != InvalidPortID);
+        }
+        if (isL3XBar && dest_id == DTAJobPortID) {
+            isDTAJobReq = true;
+            printf("At L3XBar, receive DTA Job Request\n");
+            // set pkt's DTAJobReq flag
+            // Check the pkt's address
+            // If address is corresponding to the rx_dta_job_req_addr, set the pkt's RXJobReq flag
+            // If address is corresponding to the tx_dta_job_req_addr, set the pkt's TXJobReq flag
+            if (pkt->getAddr() == rx_dta_job_req_addr) {
+                pkt->setRXJobReq();
+                printf("This is RX Job Request\n");
+            } else if (pkt->getAddr() == tx_dta_job_req_addr) {
+                pkt->setTXJobReq();
+                printf("This is TX Job Request\n");
+            } else {
+                panic("Invalid DTA Job Request Address\n");
+            }
+
+        }
+
+        if (isL3XBar && numL3XBarPorts > 0 && !isDTAJobReq) {
             // If this is L3XBar, decide the memory port id based on the set index
             // printf("XBar %s isL3XBar: %d, numL3XBarPorts: %d, addr: %lx, before mem_side_port_id: %d\n", name().c_str(), isL3XBar, numL3XBarPorts, pkt->getAddr(), dest_id);
             dest_id = getMemSidePortIdForL3XBar(pkt->getAddr());

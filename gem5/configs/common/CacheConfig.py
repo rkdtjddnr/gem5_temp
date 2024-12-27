@@ -251,16 +251,18 @@ def config_cache(options, system):
                                            size = options.l3_size,
                                            assoc = options.l3_assoc,
                                            is_multiport = True,
-                                           cpu_side_ports_connection_count = options.l3_cpu_side_ports_connection_count)
+                                           cpu_side_ports_connection_count = options.l3_cpu_side_ports_connection_count,
+                                           enable_dta = options.enable_dta)
             else:
                 system.l3 = l2_cache_class(clk_domain = system.cpu_clk_domain,
                                         size = options.l3_size,
-                                        assoc = options.l3_assoc)
+                                        assoc = options.l3_assoc,
+                                        enable_dta = options.enable_dta)
         if options.disable_snoop_filter:
-            system.tol3bus = L3XBar(clk_domain = system.clk_domain, snoop_filter = NULL)
+            system.tol3bus = L3XBar(clk_domain = system.clk_domain, snoop_filter = NULL, enable_dta = options.enable_dta)
         else:
             system.tol3bus = L3XBar(clk_domain = system.clk_domain,
-            snoop_filter=SnoopFilter(lookup_latency = 0, is_for_l3x = True, max_capacity="32MB"))
+            snoop_filter=SnoopFilter(lookup_latency = 0, is_for_l3x = True, max_capacity="32MB"), enable_dta = options.enable_dta)
         if options.smt_model:
             system.l3.connectCPUSideBus(system.tol3bus) 
             system.l3.connectMemSideBus(system.membus)
@@ -280,14 +282,14 @@ def config_cache(options, system):
             system.l2 = l3_cache_class(clk_domain=system.cpu_clk_domain,
                                    **_get_cache_opts('l2', options))
             
-            system.tol2bus = L2XBar(clk_domain = system.cpu_clk_domain)
+            system.tol2bus = L2XBar(clk_domain = system.cpu_clk_domain, enable_dta = options.enable_dta)
             system.l2.connectCPUSideBus(system.tol2bus)
             system.l2.connectMemSideBus(system.membus)
         else:
             system.l2 = l2_cache_class(clk_domain=system.cpu_clk_domain,
                                    **_get_cache_opts('l2', options))
 
-            system.tol2bus = L2XBar(clk_domain = system.cpu_clk_domain)
+            system.tol2bus = L2XBar(clk_domain = system.cpu_clk_domain, enable_dta = options.enable_dta)
             system.l2.cpu_side = system.tol2bus.master
             system.l2.mem_side = system.membus.slave
 

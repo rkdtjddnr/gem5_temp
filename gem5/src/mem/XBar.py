@@ -97,6 +97,9 @@ class BaseXBar(ClockedObject):
     
     #JM
     is_ioxbar = Param.Bool(False, "Is this an IO crossbar")
+    
+    # JM. for DTA
+    enable_dta = Param.Bool(False, "Enable DTA")
 
 class NoncoherentXBar(BaseXBar):
     type = 'NoncoherentXBar'
@@ -132,6 +135,10 @@ class CoherentXBar(BaseXBar):
                                       "point of unification")
 
     system = Param.System(Parent.any, "System that the crossbar belongs to.")
+    
+    # JM. for DTA
+    dta_rx_job_addr = Param.Addr(0x400028C0, "Physical Address of the DTA RX job queue")
+    dta_tx_job_addr = Param.Addr(0x400038C0, "Physical Address of the DTA TX job queue")
 
 class SnoopFilter(SimObject):
     type = 'SnoopFilter'
@@ -226,6 +233,10 @@ class L3XBar(CoherentXBar):
     # the point of unification, it connects the dcache and the icache
     # to the first level of unified cache.
     point_of_unification = True
+    
+    # JM. for DTA - TODO - JM !!!
+    dta_rx_job_addr = 0x400028C0
+    dta_tx_job_addr = 0x400038C0
 
 # In addition to the system interconnect, we typically also have one
 # or more on-chip I/O crossbars. Note that at some point we might want

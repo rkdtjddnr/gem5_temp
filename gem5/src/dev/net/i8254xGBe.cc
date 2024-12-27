@@ -64,12 +64,13 @@ using namespace igbreg;
 using namespace networking;
 
 IGbE::IGbE(const Params &p)
-    : EtherDevice(p), adq(p.adq_idx), etherInt(NULL), numQueues(p.num_queues),     // SHIN. add adq // jm. add numQueues
+    : EtherDevice(p), adq(p.adq_idx), etherInt(NULL), m2funcPort(NULL), enableDTA(p.enable_dta), numQueues(p.num_queues),     // SHIN. add adq // jm. add numQueues
       rxFifo(p.rx_fifo_size, true), txFifo(p.tx_fifo_size, false), inTick(false),
       rxTick(false), txTick(false), txFifoTick(false), flitSize(p.flit_size), // TODO - JM: add flitSize 
       fetchDelay(p.fetch_delay), wbDelay(p.wb_delay),
       fetchCompDelay(p.fetch_comp_delay), wbCompDelay(p.wb_comp_delay),
       rxWriteDelay(p.rx_write_delay), txReadDelay(p.tx_read_delay),
+      cxlMemDelay(p.cxl_mem_delay),
     //   rdtrEvent([this]{ rdtrProcess(); }, name()),
     //   radvEvent([this]{ radvProcess(); }, name()),
     //   tadvEvent([this]{ tadvProcess(); }, name()),
@@ -82,6 +83,9 @@ IGbE::IGbE(const Params &p)
     //   lastInterrupt(0)
     etherInt = new IGbEInt(name() + ".int", this);
 
+    if (enableDTA) {
+        m2funcPort = new M2funcPort(name() + ".m2funcPort", this, p.cxl_mem_delay, numQueues);
+    }
     //multi-queue sanity check
     if (numQueues > MAX_QUEUE_SIZE) {
         panic("Number of queues exceeds maximum allowed\n");
@@ -96,6 +100,7 @@ IGbE::IGbE(const Params &p)
         commType = CommunicationType::RING;
     }
     printf("Communication Type: %s\n", commType == CommunicationType::RING ? "RING" : "M2FUNC");
+    printf("Enable DTA: %s\n", enableDTA ? "true" : "false");
 
     // Initialize rxDescCacheArray and txDescCacheArray
     for (int i = 0; i < numQueues; i++) {
@@ -104,8 +109,8 @@ IGbE::IGbE(const Params &p)
             txDescCacheArray[i] = new TxDescCache(this, name()+".TxDescArray"+std::to_string(i), p.tx_desc_cache_size, i);
         } else if (commType == CommunicationType::M2FUNC) {
             // JM. For now, just set m2funcFifo size to 2. Maybe 1 is enough.
-            rxM2funcContextArray[i] = new RxM2funcContext(this, name()+".RxM2funcContextArray"+std::to_string(i), 2, i);
-            txM2funcContextArray[i] = new TxM2funcContext(this, name()+".TxM2funcContextArray"+std::to_string(i), 2, i);
+            rxM2funcContextArray[i] = new RxM2funcContext(this, name()+".RxM2funcContextArray"+std::to_string(i), 2, i, enableDTA, p.cxl_req_buf_size);
+            txM2funcContextArray[i] = new TxM2funcContext(this, name()+".TxM2funcContextArray"+std::to_string(i), 2, i, enableDTA);
             if (!rxM2funcContextArray[i] || !txM2funcContextArray[i]) {
                 panic("Failed to initialize RxM2funcContext or TxM2funcContext for queue %d\n", i);
             } else {
@@ -226,6 +231,9 @@ IGbE::IGbE(const Params &p)
 IGbE::~IGbE()
 {
     delete etherInt;
+    if (enableDTA) {
+        delete m2funcPort;
+    }
 }
 
 void
@@ -239,7 +247,13 @@ IGbE::getPort(const std::string &if_name, PortID idx)
 {
     if (if_name == "interface")
         return *etherInt;
-    return EtherDevice::getPort(if_name, idx);
+    else if (if_name == "m2func_port") { 
+        assert(enableDTA);
+        assert(m2funcPort);
+        return *m2funcPort;
+    }
+    else
+        return EtherDevice::getPort(if_name, idx);
 }
 
 Tick
@@ -492,7 +506,11 @@ IGbE::read(PacketPtr pkt)
             if (commType == CommunicationType::M2FUNC) {
                 DPRINTF(EthernetDpdk, "RXM2func[%d] Read Comming from host to RXM2FUNC with length: %d\n", queueid, pkt->getSize());
                 // printf("RXM2func[%d] Read Comming from host to RXM2FUNC with length: %d\n", queueid, pkt->getSize());
-                rxM2funcContextArray[queueid]->readM2funcPacket(pkt);
+                if (enableDTA) {
+                    panic("If DTA is enabled, RXM2func RD request cannot be come over here!\n");
+                } else {
+                    rxM2funcContextArray[queueid]->readM2funcPacket(pkt);
+                }
             } else {
                 panic("Invalid communication type with - RXM2FUNC read!!!\n");
             }
@@ -538,10 +556,14 @@ IGbE::read(PacketPtr pkt)
             assert(queueid < numQueues);
             assert(queueid >= 0);
             if (commType == CommunicationType::M2FUNC) {
-                DPRINTF(EthernetDpdk, "TXM2func[%d] Read Comming from host to TXM2FUNC with length: %d\n", queueid, pkt->getSize());
-                // printf("TXM2func[%d] Read Comming from host to TXM2FUNC with length: %d\n", queueid, pkt->getSize());
-                // Set bitmask as response
-                txM2funcContextArray[queueid]->readBitmask(pkt);
+                if (enableDTA) {
+                    panic("If DTA is enabled, TXM2func RD request cannot be come over here!\n");
+                } else {
+                    DPRINTF(EthernetDpdk, "TXM2func[%d] Read Comming from host to TXM2FUNC with length: %d\n", queueid, pkt->getSize());
+                    // printf("TXM2func[%d] Read Comming from host to TXM2FUNC with length: %d\n", queueid, pkt->getSize());
+                    // Set bitmask as response
+                    txM2funcContextArray[queueid]->readBitmask(pkt);
+                }
             } else {
                 panic("Invalid communication type with - TXM2FUNC read!!!\n");
             }
@@ -1005,6 +1027,8 @@ IGbE::write(PacketPtr pkt)
             } else {
                 panic("Invalid communication type with - RXM2FUNC write!!!\n");
             }
+        } else if (isRegisterAddress<E1000_RXDTA>(daddr, queueid, numQueues)) {
+          printf("RXDTA[%d]: RX Write comming from host!! with length: %d This can be captured as PIO if in atomic, checkpoint mode\n", queueid, pkt->getSize());  
         } else if (isRegisterAddress<E1000_RXDCTL>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
@@ -1062,18 +1086,23 @@ IGbE::write(PacketPtr pkt)
             assert(queueid < numQueues);
             assert(queueid >= 0);
             if (commType == CommunicationType::M2FUNC) {
-                DPRINTF(EthernetDpdk, "TXM2func[%d]: TX Write comming from host!! with length: %d\n", queueid, pkt->getSize());
-                // printf("TXM2func[%d]: TX Write comming from host!! with length: %d\n", queueid, pkt->getSize());
-                
-                txM2funcContextArray[queueid]->writeM2funcPacket(pkt);
+                if (enableDTA) {
+                    panic("If DTA is enabled, TXM2func WR request cannot be come over here!\n");
+                } else {
+                    DPRINTF(EthernetDpdk, "TXM2func[%d]: TX Write comming from host!! with length: %d\n", queueid, pkt->getSize());
+                    // printf("TXM2func[%d]: TX Write comming from host!! with length: %d\n", queueid, pkt->getSize());
+                    
+                    txM2funcContextArray[queueid]->writeM2funcPacket(pkt);
 
-                enableSmTx();
-                checkDrain();
+                    enableSmTx();
+                    checkDrain();
+                }
             } else {
                 panic("Invalid communication type with - TXM2FUNC write!!!\n");
             }
-        }
-        else if (isRegisterAddress<E1000_TXDCTL>(daddr, queueid, numQueues)) {
+        } else if (isRegisterAddress<E1000_TXDTA>(daddr, queueid, numQueues)) {
+            printf("TXDTA[%d]: TX Write comming from host!! with length: %d This can be captured as PIO if in atomic, checkpoint mode\n", queueid, pkt->getSize());
+        } else if (isRegisterAddress<E1000_TXDCTL>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.txdctl_array[queueid] = val;
@@ -2632,13 +2661,15 @@ IGbE::TxDescCache::hasOutstandingEvents()
 
 ///////////////////////////// IGbE::RxM2funcContext //////////////////////////////
 
-IGbE::RxM2funcContext::RxM2funcContext(IGbE *i, std::string n, int _rxContextFifoSize, int qid)
+IGbE::RxM2funcContext::RxM2funcContext(IGbE *i, std::string n, int _rxContextFifoSize, int qid, bool _enableDTA, int _cxlReqBufSize)
     : igbe(i), _name(n), rxContextFifoSize(_rxContextFifoSize), queueID(qid),
-      remainPacket(false), splitCount(0), bytesSent(0), rxCount(0)
+      remainPacket(false), splitCount(0), bytesSent(0), rxCount(0), enableDTA(_enableDTA), numFreeCXLReqMax(_cxlReqBufSize)
 {
     m2funcRxFifo.clear();
-
+    m2funcCXLReqBuf.clear();
     lastRxM2funcReadTick = 0;
+    numCXLReq = 0;
+    numFreeCXLReq = 0;
 
 }
 
@@ -2649,6 +2680,8 @@ IGbE::RxM2funcContext::~RxM2funcContext()
         delete[] it->packetData;
     }
     m2funcRxFifo.clear();
+    
+    m2funcCXLReqBuf.clear();
 }
 
 void
@@ -2857,6 +2890,23 @@ IGbE::RxM2funcContext::rxM2funcStateMachine()
      * Get the EthPacket from rxPacketArray[queueID] and process it.
      * 
      */
+    if (isDTAEnabled()) {
+        // If use DTA, we have to make CXL response packet corresponding to the request in m2funcCXLReqBuf
+        // Call readM2funcPacket() here to make CXL response packet
+        if (m2funcCXLReqBuf.empty()) {
+            DPRINTF(EthernetDpdk, "RXM2func[%d]: No CXL request to process\n", queueID);
+        } else {
+            if (!m2funcRxFifo.empty()) {
+                DPRINTF(EthernetDpdk, "RXM2func[%d]: Processing CXL request. Because m2funcRxFifo is not empty\n", queueID);
+                PacketPtr cxlReq = popCXLReqBuf();
+                readM2funcPacket(cxlReq);
+                DPRINTF(EthernetDpdk, "RXM2func[%d]: CXL request processed & Make a response using data in the m2funcRxFifo. Pop out from m2funcCXLReqBuf and return to DTA\n", queueID);
+                DPRINTF(EthernetDpdk, "Current free CXLReqBuf: %ld, numCXLReq: %ld\n", numFreeCXLReq, numCXLReq);
+                sendCXLResp(cxlReq);
+            }
+        }
+    }
+
     if (igbe->rxPacketArray[queueID] == nullptr) {
         DPRINTF(EthernetDpdk, "RXM2func[%d]: No packet to process\n", queueID);
 
@@ -2876,6 +2926,8 @@ IGbE::RxM2funcContext::rxM2funcStateMachine()
 
         return true; // It means this context may need to keep ticking
     }
+
+    return true;
 }
 
 void
@@ -2964,21 +3016,15 @@ IGbE::RxM2funcContext::readM2funcPacket(PacketPtr pkt)
                     m2funcRxFifo.pop_front();
 
                     // Update stat
-                    igbe->etherDeviceStats.rxBytesM2funcDesc += descLength;
                     igbe->etherDeviceStats.rxBytesM2funcData += dataLength;
                 }
             } else {
-                remainPacket = false;
-                bytesSent = 0;
-                delete[] packetData;
-                m2funcRxFifo.pop_front();
-
-                // Update stat
-                igbe->etherDeviceStats.rxBytesM2funcDesc += descLength;
-                igbe->etherDeviceStats.rxBytesM2funcData += dataLength;
+                panic("RXM2func[%d]: This case should not happen. if packetLength <= bytesSent, remainPacket should be false\n", queueID);
             }
         } else {
-            DPRINTF(EthernetDpdk, "RXM2func[%d]: Remain packet is false\n", queueID);
+            DPRINTF(EthernetDpdk, "RXM2func[%d]: Remain packet is false. Send new ethernet packet. Set packet as DDIO header\n", queueID);
+            // As this is the first time to send the packet, we have to mark the packet as header
+            pkt->setDdioHeader();
             // Copy the packet
             if (packetLength > igbe->flitSize) {
                 DPRINTF(EthernetDpdk, "RXM2func[%d]: Ethernet Packet length: %ld\n", queueID, packetLength);
@@ -2988,6 +3034,7 @@ IGbE::RxM2funcContext::readM2funcPacket(PacketPtr pkt)
 
                 // Update stat
                 igbe->etherDeviceStats.rxBytesM2func += igbe->flitSize;
+                igbe->etherDeviceStats.rxBytesM2funcDesc += descLength;
             } else {
                 DPRINTF(EthernetDpdk, "RXM2func[%d]: Set Packet response with packet with length: %ld\n", queueID, packetLength);
                 pkt->setData(packetData, packetLength);
@@ -3003,6 +3050,60 @@ IGbE::RxM2funcContext::readM2funcPacket(PacketPtr pkt)
 
     }
 }
+
+bool 
+IGbE::RxM2funcContext::pushCXLReqBuf(PacketPtr pkt) {
+    /**
+     * Receive a packet from DTA and push it to the CXLReqBuf
+     * Check the size of the CXLReqBuf and push the packet to the CXLReqBuf
+     * Return true if the packet is pushed successfully, otherwise return false
+     */
+    if (m2funcCXLReqBufFull()) {
+        DPRINTF(EthernetDpdk, "RXM2func[%d]: CXLReqBuf is full\n", queueID);
+        return false;
+    } else {
+        // Push the packet to the CXLReqBuf
+        m2funcCXLReqBuf.push_back(pkt);
+        numCXLReq++;
+        numFreeCXLReq++;
+        DPRINTF(EthernetDpdk, "RXM2func[%d]: Packet pushed to CXLReqBuf with numCXLReq: %ld, numFreeCXLReq: %ld\n", queueID, numCXLReq, numFreeCXLReq);
+        return true;
+    }
+}
+
+PacketPtr 
+IGbE::RxM2funcContext::popCXLReqBuf() {
+    /**
+     * Pop a packet from the CXLReqBuf and return it
+     */
+    assert(!m2funcCXLReqBuf.empty());
+    
+    PacketPtr pkt = m2funcCXLReqBuf.front();
+    m2funcCXLReqBuf.pop_front();
+    numFreeCXLReq--;
+    DPRINTF(EthernetDpdk, "RXM2func[%d]: Packet popped from CXLReqBuf with numFreeCXLReq: %ld\n", queueID, numFreeCXLReq);
+    return pkt;
+    
+}
+
+void 
+IGbE::RxM2funcContext::sendCXLResp(PacketPtr pkt) {
+    /**
+     * Send a response packet to DTA using port
+     */
+    DPRINTF(EthernetDpdk, "RXM2func[%d]: Send a response packet to DTA\n", queueID);
+    
+    pkt->makeResponse();
+
+    Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
+    pkt->headerDelay = pkt->payloadDelay = 0;
+    const Tick delay = receive_delay + igbe->cxlMemDelay; 
+    
+    assert(pkt->isResponse());
+    igbe->m2funcPort->schedTimingResp(pkt, curTick() + delay);
+}
+
+
 
 void
 IGbE::RxM2funcContext::serialize(CheckpointOut &cp) const
@@ -3052,9 +3153,9 @@ IGbE::RxM2funcContext::unserialize(CheckpointIn &cp)
 }
 ///////////////////////////// IGbE::TxM2funcContext //////////////////////////////
 
-IGbE::TxM2funcContext::TxM2funcContext(IGbE *i, std::string n, int _txContextFifoSize, int qid)
+IGbE::TxM2funcContext::TxM2funcContext(IGbE *i, std::string n, int _txContextFifoSize, int qid, bool _enableDTA)
     : igbe(i), _name(n), txContextFifoSize(_txContextFifoSize), queueID(qid),
-      pktDone(false), ethPktSize(0), txDesc(0), receivedPktSize(0), descSize(8), isTcp(false), pktWaiting(false), pktMultiDesc(false), txCount(0)
+      pktDone(false), ethPktSize(0), txDesc(0), receivedPktSize(0), descSize(8), isTcp(false), pktWaiting(false), pktMultiDesc(false), txCount(0), enableDTA(_enableDTA)
 {    
     tsoEntry.tsoEnabled = false;
     tsoEntry.txPktExists = false;
@@ -5313,6 +5414,137 @@ IGbE::unserialize(CheckpointIn &cp)
     }
 }
 
+void M2funcPort::recvFunctional(PacketPtr pkt)
+{
+    recvAtomic(pkt); // Just throw away the latency returned
+}
+
+bool M2funcPort::recvTimingReq(PacketPtr pkt)
+{
+    assert(pkt->isRequest());
+
+    int bar;
+    Addr daddr;
+
+    if (!(dev->getBARDTA(pkt->getAddr(), bar, daddr)))
+        panic("Invalid m2func access to unmapped memory.\n");
+
+    // Only Memory register BAR is allowed
+    assert(bar == 0);
+
+    int queueID = -1;
+    if (isRegisterAddress<E1000_RXDTA>(daddr, queueID, numQueues)) {
+        assert(queueID < numQueues);
+        assert(queueID >= 0);
+        if (dev->rxM2funcContextArray[queueID]->isDTAEnabled()) {
+            bool success = dev->rxM2funcContextArray[queueID]->pushCXLReqBuf(pkt);
+            return success;
+        } else {
+            panic("DTA is not enabled for RX queue %d\n", queueID);
+        }
+    } else if (isRegisterAddress<E1000_TXDTA>(daddr, queueID, numQueues)) {
+        assert(queueID < numQueues);
+        assert(queueID >= 0);
+        if (dev->txM2funcContextArray[queueID]->isDTAEnabled()) {
+            if (pkt->isRead()) {
+                dev->txM2funcContextArray[queueID]->readBitmask(pkt);
+                pkt->makeResponse();
+
+                Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
+                pkt->headerDelay = pkt->payloadDelay = 0;
+                const Tick delay = receive_delay + cxlMemDelay; 
+                
+                assert(pkt->isResponse());
+                schedTimingResp(pkt, curTick() + delay);
+                return true;
+            } else if (pkt->isWrite()) {
+                dev->txM2funcContextArray[queueID]->writeM2funcPacket(pkt);
+                pkt->makeResponse();
+
+                dev->enableSmTx();
+                dev->checkDrain();
+
+                Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
+                pkt->headerDelay = pkt->payloadDelay = 0;
+                const Tick delay = receive_delay + cxlMemDelay; 
+                
+                assert(pkt->isResponse());
+                schedTimingResp(pkt, curTick() + delay);
+                return true;
+            }
+        } else {
+            panic("DTA is not enabled for TX queue %d\n", queueID);
+        }
+    } else {
+        panic("Invalid PCI memory access to unmapped memory.\n");
+    }
+
+    return false;
+}
+
+Tick M2funcPort::recvAtomic(PacketPtr pkt)
+{
+    assert(pkt->isRequest());
+
+    int bar;
+    Addr daddr;
+
+    if (!(dev->getBARDTA(pkt->getAddr(), bar, daddr)))
+        panic("Invalid m2func access to unmapped memory.\n");
+
+    // Only Memory register BAR is allowed
+    assert(bar == 0);
+
+    int queueID = -1;
+    if (isRegisterAddress<E1000_RXDTA>(daddr, queueID, numQueues)) {
+        assert(queueID < numQueues);
+        assert(queueID >= 0);
+        if (dev->rxM2funcContextArray[queueID]->isDTAEnabled()) {
+            // Not push to the buffer. Just fill the packet with response and then return it
+            // So, with atomic access, response can be 0 only.            
+            dev->rxM2funcContextArray[queueID]->readM2funcPacket(pkt);
+            pkt->makeResponse();
+
+            Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
+            pkt->headerDelay = pkt->payloadDelay = 0;
+            const Tick delay = receive_delay + cxlMemDelay;
+            
+            return delay;
+        } else {
+            panic("DTA is not enabled for RX queue %d\n", queueID);
+        }
+    } else if (isRegisterAddress<E1000_TXDTA>(daddr, queueID, numQueues)) {
+        assert(queueID < numQueues);
+        assert(queueID >= 0);
+        if (dev->txM2funcContextArray[queueID]->isDTAEnabled()) {
+            if (pkt->isRead()) {
+                dev->txM2funcContextArray[queueID]->readBitmask(pkt);
+                pkt->makeResponse();
+
+                Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
+                pkt->headerDelay = pkt->payloadDelay = 0;
+                const Tick delay = receive_delay + cxlMemDelay; 
+
+                return delay;
+            } else if (pkt->isWrite()) {
+                dev->txM2funcContextArray[queueID]->writeM2funcPacket(pkt);
+                pkt->makeResponse();
+
+                dev->enableSmTx();
+                dev->checkDrain();
+
+                Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
+                pkt->headerDelay = pkt->payloadDelay = 0;
+                const Tick delay = receive_delay + cxlMemDelay; 
+                
+                return delay;
+            }
+        } else {
+            panic("DTA is not enabled for TX queue %d\n", queueID);
+        }
+    } else {
+        panic("Invalid PCI memory access to unmapped memory.\n");
+    }
+}
+
 } // namespace gem5
-
-

@@ -55,6 +55,8 @@
 #include "base/statistics.hh"
 #include "base/trace.hh"
 #include "base/types.hh"
+#include "base/chunk_generator.hh"
+#include "debug/DDIO.hh"
 #include "debug/Cache.hh"
 #include "debug/CachePort.hh"
 #include "enums/Clusivity.hh"
@@ -69,6 +71,7 @@
 #include "mem/qport.hh"
 #include "mem/request.hh"
 #include "params/WriteAllocator.hh"
+#include "params/DTA.hh"
 #include "sim/clocked_object.hh"
 #include "sim/eventq.hh"
 #include "sim/probe/probe.hh"
@@ -87,6 +90,7 @@ namespace prefetch
 class MSHR;
 class RequestPort;
 class QueueEntry;
+class DTA;
 struct BaseCacheParams;
 
 /**
@@ -348,11 +352,71 @@ class BaseCache : public ClockedObject
 
     };
 
+    class IoSidePort : public RequestPort
+    {
+      private:
+        BaseCache *cache;
+        PortID id;
+        std::string label;
+
+      protected:
+        bool recvTimingResp(PacketPtr pkt) override;
+        void recvReqRetry() override;
+
+        
+
+      public:
+        IoSidePort(const std::string &_name, BaseCache *_cache,
+                    const std::string &_label, PortID _id = InvalidPortID)
+            : RequestPort(_name, _cache, _id), cache(_cache), label(_label) { }
+    };
+
+    class JobPort : public QueuedResponsePort
+    { 
+      private:
+        BaseCache *cache;
+        RespPacketQueue _respQueue;
+        AddrRangeList addrRanges;
+        Addr DTARXJobStartAddr;
+        Addr DTATXJobStartAddr;
+        std::string label;
+      protected:
+        void recvFunctional(PacketPtr pkt) override;
+        bool recvTimingReq(PacketPtr pkt) override; 
+        gem5::Tick recvAtomic(PacketPtr pkt) override;
+      public:
+        JobPort(const std::string &_name, BaseCache *_cache, const std::string &_label, Addr _DTARXJobStartAddr, Addr _DTATXJobStartAddr)
+            : QueuedResponsePort(_name, _cache, _respQueue), _respQueue(*cache, *this), cache(_cache), label(_label), DTARXJobStartAddr(_DTARXJobStartAddr), DTATXJobStartAddr(_DTATXJobStartAddr) { setAddrRange(); }
+        void setAddrRange() {
+          // TODO - JM : have to use one of NIC's device register unused address to send request from host to DTA
+          printf("JobPort - RX Job Addr: %lx, TX Job Addr: %lx\n", DTARXJobStartAddr, DTATXJobStartAddr);
+          const Addr rx_base_addr = DTARXJobStartAddr;
+          const Addr size = 64;
+          addrRanges.push_back(RangeSize(rx_base_addr, size));
+          printf("new addrRange: %s\n", addrRanges.back().to_string().c_str());
+
+          const Addr tx_base_addr = DTATXJobStartAddr;
+          addrRanges.push_back(RangeSize(tx_base_addr, size));
+          printf("new addrRange: %s\n", addrRanges.back().to_string().c_str());         
+          
+        }
+        AddrRangeList getAddrRanges() const override { return addrRanges; }
+
+    };
+    
     CpuSidePort cpuSidePort;
     std::vector<CpuSidePort*> ddioHintPort;
     // JM - to model slice cache
     std::vector<CpuSidePort*> cpuSidePortList;
     MemSidePort memSidePort;
+    // TODO - JM : port to connect iocache and iobus and iocache as master port
+    IoSidePort* ioSidePort;
+    JobPort* jobPort;
+
+    bool enableDTA = false; // Used for IOcache
+    Addr DTARXJobAddr = 0; // Used for submitting job to DTA from host
+    Addr DTATXJobAddr = 0; // Used for submitting job to DTA from host
+    DTA *dta;
 
   protected:
 
@@ -1006,8 +1070,7 @@ class BaseCache : public ClockedObject
     const AddrRangeList addrRanges;
     // JM - for multi-port. split the address range and assign to each port
     std::vector<AddrRangeList> addrRangesList;
-
-  public:
+  public: 
     /** System we are currently operating in. */
     System *system;
 
@@ -1416,6 +1479,31 @@ class BaseCache : public ClockedObject
         return tags->extractSetForXBar(addr);
     }
 
+    // JM
+    bool sendTimingReqtoNIC(PacketPtr pkt) {
+        assert(isIOCache);
+        ioSidePort->sendTimingReq(pkt);
+    }
+
+    void sendAtomicReqtoNIC(PacketPtr pkt) {
+        assert(isIOCache);
+        ioSidePort->sendAtomic(pkt);
+    }
+
+    void sendTimingResptoHost(PacketPtr pkt, Tick when) {
+        assert(isIOCache);
+        jobPort->schedTimingResp(pkt, when);
+    }
+
+    // JM
+    bool recvTimingReqfromDTA(PacketPtr pkt) {
+        // DTA will use this function to DMA data to/from the cache
+        // Act as ioCache receiving packet from DTA
+        assert(isIOCache);
+        assert(pkt->isFromDTA());
+        recvTimingReq(pkt);
+    }
+
     // SHIN.
     bool ddioEnabled;
     bool ddioDisabled;
@@ -1424,6 +1512,8 @@ class BaseCache : public ClockedObject
     bool mlc_ddio;
     // JM - for multi-port
     bool isMultiPort;
+
+    
 };
 
 /**
@@ -1559,6 +1649,535 @@ class WriteAllocator : public SimObject
      */
     std::unordered_map<Addr, Counter> delayCtr;
 };
+
+
+/**
+ * Data Transfer Accelerator (DTA) is going to be used with the ioCache
+ * 
+ */
+
+class DTA : public ClockedObject
+{
+  public:
+    DTA(const DTAParams &p) :
+        ClockedObject(p),
+        ioCache(nullptr),
+        dtaEnabled(p.enable_dta),
+        cxlReqThreshold(p.cxl_req_threshold),
+        cacheLineSize(p.cache_line_size),
+        tickEvent([this]{ tick(); }, name()),
+        dmaCompletionEvent([this]{ handleDMACompletion(); }, name()),
+        requestorId(p.sys->getRequestorId(this))
+    {
+        clearDTARXContext();
+        clearDTATXContext();
+    
+        rxJobSubmissionQueue.clear();
+        txJobSubmissionQueue.clear();
+        cxlReqQueue.clear();
+        workerWaitingQueue.clear();
+
+        rxTick = false;
+        txTick = false;
+
+        M2funcRXAddr = p.dta_rx_job_addr;
+        M2funcTXAddr = p.dta_tx_job_addr;
+
+        numSentM2funcRXReq = 0;
+        numSentM2funcTXReq = 0;
+        numDTARXWorker = p.num_dta_worker;
+        numDTATXWorker = p.num_dta_worker;
+
+        enableDdio = p.ddio_enabled;
+
+        dtaRXWorkerList.resize(numDTARXWorker);
+        for (int i = 0; i < numDTARXWorker; i++) {
+            dtaRXWorkerList[i] = new DTARXWorker(this, i);
+        }
+
+        dtaTXWorkerList.resize(numDTATXWorker);
+        for (int i = 0; i < numDTATXWorker; i++) {
+            dtaTXWorkerList[i] = new DTATXWorker(this, i);
+        }
+
+        rxFirstJobPacketNumMbufAddr = (flitSize - rxJobReqMetadataSize) / sizeof(Addr);
+        txFirstJobPacketNumMbufAddr = (flitSize - txJobReqMetadataSize) / sizeof(Addr);
+        restJobPacketNumMbufAddr = flitSize / sizeof(Addr);
+    }
+
+    void setIOCache(BaseCache* cache) {
+        ioCache = cache;
+    }
+
+    struct RXDescriptor {
+        uint16_t rss_type:4;
+        uint16_t pkt_type:12;
+        uint16_t __reserved1:5;
+        uint16_t header_len:10;
+        uint16_t sph:1;
+        union
+        {
+            struct
+            {
+                uint16_t id;
+                uint16_t csum;
+            };
+            uint32_t rss_hash;
+        };
+        uint32_t status:20;
+        uint32_t errors:12;
+        uint16_t pkt_len;
+        uint16_t vlan_tag;
+        // total 128 bits (16 bytes)                    
+    };
+
+    struct TXDescriptor {
+        uint16_t dtalen:16; //0-15
+        uint16_t __reserved1:2; // 16-17
+        uint16_t mac:2; // 18-19
+        uint16_t dtyp:4; // 20-23
+        uint16_t dcmd:8; // 24-31
+        uint16_t sta:4; // 32-35
+        uint16_t idx:3; // 36-38
+        uint16_t cc:1; // 39
+        uint16_t popts:6; // 40-45
+        uint32_t paylen:18; // 46-63
+        // Total 64 bits (8 bytes)
+    };
+
+    BaseCache* ioCache;
+
+    EventFunctionWrapper tickEvent;
+    bool rxTick;
+    bool txTick;
+
+    Addr M2funcRXAddr;
+    Addr M2funcTXAddr;
+
+    uint32_t flitSize = 64; // 64 bytes
+    uint32_t rxJobReqMetadataSize = 16; // 16 bytes (completion address (8 bytes) + number of packets (8 bytes))
+    uint32_t rxFirstJobPacketNumMbufAddr; // Number of the mbuf address that is included in the first job request
+    uint32_t restJobPacketNumMbufAddr;
+    uint32_t txJobReqMetadataSize = 24; // 24 bytes (descriptor array address (8 bytes) + completion address (8 bytes) + number of packets (8 bytes))
+    uint32_t txFirstJobPacketNumMbufAddr; // Number of the mbuf address that is included in the first job request
+    uint32_t cacheLineSize;
+
+    uint64_t numSentM2funcRXReq;
+    uint64_t numSentM2funcTXReq;
+
+    bool dtaEnabled;
+    uint64_t cxlReqThreshold; // Threshold for the number of requests that is sent to NIC, but the response is not received yet - if num_free_request_in_NIC is less than this threshold, then we will send a new request to NIC
+    bool isDTAEnabled() { return dtaEnabled; }
+    uint64_t getCxlReqThreshold() { return cxlReqThreshold; }
+
+    //Submission Queue part
+    bool recvTimingReq(PacketPtr pkt); // Receive Job request from CPU
+    bool checkSubmissionQueue(); // Check the submission queue and set the context if the context is not valid
+    void parseJobRequestAndSetContext(PacketPtr pkt); // Parse Job request from CPU and make a new context
+    // Context structure: have mbuf_addr list, nb_pkts, completion_addr (come from Job request) & n_recv, num_free_request_in_NIC
+    #define DTA_MAX_MBUF_NUM 100 // or any other suitable value
+    struct DTARXContext {
+        bool valid; // if the context is valid
+        bool completion_stage; // true if the completion stage is started (DTA is waiting for the write completion status(descriptors, index) to the completion address)
+        Addr completion_addr; // DTA will write the completion status to this address to notify CPU
+        Addr desc_addr; // all descriptors will be written to this address. descriptor will start after the completion_addr + cacheLineSize
+        Addr mbuf_addr[DTA_MAX_MBUF_NUM]; // mbuf address list - used for DMA transfer
+        uint32_t nb_pkts; // the number of packets to be processed
+        uint32_t n_recv; //current number of received packets - to track the finish
+        uint32_t num_free_request_in_NIC; // the number of free request in NIC
+        uint32_t lastDTARXWorker; // the last DTA worker that is used for the request - for the partial response
+        uint32_t n_mbuf_addr_received; // the number of mbuf address received - to track the job request managing
+        uint32_t n_desc_write_completed; // the number of descriptors that are written to the completion address
+        uint32_t n_cacheline_idx_write_completed; // the number of cacheline index that are written to the completion address
+        std::map<Addr, RXDescriptor*> RXDescMap; // Store the RX descriptor corresponding to the mbuf_addr
+        std::map<Addr, bool> RXCompleteMap; // RXCompleteMap[mbuf_addr] = true if the mbuf_addr's DMA is completed - job completion check condition
+    } dtaRXContext;
+
+    struct DTATXContext {
+        bool valid; // if the context is valid
+        Addr completion_addr; // DTA will write the completion status to this address to notify CPU
+        Addr desc_addr; // all descriptors are stored in this address
+        Addr mbuf_addr[DTA_MAX_MBUF_NUM]; // mbuf address list - used for DMA transfer
+        uint32_t nb_pkts; // the number of packets to be processed
+        uint32_t n_sent; //current number of sent packets to NIC - to track the finish
+        uint32_t n_desc_ready; // The number of descriptors that are DMAed (finish or not)
+        uint32_t n_mbuf_addr_received; // the number of mbuf address received - to track the job request managing
+        std::map<Addr, TXDescriptor> descPayloadDMAWaiting; // descriptor map after DMA from desc_addr (mbuf_addr, descriptor)
+        std::map<Addr, TXDescriptor> descPayloadDMAAssigned; // descriptor map that is assigned to the worker for the DMA of payload (mbuf_addr, descriptor)
+        std::map<Addr, bool> TXCompleteMap; // TXCompleteMap[mbuf_addr] = true if the mbuf_addr's DMA is completed - job completion check condition
+    } dtaTXContext;
+
+    //Submission queue
+    std::deque<PacketPtr> rxJobSubmissionQueue; // Submission queue for DTA
+    std::deque<PacketPtr> txJobSubmissionQueue; // Submission queue for DTA
+    uint64_t submissionQueueMaxSize = 1024; // Maximum size of the submission queue
+    bool checkRXJobQueue = true; // This is the turn for checking the RX job queue
+
+    // Request Sender part
+    bool sendTimingReqToNIC(PacketPtr pkt); // Send M2func RD/WR request to NIC
+    void sendAtomicReqToNIC(PacketPtr pkt); // Atomic mode - Send M2func RD/WR request to NIC
+    bool checkThreshold(); // Check the threshold for the number of requests that is sent to NIC, but the response is not received yet - If true, have to send new request
+    void sendRequestToNIC(); // Send the RD/WR request to NIC - internally call sendTimingReq
+    bool checkRXJobCompletion(); // Check the job completion and notify the CPU
+    bool checkTXJobCompletion(); // Check the job completion and notify the CPU
+    PacketPtr createDTARequest(); // Create new DTA request
+    // Request Tracker: track the sent request to NIC and track the response is coming or not
+    std::unordered_map<RequestPtr, bool> dtaRequestTracker; // Request tracker for DTA - key: RequestPtr, value: isResponseReceived
+    void allocDTARequest(PacketPtr pkt); // Allocate new DTA request tracker entry
+    bool findDTARequest(PacketPtr pkt); // Find the DTA request tracker entry
+    void freeDTARequest(RequestPtr req); // Free the DTA request tracker entry 
+
+    uint64_t cxlReqQueueMaxSize = 1024; // Maximum size of the CXL.mem WR request queue 
+    std::deque<PacketPtr> cxlReqQueue; // CXL.mem request queue - TX Workers will push to this queue to send the request to the NIC. Also, DTA will push RD request to read the RX data from the NIC
+
+    // Packet queue waiting for worker allocation
+    std::deque<PacketPtr> workerWaitingQueue; // CXL.mem response packet queue waiting for worker allocation
+    bool allocateWorkerFromQueue(); // Allocate worker from the queue
+
+    // DTA Worker part
+    // 1. Receive the response from NIC
+    // 2. update the num_free_request_in_NIC
+    // 3. Process the cxl.mem response packet to split the descriptor and data
+    // 4. DMA data to context's mbuf_addr[n_recv++]
+    // 5. After the completion of DMA, check the completion status and update the context
+    void recvTimingRespfromNIC(PacketPtr pkt); // Receive M2func RD/WR response from NIC - it can be RD/WR response
+    
+    void recvTimingRespfromCache(PacketPtr pkt, gem5::Tick when); // Receive the response from the cache - the response from the cache for the DTA's DMA request
+    void handleDMACompletion(); // call the handleDMACompletion function of the worker, when the "when" time is reached
+    void schedDMACompletionEvent(gem5::Tick when); // Schedule the DMA completion event
+    class DTARXWorker: public Serializable, public Named
+    {
+        public:
+            DTARXWorker(DTA* _dta, int id) : dta(_dta), workerID(id), Named("DTARXWorker["+std::to_string(id)+"]") { 
+                cacheLineSize = dta->ioCache->getBlockSize();
+                currProcessingPkt = nullptr; 
+                state = workerState::IDLE; 
+                payloadSize = 0;
+                receivedPayloadSize = 0; 
+                allPayloadReceived = false;
+                currentPayloadWCBufferSize = 0;
+                mbuf_addr = 0; 
+                descriptor = nullptr;
+                payloadWCBuffer = nullptr;
+                sentDMASize = 0;
+                dmaTransferredSize = 0;
+                dmaReady = false;
+                dmaComplete = false;
+                dmaReqState = nullptr;
+                inRetry = nullptr;
+            }
+            void serialize(CheckpointOut &cp) const override {}
+            void unserialize(CheckpointIn &cp) override {}
+
+            enum class workerState {
+                IDLE,
+                WORKING,
+            };
+
+            
+
+            struct DTADMAReqState : public Packet::SenderState {
+                gem5::Event *completionEvent;
+                Addr addr;
+                Addr totBytes;
+                Addr numBytes = 0; // Number of bytes transferred
+                
+                DTADMAReqState(Addr _addr, Addr _totBytes, Event *ce)
+                    : completionEvent(ce), totBytes(_totBytes), addr(_addr) 
+                {}
+
+            };
+
+            bool isFree() { 
+                return state == workerState::IDLE; 
+            }
+
+            void allocateWorker(Addr addr) { 
+                mbuf_addr = addr; 
+                state = workerState::WORKING; 
+                payloadSize = 0;
+                receivedPayloadSize = 0;
+                allPayloadReceived = false;
+                descriptor = nullptr;
+                currentPayloadWCBufferSize = 0;
+                payloadWCBuffer = new uint8_t[16384];
+                sentDMASize = 0;
+                dmaTransferredSize = 0;
+                dmaReady = false;
+                dmaComplete = false;
+                dmaReqState = nullptr;
+                inRetry = nullptr;
+            }
+
+            void freeWorker() {
+                state = workerState::IDLE;
+                mbuf_addr = 0;
+                payloadSize = 0;
+                receivedPayloadSize = 0;
+                allPayloadReceived = false;
+                currentPayloadWCBufferSize = 0;
+                sentDMASize = 0;
+                dmaTransferredSize = 0;
+                dmaReady = false;
+                dmaComplete = false;
+            
+                if (payloadWCBuffer) {
+                    delete[] payloadWCBuffer;
+                    payloadWCBuffer = nullptr;
+                }
+                if (descriptor) {
+                    delete descriptor;
+                    descriptor = nullptr;
+                }
+                if (dmaReqState) {
+                    delete dmaReqState;
+                    dmaReqState = nullptr;
+                }
+                if (inRetry) {
+                    delete inRetry;
+                    inRetry = nullptr;
+                }
+            }
+
+
+            workerState getState() { return state; }
+            void setState(workerState _state) { state = _state; }
+            Addr getMbufAddr() { return mbuf_addr; }
+            
+            void processDTAResponse(PacketPtr currPkt); // Process the response from the NIC
+            PacketPtr makePacket(); // Initiate DMA transfer - exploit existing iocache's DMA functions
+            bool sendDMA(PacketPtr pkt);
+            void handleDMACompletion(PacketPtr pkt); // Handle DMA completion - exploit existing iocache's DMA functions
+            bool DTAWork();// DTA work function - call above functions
+            void setDescriptor(RXDescriptor* desc, Addr mbuf_addr) {
+                // Set the RXDescMap 
+                assert(desc != nullptr);
+                dta->dtaRXContext.RXDescMap[mbuf_addr] = desc;
+            }
+        private:
+            DTA* dta;
+            int workerID;
+            workerState state;
+
+            PacketPtr currProcessingPkt; // Current data processing packet
+
+            Addr mbuf_addr;
+
+            uint64_t payloadSize;
+            uint64_t receivedPayloadSize;
+            bool allPayloadReceived;
+
+            RXDescriptor * descriptor;
+
+            uint32_t cacheLineSize;
+            uint8_t * payloadWCBuffer; // Payload buffer - cacheline aligned. Also works as a write combining buffer
+            uint32_t currentPayloadWCBufferSize;
+            uint32_t sentDMASize; // The size of the data that is sent to the iocache for DMA within payloadWCBuffer
+            uint32_t dmaTransferredSize; // The size of the data that is transferred to the iocache (End of DMA)
+            bool dmaReady; // To check the moment of making dmaReqState (The start of DMA of mbuf addr)
+            bool dmaComplete; // All the ethernet packet data is DMAed to the mbuf
+
+            DTADMAReqState *dmaReqState;
+            PacketPtr inRetry;
+    };
+
+    class DTATXWorker: public Serializable, public Named
+    {
+        public:
+            DTATXWorker(DTA* _dta, int id) : dta(_dta), workerID(id), Named("DTATXWorker["+std::to_string(id)+"]") {
+                cacheLineSize = dta->ioCache->getBlockSize();
+                state = workerState::IDLE;
+                dmaComplete = false;
+                baseAddr = 0;
+                dmaSize = 0;
+                remainingSize = 0;
+                dmaReceivedSize = 0;
+                payloadBuffer = nullptr;
+                dmaReqState = nullptr;
+                inRetry = nullptr;
+                descriptor = nullptr;
+            }
+            void serialize(CheckpointOut &cp) const override {}
+            void unserialize(CheckpointIn &cp) override {}
+
+            enum class workerState {
+                IDLE,
+                DESC_PROCESSING,
+                PAYLOAD_PROCESSING,
+            };
+
+
+            struct DTADMARDReqState : public Packet::SenderState {
+                gem5::Event *completionEvent;
+                Addr addr;
+                Addr totBytes;
+                Addr numBytes = 0; // Number of bytes transferred
+                
+                DTADMARDReqState(Addr _addr, Addr _totBytes, Event *ce)
+                    : completionEvent(ce), totBytes(_totBytes), addr(_addr) 
+                {}
+
+            };
+
+            bool isFree() { return state == workerState::IDLE; }
+
+            void allocateWorker(Addr addr, uint64_t size, workerState taskState, TXDescriptor* desc=nullptr) {
+                assert(state == workerState::IDLE);
+                state = taskState;
+                dmaComplete = false;
+                baseAddr = addr;
+                offsetFromDescAddr = 0;
+                dmaSize = size;
+                remainingSize = size;
+                transferredSize = 0;
+                dmaReceivedSize = 0;
+
+                if (taskState == workerState::PAYLOAD_PROCESSING) {
+                    payloadBuffer = new uint8_t[size];
+                    assert(desc);
+                    descriptor = desc;
+                } else {
+                    payloadBuffer = nullptr;
+                    descriptor = nullptr;
+                }
+                
+                dmaReqState = new DTADMARDReqState(baseAddr, remainingSize, nullptr);
+                inRetry = nullptr;
+            }
+
+            void freeWorker() {
+                state = workerState::IDLE;
+                dmaComplete = false;
+                baseAddr = 0;
+                offsetFromDescAddr = 0;
+                dmaSize = 0;
+                remainingSize = 0;
+                transferredSize = 0;
+                dmaReceivedSize = 0;
+                if (payloadBuffer) {
+                    delete[] payloadBuffer;
+                    payloadBuffer = nullptr;
+                }
+                if (dmaReqState) {
+                    delete dmaReqState;
+                    dmaReqState = nullptr;
+                }
+                if (inRetry) {
+                    delete inRetry;
+                    inRetry = nullptr;
+                }
+            }
+
+            workerState getState() { return state; }
+            void setOffset(Addr offset) { offsetFromDescAddr = offset; }
+
+
+
+            PacketPtr makePacket();
+            bool sendDMA(PacketPtr pkt);
+            void handleDMACompletion(PacketPtr pkt);
+            bool notifyWorkerCompletion(); // Notify the completion of the worker to the DTA
+            bool DTAWork();
+
+        private:
+            DTA* dta;
+            int workerID;
+            workerState state;
+            
+            TXDescriptor* descriptor; // If in payload processing state, this is the descriptor for the current payload
+
+            uint32_t cacheLineSize;
+
+            bool dmaComplete;
+
+            Addr baseAddr;
+            Addr offsetFromDescAddr; // Only used for descriptor processing state. This is set to the offset from the descriptor address to the current base address.
+            uint64_t dmaSize; // Will not modify this value
+            uint64_t remainingSize; // Remaining size to DMA
+            uint64_t transferredSize; // Transferred size
+            uint64_t dmaReceivedSize; // Received size from the iocache
+
+            uint8_t * payloadBuffer; // Buffer for payload data (if payload processing state)
+
+            DTADMARDReqState *dmaReqState;
+            PacketPtr inRetry;
+    };
+    std::vector<DTARXWorker*> dtaRXWorkerList; // DTA RX worker list
+    uint32_t numDTARXWorker;
+
+    std::vector<DTATXWorker*> dtaTXWorkerList; // DTA TX worker list
+    uint32_t numDTATXWorker;
+    
+    class WaitingPacket
+    {
+        public:
+            Tick tick; // Tick when the packet is ready to use
+            PacketPtr pkt; // Packet
+            WaitingPacket(Tick _tick, PacketPtr _pkt) : tick(_tick), pkt(_pkt) {}
+    };
+    typedef std::list<WaitingPacket> WaitingPacketList;
+    WaitingPacketList DMARespWaitingQueue; // DMA response waiting queue - waiting for the "when" time is reached
+    EventFunctionWrapper dmaCompletionEvent;
+
+    /** Id for all requests */
+    const RequestorID requestorId; // TODO
+
+    bool enableDdio;
+
+    DTARXWorker* findDTARXWorker(PacketPtr pkt); // Find the free DTA worker or, if the response is partial of the previous request, find the worker that is processing the request
+    void allocatePayloadWorker();
+    void allocateDescriptorWorker();
+
+    void clearDTARXContext() {
+        dtaRXContext.valid = false;
+        dtaRXContext.completion_stage = false;
+        dtaRXContext.completion_addr = 0;
+        dtaRXContext.desc_addr = 0;
+        for (int i = 0; i < DTA_MAX_MBUF_NUM; i++) {
+            dtaRXContext.mbuf_addr[i] = 0;
+        }
+        dtaRXContext.nb_pkts = 0;
+        dtaRXContext.n_recv = 0;
+        dtaRXContext.num_free_request_in_NIC = 0;
+        dtaRXContext.lastDTARXWorker = 0;
+        dtaRXContext.n_mbuf_addr_received = 0;
+        dtaRXContext.n_desc_write_completed = 0;
+        dtaRXContext.n_cacheline_idx_write_completed = 0;
+        for (auto it = dtaRXContext.RXDescMap.begin(); it != dtaRXContext.RXDescMap.end(); it++) {
+            if (it->second) {
+                delete it->second;
+            }
+        }    
+        dtaRXContext.RXDescMap.clear();
+        dtaRXContext.RXCompleteMap.clear();
+    }
+
+    void clearDTATXContext() {
+        dtaTXContext.valid = false;
+        dtaTXContext.completion_addr = 0;
+        dtaTXContext.desc_addr = 0;
+        for (int i = 0; i < DTA_MAX_MBUF_NUM; i++) {
+            dtaTXContext.mbuf_addr[i] = 0;
+        }
+        dtaTXContext.nb_pkts = 0;
+        dtaTXContext.n_sent = 0;
+        dtaTXContext.n_desc_ready = 0;
+        dtaTXContext.n_mbuf_addr_received = 0;
+        dtaTXContext.descPayloadDMAWaiting.clear();
+        dtaTXContext.descPayloadDMAAssigned.clear();
+        dtaTXContext.TXCompleteMap.clear();
+    }
+
+    // State Machine for DTA
+    bool DTARXStateMachine(); // DTA state machine
+    bool DTATXStateMachine(); // DTA state machine
+    void tick();
+    void restartClock();
+
+
+
+};
+
 
 } // namespace gem5
 

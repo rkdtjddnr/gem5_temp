@@ -131,7 +131,8 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     PortID mem_side_port_id = findPort(pkt->getAddrRange());
     PortID pcie_req_side_port_id = mem_side_port_id;
     // JM - to make pio and dma use the same reqLayer for PCIe model
-    if (isIOXBar && mem_side_port_id == 17) {
+    if (isIOXBar && !enableDTA && mem_side_port_id == 17) {
+        // Do this only when not using DTA
         // PCIe reqLayer only uses 18 layer
         pcie_req_side_port_id = 18;
     }
@@ -251,7 +252,8 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
 
     PortID pcie_resp_side_port_id = cpu_side_port_id;
     // JM - to make pio and dma use the same respLayer for PCIe model
-    if (isIOXBar && cpu_side_port_id == 0) {
+    if (isIOXBar && !enableDTA && cpu_side_port_id == 0) {
+        // Do this only when not using DTA
         // PCIe respLayer only uses layer 2
         pcie_resp_side_port_id = 2;
     }
@@ -341,7 +343,8 @@ NoncoherentXBar::recvReqRetry(PortID mem_side_port_id)
     // JM - If IOXbar, the we have to use reqLayer 18 for PCIe model
     PortID pcie_req_side_port_id = mem_side_port_id;
 
-    if (isIOXBar && mem_side_port_id == 17) {
+    if (isIOXBar && !enableDTA && mem_side_port_id == 17) {
+        // Do this only when not using DTA
         // PCIe reqLayer only uses 18 layer
         pcie_req_side_port_id = 18;
     }

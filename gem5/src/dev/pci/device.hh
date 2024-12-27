@@ -348,6 +348,26 @@ class PciDevice : public DmaDevice
      */
     virtual Tick readConfig(PacketPtr pkt);
 
+    Addr
+    getBARBaseAddr(int num) const
+    {
+        return BARs[num]->addr();
+    }
+
+    bool
+    getBARDTA(Addr addr, int &num, Addr &offs)
+    {
+        for (int i = 0; i < BARs.size(); i++) {
+            auto *bar = BARs[i];
+            if (!bar || !bar->range().contains(addr))
+                continue;
+            num = i;
+            offs = addr - bar->addr();
+            return true;
+        }
+        return false;
+    }
+
   protected:
     PciHost::DeviceInterface hostInterface;
 

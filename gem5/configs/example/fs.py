@@ -105,6 +105,7 @@ def build_test_system(np):
                 num_qs=args.num_queues,
                 m2func=args.is_m2func,
                 dpdk_setup=args.is_dpdk_setup_step,
+                _enable_dta=args.enable_dta,
                 # Loadgens.
                 num_loadgens=args.num_loadgens,
                 load_generator_type="Simple",
@@ -132,6 +133,7 @@ def build_test_system(np):
                 num_qs=args.num_queues,
                 m2func=args.is_m2func,
                 dpdk_setup=args.is_dpdk_setup_step,
+                _enable_dta=args.enable_dta,
                 # Loadgens.
                 num_loadgens=args.num_loadgens,
                 loadgen_stack_mode=args.loadgen_stack,
@@ -325,14 +327,32 @@ def build_test_system(np):
         if args.caches and args.l3cache and args.ddio_enabled:
             # By default the IOCache runs at the system clock
     # -     test_sys.iocache = IOCache(addr_ranges = test_sys.mem_ranges)
-            test_sys.iocache = IOCache(addr_ranges = test_sys.mem_ranges,
-                                    is_iocache = True,
-                                    ddio_enabled = True,
-                                    assoc = 16, tag_latency = 2,
-                                    data_latency = 2, response_latency = 2,
-                                    write_buffers = 64)
+            if args.enable_dta: # JM
+                test_sys.dta = DTA(enable_dta=args.enable_dta,
+                                   num_dta_worker=args.num_dta_worker,
+                                   cxl_req_threshold=args.cxl_req_threshold,
+                                   cache_line_size=test_sys.cache_line_size,
+                                   ddio_enabled=True)
+                test_sys.iocache = IOCache(addr_ranges = test_sys.mem_ranges,
+                                           is_iocache = True,
+                                           ddio_enabled = True,
+                                           assoc = 16, tag_latency = 2,
+                                           data_latency = 2, response_latency = 2,
+                                           write_buffers = 64,
+                                           enable_dta=args.enable_dta,
+                                           dta=test_sys.dta)
+                test_sys.iocache.job_port = test_sys.tol3bus.mem_side_ports
+                test_sys.iocache.io_side_port = test_sys.iobus.cpu_side_ports
+            else:
+                test_sys.iocache = IOCache(addr_ranges = test_sys.mem_ranges,
+                                        is_iocache = True,
+                                        ddio_enabled = True,
+                                        assoc = 16, tag_latency = 2,
+                                        data_latency = 2, response_latency = 2,
+                                        write_buffers = 64,
+                                        enable_dta=args.enable_dta)
 
-            test_sys.iocache.cpu_side = test_sys.iobus.master
+                test_sys.iocache.cpu_side = test_sys.iobus.master
             test_sys.iocache.mem_side = test_sys.tol3bus.slave
         elif args.caches and args.l2cache and args.ddio_enabled:
             # By default the IOCache runs at the system clock
@@ -341,7 +361,8 @@ def build_test_system(np):
                                     ddio_enabled = True,
                                     assoc = 16, tag_latency = 2,
                                     data_latency = 2, response_latency = 2,
-                                    write_buffers = 64)
+                                    write_buffers = 64,
+                                    enable_dta=args.enable_dta)
 
             test_sys.iocache.cpu_side = test_sys.iobus.master
             test_sys.iocache.mem_side = test_sys.tol2bus.slave
@@ -353,7 +374,8 @@ def build_test_system(np):
                                         size = args.iocache_size,
                                         assoc = args.iocache_assoc, tag_latency = 2,
                                         data_latency = 2, response_latency = 2,
-                                        write_buffers = 64)
+                                        write_buffers = 64,
+                                        enable_dta=args.enable_dta)
 
             test_sys.iocache.cpu_side = test_sys.iobus.master
             test_sys.iocache.mem_side = test_sys.membus.slave

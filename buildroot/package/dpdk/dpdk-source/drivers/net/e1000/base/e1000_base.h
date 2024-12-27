@@ -37,6 +37,11 @@ struct e1000_adv_tx_context_desc {
 	__le32 mss_l4len_idx;
 };
 
+struct e1000_adv_tx_desc_m2func {
+	__le32 cmd_type_len;
+	__le32 olinfo_status;
+}; /* 8 bytes */
+
 /* Adv Transmit Descriptor Config Masks */
 #define E1000_ADVTXD_DTYP_CTXT	0x00200000 /* Advanced Context Descriptor */
 #define E1000_ADVTXD_DTYP_DATA	0x00300000 /* Advanced Data Descriptor */

@@ -63,9 +63,11 @@ BaseXBar::BaseXBar(const BaseXBarParams &p)
       width(p.width),
       gotAddrRanges(p.port_default_connection_count +
                           p.port_mem_side_ports_connection_count, false),
-      gotAllAddrRanges(false), defaultPortID(InvalidPortID),
+      gotAllAddrRanges(false), defaultPortID(InvalidPortID), DTAJobPortID(InvalidPortID),
       useDefaultRange(p.use_default_range),
       isIOXBar(p.is_ioxbar),
+      isL3XBar(false),
+      enableDTA(p.enable_dta),
 
       ADD_STAT(transDist, statistics::units::Count::get(),
                "Transaction distribution"),
@@ -418,6 +420,13 @@ BaseXBar::recvRangeChange(PortID mem_side_port_id)
     // remember that we got a range from this memory-side port and thus the
     // connected CPU-side-port module
     gotAddrRanges[mem_side_port_id] = true;
+
+    if (memSidePorts[mem_side_port_id]->getPeer().name().find("job") != std::string::npos) {
+        if (isL3XBar) {
+            DTAJobPortID = mem_side_port_id;
+            printf("DTAJobPortID: %d\n", DTAJobPortID);
+        }
+    }
 
     // update the global flag
     if (!gotAllAddrRanges) {

@@ -56,6 +56,7 @@ namespace gem5
 {
 
 class IGbEInt;
+class M2funcPort;
 
 class IGbE : public EtherDevice
 {
@@ -63,6 +64,9 @@ class IGbE : public EtherDevice
     // SHIN
     int adq = -1;
     IGbEInt *etherInt;
+
+    // JM - for the port to connect NIC with DTA
+    M2funcPort *m2funcPort;
 
     // device registers
     igbreg::Regs regs;
@@ -103,6 +107,8 @@ class IGbE : public EtherDevice
     };
     CommunicationType commType = CommunicationType::RING;
 
+    bool enableDTA = false;
+
     bool is_dpdk_setup_step;
 
     unsigned flitSize; // Flit size in bytes
@@ -120,6 +126,9 @@ class IGbE : public EtherDevice
     Tick fetchDelay, wbDelay;
     Tick fetchCompDelay, wbCompDelay;
     Tick rxWriteDelay, txReadDelay;
+
+    // JM - delay for CXL access
+    Tick cxlMemDelay;
 
     // Event and function to deal with RDTR timer expiring
     // void rdtrProcess() {
@@ -215,10 +224,6 @@ class IGbE : public EtherDevice
      * draining and resume in one place. */
     void restartClock();
 
-    /** Check if all the draining things that need to occur have occured and
-     * handle the drain event if so.
-     */
-    void checkDrain();
 
     template<class T>
     class DescCache : public Serializable
@@ -610,6 +615,8 @@ class IGbE : public EtherDevice
         int rxContextFifoSize;
         std::string _name;
 
+        bool enableDTA; // enable Data Transfer Accelerator mode or not. If use DTA, the RD request is coming from DTA, not from host. And use CXLReqBuffer to store the RD request and use the request to make response
+
         /** To handle the case when the ethernet packet size is larger than CXL flit size
          * and the packet is split into multiple flits. It indicates whether the packet is split or not
          */
@@ -634,12 +641,19 @@ class IGbE : public EtherDevice
         // M2func Rx Queue - store the packet, that is received from Ethernet and processed by NIC
         std::deque<m2funcRxFifoEntry> m2funcRxFifo;  
 
+        // M2func CXL Request Buffer - store the packet, that is received from the host part and waiting for the response
+        // TODO - JM : serialize/unserialize
+        std::deque<PacketPtr> m2funcCXLReqBuf;
+        uint64_t numCXLReq; // Number of CXL request buffer (accummulated)
+        uint64_t numFreeCXLReq; // Number of free CXL request buffer
+        uint64_t numFreeCXLReqMax; // Maximum number of free CXL request buffer
+
         // For stat
         Tick lastRxM2funcReadTick; // last tick when the M2func RD request is comming from host
         
 
       public:
-        RxM2funcContext(IGbE *i, std::string n, int _rxContextFifoSize, int qid);
+        RxM2funcContext(IGbE *i, std::string n, int _rxContextFifoSize, int qid, bool _enableDTA, int _cxlReqBufSize);
         ~RxM2funcContext();
         std::string name() { return _name; }
 
@@ -649,6 +663,18 @@ class IGbE : public EtherDevice
         void processRxPacket(EthPacketPtr packet); 
         bool rxM2funcStateMachine();
         void readM2funcPacket(PacketPtr pkt); // receive packet from host and make response 
+
+        // DTA
+        bool isDTAEnabled() { return enableDTA; }
+        bool m2funcCXLReqBufFull() { return m2funcCXLReqBuf.size() >= numFreeCXLReqMax; }
+        bool isCXLReqBufEmpty() { return m2funcCXLReqBuf.empty(); }
+        // Push new CXL RD request to m2funcCXLReqBuf
+        bool pushCXLReqBuf(PacketPtr pkt);
+        // Pop the CXL RD request from m2funcCXLReqBuf
+        PacketPtr popCXLReqBuf();
+        // send the response to the host
+        void sendCXLResp(PacketPtr pkt); // This can be tricky. The PIO port is working in atomic mode. So, we need to change the PIO port to non-atomic mode to send the response to the host
+        
 
         void updateRxM2funcReadStat(Tick tick) { 
           if (lastRxM2funcReadTick != 0) {
@@ -663,7 +689,6 @@ class IGbE : public EtherDevice
         void unserialize(CheckpointIn &cp) override;    
     };
 
-    RxM2funcContext *rxM2funcContextArray[MAX_QUEUE_SIZE];
 
     class TxM2funcContext : public Serializable
     {
@@ -672,6 +697,8 @@ class IGbE : public EtherDevice
         int queueID;
         int txContextFifoSize;
         std::string _name;
+
+        bool enableDTA; // enable Data Transfer Accelerator mode or not. If use DTA, the WR request is coming from DTA, not from host.
 
         /** Set when the packet is ready to be transmitted through txFifo */
         bool pktDone;
@@ -734,7 +761,7 @@ class IGbE : public EtherDevice
         bitmaskWrapper bitmaskWrap;
 
       public:
-        TxM2funcContext(IGbE *i, std::string n, int _txContextFifoSize, int qid);
+        TxM2funcContext(IGbE *i, std::string n, int _txContextFifoSize, int qid, bool _enableDTA);
         ~TxM2funcContext();
         std::string name() { return _name; }
 
@@ -750,14 +777,19 @@ class IGbE : public EtherDevice
         void updateBitmask(bool success);
         void readBitmask(PacketPtr pkt);
 
+        // DTA
+        bool isDTAEnabled() { return enableDTA; }
+
         void serialize(CheckpointOut &cp) const override;
         void unserialize(CheckpointIn &cp) override;
     };
-
-    TxM2funcContext *txM2funcContextArray[MAX_QUEUE_SIZE];
+    
 
   public:
     PARAMS(IGbE);
+
+    RxM2funcContext *rxM2funcContextArray[MAX_QUEUE_SIZE];
+    TxM2funcContext *txM2funcContextArray[MAX_QUEUE_SIZE];
 
     IGbE(const Params &params);
     ~IGbE();
@@ -797,9 +829,15 @@ class IGbE : public EtherDevice
       lastRxDMAStartTick = tick;
     }
 
+    int getNumQueues() { return numQueues; }
+
     void serialize(CheckpointOut &cp) const override;
     void unserialize(CheckpointIn &cp) override;
 
+    /** Check if all the draining things that need to occur have occured and
+     * handle the drain event if so.
+     */
+    void checkDrain();
     DrainState drain() override;
     void drainResume() override;
     // For M2func
@@ -820,6 +858,43 @@ class IGbEInt : public EtherInt
     virtual bool recvPacket(EthPacketPtr pkt) { return dev->ethRxPkt(pkt); }
     virtual void sendDone() { dev->ethTxDone(); }
 };
+
+// JM
+class M2funcPort : public QueuedResponsePort
+{
+  private:
+    IGbE *dev;
+    RespPacketQueue _respQueue;
+    Tick cxlMemDelay;
+    AddrRangeList addrRanges;
+    int numQueues;
+  protected:
+    void recvFunctional(PacketPtr pkt) override;
+    bool recvTimingReq(PacketPtr pkt) override; 
+    Tick recvAtomic(PacketPtr pkt) override;
+
+  public:
+    M2funcPort(const std::string &_name, IGbE *_owner, Tick _delay, int _numQueues)
+        : QueuedResponsePort(_name, _owner, respQueue), _respQueue(*_owner, *this), cxlMemDelay(_delay), dev(_owner), numQueues(_numQueues) { setAddrRange(); }
+
+    void setAddrRange() { 
+      const Addr base_addr = dev->getBARBaseAddr(0);
+      for (int i = 0; i < numQueues; i++) {
+        printf("M2funcPort::setAddrRange - i: %d\n", i);
+        printf("M2funcPort::setAddrRange - base_addr: %ld\n", base_addr);
+        Addr rxM2funcDTAAddr = igbreg::E1000_RXDTA(i) + base_addr;
+        Addr txM2funcDTAAddr = igbreg::E1000_TXDTA(i) + base_addr;
+        printf("M2funcPort::setAddrRange - rxM2funcDTAAddr: %ld\n", rxM2funcDTAAddr);
+        printf("M2funcPort::setAddrRange - txM2funcDTAAddr: %ld\n", txM2funcDTAAddr);
+        Addr size = 64; // CXL flit size
+        addrRanges.push_back(RangeSize(rxM2funcDTAAddr, size));
+        addrRanges.push_back(RangeSize(txM2funcDTAAddr, size));
+      }
+    }
+    AddrRangeList getAddrRanges() const override { return addrRanges; }
+
+};
+
 
 } // namespace gem5
 

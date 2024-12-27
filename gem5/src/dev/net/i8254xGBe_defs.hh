@@ -78,6 +78,7 @@ const uint32_t REG_RXDCTL   = 0x02828;
 const uint32_t REG_RQDPC    = 0x02830;
 const uint32_t REG_RADV     = 0x0282C;
 const uint32_t REG_RXM2FUNC = 0x02840; 
+const uint32_t REG_RXDTA    = 0x028C0;
 const uint32_t REG_TCTL     = 0x00400;
 /* RSS registers */
 const uint32_t REG_MRQC     = 0x05818; /* Multiple Receive Control - RW */
@@ -97,6 +98,7 @@ const uint32_t REG_TADV     = 0x0382C;
 const uint32_t REG_TDWBAL   = 0x03838;
 const uint32_t REG_TDWBAH   = 0x0383C;
 const uint32_t REG_TXM2FUNC = 0x03840;
+const uint32_t REG_TXDTA    = 0x038C0;
 const uint32_t REG_CRCERRS  = 0x04000;
 const uint32_t REG_RXCSUM   = 0x05000;
 const uint32_t REG_RLPML    = 0x05004;
@@ -216,6 +218,8 @@ inline uint32_t E1000_RQDPC(int _n) { return ((_n) < 4 ? (REG_RQDPC + ((_n) * 0x
 			 (0x0C030 + ((_n) * 0x40))); }
 inline uint32_t E1000_RXM2FUNC(int _n) { return ((_n) < 4 ? (REG_RXM2FUNC + ((_n) * 0x100)) : \
                          (0x0C040 + ((_n) * 0x40))); }
+inline uint32_t E1000_RXDTA(int _n) { return ((_n) < 4 ? (REG_RXDTA + ((_n) * 0x100)) : \
+                         (0x0C0C0 + ((_n) * 0x40))); }
 inline uint32_t E1000_TDBAL(int _n) { return ((_n) < 4 ? (REG_TDBAL + ((_n) * 0x100)) : \
 			 (0x0E000 + ((_n) * 0x40))); }
 inline uint32_t E1000_TDBAH(int _n) { return ((_n) < 4 ? (REG_TDBAH + ((_n) * 0x100)) : \
@@ -236,6 +240,8 @@ inline uint32_t E1000_TDWBAH(int _n) { return ((_n) < 4 ? (REG_TDWBAH + ((_n) * 
 				 (0x0E03C + ((_n) * 0x40))); }
 inline uint32_t E1000_TXM2FUNC(int _n) { return ((_n) < 4 ? (REG_TXM2FUNC + ((_n) * 0x100)) : \
                          (0x0E040 + ((_n) * 0x40))); }
+inline uint32_t E1000_TXDTA(int _n) { return ((_n) < 4 ? (REG_TXDTA + ((_n) * 0x100)) : \
+                         (0x0E0C0 + ((_n) * 0x40))); }
 
 /* RSS RETA */
 inline uint32_t E1000_RETA(int _n) { return (REG_RETA + ((_n) * 4)); }

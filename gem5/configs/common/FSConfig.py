@@ -178,7 +178,7 @@ def makeArmSystem(mem_mode, machine_type, num_cpus=1, mdesc=None,
                   dtb_filename=None, bare_metal=False, cmdline=None,
                   external_memory="", ruby=False, security=False,
                   vio_9p=None, bootloader=None, num_nics=1, num_loadgens=0,
-                  load_generator_type="Simple", num_qs=1, m2func=False, dpdk_setup=False, **loadgen_kwargs):
+                  load_generator_type="Simple", num_qs=1, m2func=False, dpdk_setup=False, _enable_dta=False, **loadgen_kwargs):
     assert machine_type
 
     pci_devices = []
@@ -191,7 +191,7 @@ def makeArmSystem(mem_mode, machine_type, num_cpus=1, mdesc=None,
     links = []
 
     for i in range(num_nics):
-        nics.append(IGbE_e1000(adq_idx=i, num_queues=num_qs, is_m2func=m2func, is_dpdk_setup_step=dpdk_setup))
+        nics.append(IGbE_e1000(adq_idx=i, num_queues=num_qs, is_m2func=m2func, is_dpdk_setup_step=dpdk_setup, enable_dta=_enable_dta))
 
     for i in range(num_loadgens):
         if load_generator_type == "Simple":
@@ -226,13 +226,17 @@ def makeArmSystem(mem_mode, machine_type, num_cpus=1, mdesc=None,
         mdesc = SysConfig()
 
     self.readfile = mdesc.script()
-    self.iobus = IOXBar()
+    self.iobus = IOXBar(enable_dta = _enable_dta)
     if not ruby:
         self.bridge = Bridge(delay='50ns')
         self.bridge.mem_side_port = self.iobus.cpu_side_ports
         self.membus = MemBus()
         self.membus.badaddr_responder.warn_access = "warn"
         self.bridge.slave = self.membus.master
+    
+    if _enable_dta:
+        for i in range(num_nics):
+            nics[i].m2func_port = self.iobus.mem_side_ports
 
     self.mem_mode = mem_mode
 

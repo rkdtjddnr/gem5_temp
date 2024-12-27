@@ -292,10 +292,6 @@ class CoherentXBar : public BaseXBar
     /** Is this crossbar the point of unification? **/
     const bool pointOfUnification;
 
-    // JM
-    /** Is this crossbar L3XBar? */
-    bool isL3XBar;
-
     /**
      * Upstream caches need this packet until true is returned, so
      * hold it for deletion until a subsequent call
@@ -435,6 +431,11 @@ class CoherentXBar : public BaseXBar
     // JM
     // used for L3XBar. The number of mem_side_ports connected to L3XBar
     int numL3XBarPorts;
+
+    // JM
+    // Used for L3XBar. The rx/tx job req addr
+    Addr rx_dta_job_req_addr = 0;
+    Addr tx_dta_job_req_addr = 0;
 
   public:
 

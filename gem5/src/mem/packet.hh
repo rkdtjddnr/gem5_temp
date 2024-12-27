@@ -968,6 +968,14 @@ class Packet : public Printable
                 allocate();
             }
         }
+
+        // JM
+        if (pkt->isRXJobReq()) {
+            setRXJobReq();
+        }
+        if (pkt->isTXJobReq()) {
+            setTXJobReq();
+        }
     }
 
     /**
@@ -1485,6 +1493,16 @@ class Packet : public Printable
     bool is_prefetch_hint_pkt = false;
     bool is_block_io;
 
+    // JM 
+    bool is_rx_job_req = false;
+    bool is_tx_job_req = false;
+
+    // DTA request
+    bool is_from_dta = false;
+    bool is_rx_dma = false;
+    bool is_tx_dma = false;
+    int worker_id = -1;
+
   public:
     void setDdioPrefetchId(int ddio_id){ddio_prefetch_id = ddio_id;}
     void setDdioPrefetchDestination(int ddio_dest){ddio_prefetch_destination = ddio_dest;}
@@ -1507,6 +1525,21 @@ class Packet : public Printable
     void setBlockIO()          { flags.set(BLOCK_IO); }
     bool isBlockIO() const     { return flags.isSet(BLOCK_IO); }
     void clearBlockIO()        { flags.clear(BLOCK_IO); }
+
+    void setRXJobReq()         { is_rx_job_req = true; }
+    void setTXJobReq()         { is_tx_job_req = true; }
+    bool isRXJobReq() const    { return is_rx_job_req; }
+    bool isTXJobReq() const    { return is_tx_job_req; }
+
+    void setFromDTA()          { is_from_dta = true; }
+    bool isFromDTA() const     { return is_from_dta; }
+
+    void setRXDMA()            { is_rx_dma = true; }
+    void setTXDMA()            { is_tx_dma = true; }
+    bool isRXDMA() const       { return is_rx_dma; }
+    bool isTXDMA() const       { return is_tx_dma; }
+    void setWorkerID(int id) { worker_id = id; }
+    int getWorkerID() const { return worker_id; }
 
     // hardware transactional memory
 

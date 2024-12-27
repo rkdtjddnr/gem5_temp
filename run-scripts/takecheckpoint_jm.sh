@@ -11,7 +11,7 @@
 
 # M2func
 # 1 core 1 queue
-./l2fwd-ckp-dpdk-set-1core-1q-multi-port-4ns-m2func.sh --take-checkpoint --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz
+# ./l2fwd-ckp-dpdk-set-1core-1q-multi-port-4ns-m2func.sh --take-checkpoint --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz
 
 
 
@@ -43,3 +43,12 @@
 # # Take checkpoint
 # # 1 core 1 queue
 # ./l2fwd-ckp-dpdk-set-1core-1q-multi-port-4ns-m2func.sh --take-checkpoint --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz
+
+
+# M2func + DTA
+# cp $GIT_ROOT/buildroot_new/output/images/vmlinux $GIT_ROOT/resources-dpdk-m2func-dta/ && cp $GIT_ROOT/buildroot_new/output/images/rootfs.ext2 $GIT_ROOT/resources-dpdk-m2func-dta/
+
+# 1 core 1 queue
+cd $GIT_ROOT/run-scripts
+echo "Current directory: $(pwd)"
+./l2fwd-ckp-dpdk-set-1core-1q-multi-port-4ns-m2func-dta.sh --take-checkpoint --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz

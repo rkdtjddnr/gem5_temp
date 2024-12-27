@@ -110,6 +110,10 @@ def addNoISAOptions(parser):
     parser.add_argument("--is-m2func", action="store_true", default=False)
     # JM - to notify this is for dpdk setup step or not. Because during dpdk setup step, we need to use RDT, TDT as normal DPDK
     parser.add_argument("--is-dpdk-setup-step", action="store_true", default=False)
+    # JM - Enable DTA or not
+    parser.add_argument("--enable-dta", action="store_true", default=False)
+    parser.add_argument("--num-dta-worker", type=int, default=16)
+    parser.add_argument("--cxl-req-threshold", type=int, default=128)
     # For all loadgens:
     parser.add_argument("--num-loadgens", type=int, default=0)
     parser.add_argument("--loadgen-type", type=str, default="Simple")

@@ -398,6 +398,8 @@ class BaseXBar : public ClockedObject
     /** Port that handles requests that don't match any of the interfaces.*/
     PortID defaultPortID;
 
+    PortID DTAJobPortID;
+
     /** If true, use address range provided by default device.  Any
        address not handled by another port and not in default device's
        range will cause a fatal error.  If false, just send all
@@ -421,6 +423,10 @@ class BaseXBar : public ClockedObject
 
     // JM - for ioxbar (model pcie xbar)
     bool isIOXBar;
+    bool enableDTA;
+    // JM
+    /** Is this crossbar L3XBar? */
+    bool isL3XBar;
 
   public:
 
