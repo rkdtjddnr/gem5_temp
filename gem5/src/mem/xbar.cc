@@ -63,7 +63,7 @@ BaseXBar::BaseXBar(const BaseXBarParams &p)
       width(p.width),
       gotAddrRanges(p.port_default_connection_count +
                           p.port_mem_side_ports_connection_count, false),
-      gotAllAddrRanges(false), defaultPortID(InvalidPortID), DTAJobPortID(InvalidPortID),
+      gotAllAddrRanges(false), defaultPortID(InvalidPortID), DTAJobPortID(InvalidPortID), M2funcPortID(InvalidPortID),
       useDefaultRange(p.use_default_range),
       isIOXBar(p.is_ioxbar),
       isL3XBar(false),
@@ -428,6 +428,13 @@ BaseXBar::recvRangeChange(PortID mem_side_port_id)
         }
     }
 
+    if (memSidePorts[mem_side_port_id]->getPeer().name().find("m2func") != std::string::npos) {
+        if (isIOXBar) {
+            M2funcPortID = mem_side_port_id;
+            printf("M2funcPortID: %d\n", M2funcPortID);
+        }
+    }
+
     // update the global flag
     if (!gotAllAddrRanges) {
         // take a logical AND of all the ports and see if we got
@@ -475,18 +482,188 @@ BaseXBar::recvRangeChange(PortID mem_side_port_id)
 
         AddrRangeList ranges = memSidePorts[mem_side_port_id]->
                                getAddrRanges();
+        
+        std::vector<AddrRangeMap<PortID, 3>::iterator> conflicts;
+        AddrRangeList adjustedRanges;
 
-        for (const auto& r: ranges) {
-            DPRINTF(AddrRanges, "Adding range %s for id %d\n",
-                    r.to_string(), mem_side_port_id);
-            if (portMap.insert(r, mem_side_port_id) == portMap.end()) {
-                PortID conflict_id = portMap.intersects(r)->second;
-                fatal("%s has two ports responding within range "
-                      "%s:\n\t%s\n\t%s\n",
-                      name(),
-                      r.to_string(),
-                      memSidePorts[mem_side_port_id]->getPeer(),
-                      memSidePorts[conflict_id]->getPeer());
+        // Sanity check for IOXBar with DTA enabled
+        if (isIOXBar && enableDTA) {
+            assert(M2funcPortID != InvalidPortID);
+            // Check for all conflicting ranges
+            for (const auto& r : ranges) {
+                printf("Checking for conflicts for range: %s mem_side_port_id: %d M2funcPortID: %d\n", r.to_string().c_str(), mem_side_port_id, M2funcPortID);
+                for (auto it = portMap.begin(); it != portMap.end(); ++it) {
+                    if (it->first.intersects(r)) {
+                        // First, check if the it's address range is same as the address range of the conflicts' already inserted
+                        bool isSameRange = false;
+                        for (auto conflict: conflicts) {
+                            if (conflict->first == it->first) {
+                                isSameRange = true;
+                                break;
+                            }
+                        }
+                        if (isSameRange) {
+                            continue;
+                        } else {
+                            conflicts.push_back(it);
+                            printf("Conflict range: %s conflict_id: %d\n", it->first.to_string().c_str(), it->second);
+                        }
+                    }
+                }
+            }
+            printf("Conflicts size: %d\n", conflicts.size());
+            if (conflicts.size() > 0) {
+                if (mem_side_port_id == M2funcPortID) {
+                    // In this case, conflicts should contain only one range
+                    if (conflicts.size() > 1) {
+                        for (auto conflict: conflicts) {
+                            printf("Conflict range: %s conflict_id: %d\n", conflict->first.to_string(), conflict->second);
+                        }
+                        assert(conflicts.size() == 1);
+                    }
+                } else {
+                    // In this case, conflicts should contain two ranges & both it's portID should be M2funcPortID
+                    assert(conflicts.size() == 2);
+                    for (auto conflict: conflicts) {
+                        assert(conflict->second == M2funcPortID);
+                        printf("Conflict range: %s conflict_id: %d\n", conflict->first.to_string().c_str(), conflict->second);
+                    }
+                }
+            }
+        }
+        
+        // If there are conflicts, adjust the range of port that is not M2funcPort
+        //Caution! Below code assume that another conflict port (PIO) range fully includes M2funcPort range 
+        if (conflicts.size() == 2) {
+            // This case, new port is not M2funcPort
+            // sort the conflicts by start address
+            printf("%s has conflicts, mem_side_port_id: %d, conflict_id: %d, conflicts: ", name().c_str(), mem_side_port_id, conflicts[0]->second);
+            for (auto conflict: conflicts) {
+                printf("%s ID: %d, ", conflict->first.to_string().c_str(), conflict->second);
+            }
+            printf("\n");
+            if (conflicts.front()->first.start() > conflicts.back()->first.start()) {
+                std::swap(conflicts.front(), conflicts.back());
+            }
+            printf("After sorting, conflicts: ");
+            for (auto conflict: conflicts) {
+                printf("%s ID: %d, ", conflict->first.to_string().c_str(), conflict->second);
+            }
+            printf("\n");
+
+            assert(ranges.size() == 1); // Another case is not handled yet
+            AddrRange adjustedRange = ranges.front();
+            Addr start = adjustedRange.start();
+            for (const auto& conflict: conflicts) {
+                if (conflict->first.start() > start) {
+                    adjustedRanges.push_back(AddrRange(start, conflict->first.start()));
+                }
+                start = std::max(start, conflict->first.end());
+            }
+            if (start < adjustedRange.end()) {
+                adjustedRanges.push_back(AddrRange(start, adjustedRange.end()));
+            }
+            // Add adjusted ranges
+            for (const auto& r: adjustedRanges) {
+                DPRINTF(AddrRanges, "Adding range %s for id %d\n",
+                        r.to_string(), mem_side_port_id);
+                printf("Adding range %s for id %d\n",
+                        r.to_string().c_str(), mem_side_port_id);
+                if (portMap.insert(r, mem_side_port_id) == portMap.end()) {
+                    PortID conflict_id = portMap.intersects(r)->second;
+                    fatal("%s has two ports responding within range "
+                        "%s:\n\t%s\n\t%s\n",
+                        name(),
+                        r.to_string(),
+                        memSidePorts[mem_side_port_id]->getPeer(),
+                        memSidePorts[conflict_id]->getPeer());
+                }
+            }
+        } else if (conflicts.size() == 1) {
+            // This case, new port is M2funcPort
+            AddrRange adjustedRange = conflicts.front()->first;
+            Addr start = adjustedRange.start();
+            // sort the ranges by start address
+            std::vector<AddrRange> sorted_ranges;
+            assert(ranges.size() == 2);
+            if (ranges.front().start() > ranges.back().start()) {
+                sorted_ranges.push_back(ranges.back());
+                sorted_ranges.push_back(ranges.front());
+            } else {
+                sorted_ranges.push_back(ranges.front());
+                sorted_ranges.push_back(ranges.back());
+            }
+
+            printf("%s has conflicts, mem_side_port_id: %d, conflict_id: %d, conflicts: ", name().c_str(), mem_side_port_id, conflicts[0]->second);
+            for (auto conflict: conflicts) {
+                printf("%s ID: %d, ", conflict->first.to_string().c_str(), conflict->second);
+            }
+            printf("\n");
+            printf("Sorted Ranges: ");
+            for (auto r: sorted_ranges) {
+                printf("%s, ", r.to_string().c_str());
+            }
+            printf("\n");
+
+            for (const auto& r: ranges) {
+                if (r.start() > start) {
+                    adjustedRanges.push_back(AddrRange(start, r.start()));
+                }
+                start = std::max(start, r.end());
+            }
+            if (start < adjustedRange.end()) {
+                adjustedRanges.push_back(AddrRange(start, adjustedRange.end()));
+            }
+            // Remove original conflicting range & Add adjusted ranges
+            PortID conflict_id = conflicts.front()->second;
+            portMap.erase(conflicts.front());
+            
+            for (const auto& r: adjustedRanges) {
+                DPRINTF(AddrRanges, "Adding range %s for conflict_id %d\n",
+                        r.to_string(), conflict_id);
+                printf("Adding range %s for conflict_id %d\n",
+                        r.to_string().c_str(), conflict_id);
+                if (portMap.insert(r, conflict_id) == portMap.end()) {
+                    PortID another_conflict_id = portMap.intersects(r)->second;
+                    fatal("%s has two ports responding within range "
+                        "%s:\n\t%s\n\t%s\n",
+                        name(),
+                        r.to_string(),
+                        memSidePorts[conflict_id]->getPeer(),
+                        memSidePorts[another_conflict_id]->getPeer());
+                }
+            }
+            // Add M2funcPort range
+            for (const auto& r: ranges) {
+                DPRINTF(AddrRanges, "Adding range %s for id %d\n",
+                        r.to_string(), mem_side_port_id);
+                printf("Adding range %s for id %d\n",
+                        r.to_string().c_str(), mem_side_port_id);
+                if (portMap.insert(r, mem_side_port_id) == portMap.end()) {
+                    PortID conflict_id = portMap.intersects(r)->second;
+                    fatal("%s has two ports responding within range "
+                        "%s:\n\t%s\n\t%s\n",
+                        name(),
+                        r.to_string(),
+                        memSidePorts[mem_side_port_id]->getPeer(),
+                        memSidePorts[conflict_id]->getPeer());
+                }
+            }
+        } else {
+            for (const auto& r: ranges) {
+                DPRINTF(AddrRanges, "Adding range %s for id %d\n",
+                        r.to_string(), mem_side_port_id);
+                printf("Adding range %s for id %d\n",
+                        r.to_string().c_str(), mem_side_port_id);
+                if (portMap.insert(r, mem_side_port_id) == portMap.end()) {
+                    PortID conflict_id = portMap.intersects(r)->second;
+                    fatal("%s has two ports responding within range "
+                        "%s:\n\t%s\n\t%s\n",
+                        name(),
+                        r.to_string(),
+                        memSidePorts[mem_side_port_id]->getPeer(),
+                        memSidePorts[conflict_id]->getPeer());
+                }
             }
         }
     }
@@ -577,6 +754,13 @@ BaseXBar::recvRangeChange(PortID mem_side_port_id)
         // ranges have changed
         for (const auto& port: cpuSidePorts)
             port->sendRangeChange();
+        
+        if (isIOXBar && enableDTA) {
+            // Print the portMap info
+            for(auto p = portMap.begin(); p != portMap.end(); ++p) {
+                printf("PortMap: %s %d\n", p->first.to_string().c_str(), p->second);
+            }
+        }
     }
 }
 

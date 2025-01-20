@@ -875,7 +875,7 @@ class M2funcPort : public QueuedResponsePort
 
   public:
     M2funcPort(const std::string &_name, IGbE *_owner, Tick _delay, int _numQueues)
-        : QueuedResponsePort(_name, _owner, respQueue), _respQueue(*_owner, *this), cxlMemDelay(_delay), dev(_owner), numQueues(_numQueues) { setAddrRange(); }
+        : QueuedResponsePort(_name, _owner, _respQueue), _respQueue(*_owner, *this), cxlMemDelay(_delay), dev(_owner), numQueues(_numQueues) { setAddrRange(); }
 
     void setAddrRange() { 
       const Addr base_addr = dev->getBARBaseAddr(0);

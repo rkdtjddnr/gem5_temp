@@ -117,16 +117,18 @@ CoherentXBar::CoherentXBar(const CoherentXBarParams &p)
         isL3XBar = true;
         numL3XBarPorts = p.port_mem_side_ports_connection_count;
         if (enableDTA) {
-            rx_dta_job_req_addr = p.dta_rx_job_addr; // TODO
-            tx_dta_job_req_addr = p.dta_tx_job_addr; // TODO
-            printf("L3XBar - enableDTA: rx_dta_job_req_addr: %lx, tx_dta_job_req_addr: %lx\n", rx_dta_job_req_addr, tx_dta_job_req_addr);
+            rx_dta_job_req_addr = p.dta_rx_job_addr; 
+            tx_dta_job_req_addr = p.dta_tx_job_addr; 
+            numL3XBarPorts -= 1; // Because this value is used to decide the port id corresponding to the L3cache. So exclude the DTA job port
+            printf("L3XBar - enableDTA: rx_dta_job_req_addr: %lx, tx_dta_job_req_addr: %lx, numL3XBarPorts: %d\n", rx_dta_job_req_addr, tx_dta_job_req_addr, numL3XBarPorts);
         } else {
             rx_dta_job_req_addr = 0;
             tx_dta_job_req_addr = 0;
-            printf("L3XBar - disableDTA\n");
+            printf("L3XBar - disableDTA: numL3XBarPorts: %d\n", numL3XBarPorts);
         }
     } else {
         isL3XBar = false;
+        numL3XBarPorts = 0;
     }
 }
 
@@ -565,6 +567,9 @@ CoherentXBar::getSetIndexForL3XBar(Addr addr)
 
     //access memory_port_id: 0's memory port to finally access the response port and get the cache set index
     PortID memory_port_id = 0; //It is fine to use 0 as the memory port id because the all memory_port_id's are connected to the same L3 Cache
+    if (enableDTA) {
+        assert(memory_port_id != DTAJobPortID);
+    }
     ResponsePort * respPort = memSidePorts[memory_port_id]->getResponsePort();
     uint32_t setIndex = 0;
 

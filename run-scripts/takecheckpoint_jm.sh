@@ -18,8 +18,8 @@
 # build disk image for gem5
 # cd $GIT_ROOT/buildroot_new
 
-# # echo current directory
-# echo "Current directory: $(pwd)"
+# # # echo current directory
+# # echo "Current directory: $(pwd)"
 
 # make clean
 
@@ -30,8 +30,8 @@
 
 # echo "After building the disk image for gem5"
 
-# # After building the disk image, copy the disk image to the gem5 resources-dpdk-m2func
-# cp $GIT_ROOT/buildroot_new/output/images/vmlinux $GIT_ROOT/resources-dpdk-m2func/ && cp $GIT_ROOT/buildroot_new/output/images/rootfs.ext2 $GIT_ROOT/resources-dpdk-m2func/
+# # # After building the disk image, copy the disk image to the gem5 resources-dpdk-m2func
+# cp $GIT_ROOT/buildroot_new/output/images/vmlinux $GIT_ROOT/resources-dpdk-m2func-dta/ && cp $GIT_ROOT/buildroot_new/output/images/rootfs.ext2 $GIT_ROOT/resources-dpdk-m2func-dta/
 
 # # Move to run directory
 # cd $GIT_ROOT/run-scripts

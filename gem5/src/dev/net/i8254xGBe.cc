@@ -232,6 +232,7 @@ IGbE::~IGbE()
 {
     delete etherInt;
     if (enableDTA) {
+        assert(m2funcPort);
         delete m2funcPort;
     }
 }
@@ -239,6 +240,15 @@ IGbE::~IGbE()
 void
 IGbE::init()
 {
+    if (enableDTA) {
+        assert(m2funcPort);
+        if (m2funcPort->isConnected()) {
+            printf("IGbE: m2funcPort is connected\n");
+            m2funcPort->sendRangeChange();
+        } else {
+            panic("IGbE: m2funcPort is not connected\n");
+        }
+    }
     PciDevice::init();
 }
 

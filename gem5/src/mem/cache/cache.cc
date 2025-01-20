@@ -407,7 +407,16 @@ Cache::handleTimingReqMiss(PacketPtr pkt, CacheBlk *blk, Tick forward_time,
         // request_time is used here, taking into account lat and the delay
         // charged if the packet comes from the xbar.
         assert(!(isLLC && isMultiPort)); // If assert fails, need to update this code
-        cpuSidePort.schedTimingResp(pkt, request_time);
+        if (isIOCache && pkt->isFromDTA()) {
+            // This packet is from DTA, send it to DTA
+            // Find the worker by using sender state
+            assert(dta != nullptr);
+            dta->recvTimingRespfromCache(pkt, request_time);
+        } else {
+            assert(!(isIOCache && enableDTA)); // If assert fails, need to update this code
+            // This packet is from CPU, send it to CPU
+            cpuSidePort.schedTimingResp(pkt, request_time);
+        }
 
         // If an outstanding request is in progress (we found an
         // MSHR) this is set to null
@@ -1125,6 +1134,9 @@ Cache::handleSnoop(PacketPtr pkt, CacheBlk *blk, bool is_timing,
                 }
                 cpuSidePortList[port_id]->sendTimingSnoopReq(
                     &snoopPkt);
+            } else if (isIOCache && enableDTA) {
+                assert(0 && "Maybe, IOCache in DTA mode, does not need to forward memSidePort response to the jobPort. Because memSidePort and jobPort are both connected to the same L3XBar\n");
+                jobPort->sendTimingSnoopReq(&snoopPkt);
             } else {
                 cpuSidePort.sendTimingSnoopReq(&snoopPkt);
             }
@@ -1160,6 +1172,9 @@ Cache::handleSnoop(PacketPtr pkt, CacheBlk *blk, bool is_timing,
                     port_id = 0;
                 }
                 cpuSidePortList[port_id]->sendAtomicSnoop(pkt);
+            } else if (isIOCache && enableDTA) {
+                assert(0 && "Maybe, IOCache in DTA mode, does not need to forward memSidePort response to the jobPort. Because memSidePort and jobPort are both connected to the same L3XBar\n");
+                jobPort->sendAtomicSnoop(pkt);
             } else {
                 cpuSidePort.sendAtomicSnoop(pkt);
             }
@@ -1494,6 +1509,7 @@ Cache::isCachedAbove(PacketPtr pkt, bool is_timing)
             cpuSidePortList[port_id]->sendTimingSnoopReq(
                 &snoop_pkt);
         } else {
+            assert(!(isIOCache && enableDTA));
             cpuSidePort.sendTimingSnoopReq(&snoop_pkt);
         }
         // Writeback/CleanEvict snoops do not generate a snoop response.
@@ -1510,6 +1526,7 @@ Cache::isCachedAbove(PacketPtr pkt, bool is_timing)
             }
             cpuSidePortList[port_id]->sendAtomicSnoop(pkt);
         } else {
+            assert(!(isIOCache && enableDTA));
             cpuSidePort.sendAtomicSnoop(pkt);
         }
         return pkt->isBlockCached();
@@ -1562,6 +1579,9 @@ Cache::sendMSHRQueuePacket(MSHR* mshr)
                 port_id = 0;
             }
             cpuSidePortList[port_id]->sendTimingSnoopReq(&snoop_pkt);
+        } else if (isIOCache && enableDTA) {
+            assert(0 && "Maybe, IOCache in DTA mode, does not need to forward memSidePort response to the jobPort. Because memSidePort and jobPort are both connected to the same L3XBar\n");
+            jobPort->sendTimingSnoopReq(&snoop_pkt);
         } else {
             cpuSidePort.sendTimingSnoopReq(&snoop_pkt);
         }

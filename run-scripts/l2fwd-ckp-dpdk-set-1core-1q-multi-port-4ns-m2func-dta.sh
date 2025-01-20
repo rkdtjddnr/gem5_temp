@@ -135,7 +135,7 @@ if [[ -n "$checkpoint" ]]; then
   # packet-size = 0 leads to segfault
   PACKET_SIZE=48
   CPUTYPE="AtomicSimpleCPU"
-  CONFIGARGS="--max-checkpoints 3 --cpu-clock=$Freq --loadgen-start=2628842328231400 --is-dpdk-setup-step"
+  CONFIGARGS="--param=system.iobus.is_ioxbar=True --max-checkpoints 3 --cpu-clock=$Freq --loadgen-start=2628842328231400 --is-dpdk-setup-step"
   # CONFIGARGS="--max-checkpoints 1 -r 1 --cpu-clock=$Freq --loadgen-start=2628842328231400"
   run_simulation > $RUNDIR/simout
   exit 0
@@ -155,15 +155,15 @@ else
 # /dpdk-testpmd-freq-scaling-test
   echo "Running NICs=$num_nics at $RATE GBPS" >&2
   CPUTYPE="O3_ARM_v7a_3"
-  GEM5TYPE="opt"
-  # GEM5TYPE="debug"
+  # GEM5TYPE="opt"
+  GEM5TYPE="debug"
   LOADGENMODE=${LOADGENMODE:-"Static"}
   # DEBUG_FLAGS="--debug-flags=EthernetDpdk,LoadgenDebug,DDIO"
   # DEBUG_FLAGS="--debug-flags=LoadgenDebug,EthernetDesc,EthernetDpdk" #--debug-start=33952834348" #EthernetAll,EthernetDesc,LoadgenDebug
-  # CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=6497528130048 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  # CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4585960466526 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   # --warmup-dpdk 200000000000"
-  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4585960466526 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
-  --warmup-dpdk 200000000000"
+    CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=8353008254739 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  --warmup-dpdk 20000000"
   run_simulation > ${RUNDIR}/simout
   exit
 fi

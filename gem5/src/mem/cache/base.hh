@@ -1502,6 +1502,8 @@ class BaseCache : public ClockedObject
         assert(isIOCache);
         assert(pkt->isFromDTA());
         recvTimingReq(pkt);
+
+        return true;
     }
 
     // SHIN.
@@ -1706,7 +1708,15 @@ class DTA : public ClockedObject
     }
 
     void setIOCache(BaseCache* cache) {
+        assert(ioCache == nullptr);
+        assert(cache != nullptr);
         ioCache = cache;
+        for (int i = 0; i < numDTARXWorker; i++) {
+            dtaRXWorkerList[i]->setCachelineSize(ioCache->getBlockSize());
+        }
+        for (int i = 0; i < numDTATXWorker; i++) {
+            dtaTXWorkerList[i]->setCachelineSize(ioCache->getBlockSize());
+        }
     }
 
     struct RXDescriptor {
@@ -1787,6 +1797,8 @@ class DTA : public ClockedObject
         uint32_t num_free_request_in_NIC; // the number of free request in NIC
         uint32_t lastDTARXWorker; // the last DTA worker that is used for the request - for the partial response
         uint32_t n_mbuf_addr_received; // the number of mbuf address received - to track the job request managing
+        uint32_t n_extra_cxl_req_needed; // the number of extra CXL.mem RD request needed to receive the ethernet packet partially (For the case when the ethernet packet size is bigger than the CXL flit size)
+        uint32_t n_extra_cxl_req_received; // the number of extra CXL.mem RD request received - to track the partial response
         uint32_t n_desc_write_completed; // the number of descriptors that are written to the completion address
         uint32_t n_cacheline_idx_write_completed; // the number of cacheline index that are written to the completion address
         std::map<Addr, RXDescriptor*> RXDescMap; // Store the RX descriptor corresponding to the mbuf_addr
@@ -1831,7 +1843,7 @@ class DTA : public ClockedObject
     std::deque<PacketPtr> cxlReqQueue; // CXL.mem request queue - TX Workers will push to this queue to send the request to the NIC. Also, DTA will push RD request to read the RX data from the NIC
 
     // Packet queue waiting for worker allocation
-    std::deque<PacketPtr> workerWaitingQueue; // CXL.mem response packet queue waiting for worker allocation
+    std::deque<std::pair<PacketPtr, uint32_t>> workerWaitingQueue; // CXL.mem response packet queue waiting for worker allocation (PacketPtr, ethernetPacketIdx)
     bool allocateWorkerFromQueue(); // Allocate worker from the queue
 
     // DTA Worker part
@@ -1849,7 +1861,7 @@ class DTA : public ClockedObject
     {
         public:
             DTARXWorker(DTA* _dta, int id) : dta(_dta), workerID(id), Named("DTARXWorker["+std::to_string(id)+"]") { 
-                cacheLineSize = dta->ioCache->getBlockSize();
+                cacheLineSize = 64;
                 currProcessingPkt = nullptr; 
                 state = workerState::IDLE; 
                 payloadSize = 0;
@@ -1954,6 +1966,7 @@ class DTA : public ClockedObject
                 assert(desc != nullptr);
                 dta->dtaRXContext.RXDescMap[mbuf_addr] = desc;
             }
+            void setCachelineSize(uint32_t size) { cacheLineSize = size; }
         private:
             DTA* dta;
             int workerID;
@@ -1985,7 +1998,7 @@ class DTA : public ClockedObject
     {
         public:
             DTATXWorker(DTA* _dta, int id) : dta(_dta), workerID(id), Named("DTATXWorker["+std::to_string(id)+"]") {
-                cacheLineSize = dta->ioCache->getBlockSize();
+                cacheLineSize = 64;
                 state = workerState::IDLE;
                 dmaComplete = false;
                 baseAddr = 0;
@@ -2071,13 +2084,13 @@ class DTA : public ClockedObject
             workerState getState() { return state; }
             void setOffset(Addr offset) { offsetFromDescAddr = offset; }
 
-
+            void setCachelineSize(uint32_t size) { cacheLineSize = size; }
 
             PacketPtr makePacket();
             bool sendDMA(PacketPtr pkt);
             void handleDMACompletion(PacketPtr pkt);
             bool notifyWorkerCompletion(); // Notify the completion of the worker to the DTA
-            bool DTAWork();
+            bool DTAWork();            
 
         private:
             DTA* dta;
@@ -2141,6 +2154,8 @@ class DTA : public ClockedObject
         dtaRXContext.num_free_request_in_NIC = 0;
         dtaRXContext.lastDTARXWorker = 0;
         dtaRXContext.n_mbuf_addr_received = 0;
+        dtaRXContext.n_extra_cxl_req_needed = 0;
+        dtaRXContext.n_extra_cxl_req_received = 0;
         dtaRXContext.n_desc_write_completed = 0;
         dtaRXContext.n_cacheline_idx_write_completed = 0;
         for (auto it = dtaRXContext.RXDescMap.begin(); it != dtaRXContext.RXDescMap.end(); it++) {

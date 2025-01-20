@@ -344,6 +344,7 @@ NoncoherentXBar::recvReqRetry(PortID mem_side_port_id)
     PortID pcie_req_side_port_id = mem_side_port_id;
 
     if (isIOXBar && !enableDTA && mem_side_port_id == 17) {
+        // TODO - JM
         // Do this only when not using DTA
         // PCIe reqLayer only uses 18 layer
         pcie_req_side_port_id = 18;

@@ -399,6 +399,7 @@ class BaseXBar : public ClockedObject
     PortID defaultPortID;
 
     PortID DTAJobPortID;
+    PortID M2funcPortID;
 
     /** If true, use address range provided by default device.  Any
        address not handled by another port and not in default device's

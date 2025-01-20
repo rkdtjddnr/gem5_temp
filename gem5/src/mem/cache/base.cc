@@ -349,15 +349,18 @@ BaseCache::init()
             cpu_port->sendRangeChange();
             forwardSnoops = forwardSnoops || cpu_port->isSnooping();
         }
+    } else if (isIOCache && enableDTA) {
+        if (!ioSidePort->isConnected()) {
+            fatal("DTA %s is not connected to IOBus (NIC)\n", name());
+        }
+        if (!jobPort->isConnected()) {
+            fatal("DTA %s is not connected to Host\n", name());
+        }
+        jobPort->sendRangeChange(); // TODO - JM : have to check
+        forwardSnoops = false; // IOCache does not forward snoops from memSidePort to the JobPort (Same L3XBar connected to both)
     } else {
         if (!cpuSidePort.isConnected() || !memSidePort.isConnected())
             fatal("Cache ports on %s are not connected\n", name());
-        if (isIOCache && enableDTA) {
-            if (!ioSidePort->isConnected())
-                fatal("DTA %s is not connected to IOBus (NIC)\n", name());
-            if (!jobPort->isConnected())
-                fatal("DTA %s is not connected to Host\n", name());
-        }
         cpuSidePort.sendRangeChange();
         forwardSnoops = cpuSidePort.isSnooping();
     }
@@ -388,7 +391,11 @@ BaseCache::getPort(const std::string &if_name, PortID idx)
                       name(), idx);
             }
         } else {
-            return cpuSidePort;
+            if (isIOCache && enableDTA) {
+                panic("IOCache %s does not have a CPU-side port\n", name());
+            } else {
+                return cpuSidePort;
+            }
         }
     } else if (if_name == "io_side_port") {
         return *ioSidePort;
@@ -638,7 +645,13 @@ BaseCache::handleUncacheableWriteResp(PacketPtr pkt)
         assert(pkt->cpu_side_port_id < cpuSidePortList.size());
         cpuSidePortList[pkt->cpu_side_port_id]->schedTimingResp(pkt,
                                                                 completion_time);
+    } else if (isIOCache && pkt->isFromDTA()) {
+        // This packet is from DTA, send it to DTA
+        // Find the worker by using sender state
+        assert(dta != nullptr);
+        dta->recvTimingRespfromCache(pkt, completion_time);
     } else {
+        assert(!(isIOCache && enableDTA));
         cpuSidePort.schedTimingResp(pkt, completion_time); 
     }
 }
@@ -937,6 +950,9 @@ BaseCache::functionalAccess(PacketPtr pkt, bool from_cpu_side)
         for (const auto& cpu_port : cpuSidePortList) {
             done = done || cpu_port->trySatisfyFunctional(pkt);
         }
+    } else if (isIOCache && enableDTA) {
+      // TODO - JM: have to check   
+        done = done || jobPort->trySatisfyFunctional(pkt);
     } else {
         done = done || cpuSidePort.trySatisfyFunctional(pkt);
     }
@@ -967,10 +983,9 @@ BaseCache::functionalAccess(PacketPtr pkt, bool from_cpu_side)
                 if (cpuSidePortList[cpu_port_id]->isSnooping()) {
                     cpuSidePortList[cpu_port_id]->sendFunctionalSnoop(pkt);
                 }
+            } else if (isIOCache && enableDTA) {
+                assert(0 && "If this happen, we need to implement the DTA functional access");
             } else if (cpuSidePort.isSnooping()) {
-                if (isIOCache && enableDTA) {
-                    assert(0 && "If this happen, we need to implement the DTA functional access");
-                }
                 // if it came from the memory side, it must be a snoop request
                 // and we should only forward it if we are forwarding snoops
                 cpuSidePort.sendFunctionalSnoop(pkt);
@@ -3119,25 +3134,49 @@ DTA::recvTimingReq(PacketPtr pkt)
         if (rxJobSubmissionQueue.size() >= submissionQueueMaxSize) {
             return false;
         } else {
-            // Make copy of the pkt and push the copy to the submission queue
-            // The original pkt will be responded to CPU
-            PacketPtr pkt_copy = new Packet(pkt, false, true);
-            assert(pkt_copy->isRXJobReq());
-            rxJobSubmissionQueue.push_back(pkt_copy);
-            // Restart the clock if it is not running
-            rxTick = true;
-            if (!tickEvent.scheduled()) {
-                restartClock();
+            // Have to check the second uint64_t value of the packet is less than the 1024 if the rxContext is not valid
+            // Because, checkpoint can be made during sending the job packet from the DPDK.
+            // Have to begin with the new job request if the rxContext is not valid
+            bool isValidJob = true; // If dtaRXContext is valid, we don't need to check the second uint64_t value
+            if (!dtaRXContext.valid) {
+                // Check the packet's second uint64_t value
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                // Parse the job request from CPU
+                data = reinterpret_cast<uint8_t*>(data) + sizeof(Addr);
+                uint64_t nb_pkts_64bit = *(uint64_t*)data;
+                if (nb_pkts_64bit > 1024) {
+                    isValidJob = false;
+                    printf("The second uint64_t value of the RX job request is greater than 1024. It is not valid. So we will discard\n");
+                } else {
+                    isValidJob = true;
+                    printf("The second uint64_t value of the RX job request is less than 1024. It is valid. So we will start the new job\n");
+                }
             }
-            DPRINTF(DDIO, "Received RX job request from CPU\n");
+
+            if (isValidJob) {
+                // Only do this when the received packet is the valid job
+                printf("Receive the RX job request from CPU\n");
+                // Make copy of the pkt and push the copy to the submission queue
+                // The original pkt will be responded to CPU
+                PacketPtr pkt_copy = new Packet(pkt, false, true);
+                assert(pkt_copy->isRXJobReq());
+                rxJobSubmissionQueue.push_back(pkt_copy);
+                // Restart the clock if it is not running
+                rxTick = true;
+                if (!tickEvent.scheduled()) {
+                    restartClock();
+                }
+                DPRINTF(DDIO, "Received RX job request from CPU\n");
+            }
 
             // Make response packet and send it to CPU
             pkt->makeResponse();
             Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
             pkt->headerDelay = pkt->payloadDelay = 0;
-            const Tick delay = receive_delay + Tick(1);      // Just assume 1 cycle is needed to send the response
+            const Tick delay = receive_delay + clockPeriod() * 1;      // Just assume 1 cycle is needed to send the response
 
-            ioCache->sendTimingResptoHost(pkt, delay);
+            assert(ioCache != nullptr);
+            ioCache->sendTimingResptoHost(pkt, curTick() + delay);
             DPRINTF(DDIO, "Responded RX job request to CPU\n");
 
             return true;
@@ -3162,9 +3201,10 @@ DTA::recvTimingReq(PacketPtr pkt)
             pkt->makeResponse();
             Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
             pkt->headerDelay = pkt->payloadDelay = 0;
-            const Tick delay = receive_delay + Tick(1);      // Just assume 1 cycle is needed to send the response
+            const Tick delay = receive_delay + clockPeriod() * 1;      // Just assume 1 cycle is needed to send the response
 
-            ioCache->sendTimingResptoHost(pkt, delay);
+            assert(ioCache != nullptr);
+            ioCache->sendTimingResptoHost(pkt, curTick() + delay);
             DPRINTF(DDIO, "Responded TX job request to CPU\n");
 
             return true;
@@ -3268,6 +3308,8 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
             dtaRXContext.num_free_request_in_NIC = 0;
             dtaRXContext.lastDTARXWorker = 0;
             dtaRXContext.n_mbuf_addr_received = 0;
+            dtaRXContext.n_extra_cxl_req_needed = 0;
+            dtaRXContext.n_extra_cxl_req_received = 0;
             dtaRXContext.n_desc_write_completed = 0;
             dtaRXContext.n_cacheline_idx_write_completed = 0;
             dtaRXContext.RXDescMap.clear();
@@ -3378,6 +3420,7 @@ DTA::sendTimingReqToNIC(PacketPtr pkt)
     // TODO
     // Send M2func RD/WR request to DTA
     assert(isDTAEnabled());
+    assert(ioCache != nullptr);
     return ioCache->sendTimingReqtoNIC(pkt);
 }
 
@@ -3386,6 +3429,7 @@ DTA::sendAtomicReqToNIC(PacketPtr pkt)
 {
     // Send M2func RD/WR request to DTA
     assert(isDTAEnabled());
+    assert(ioCache != nullptr);
     ioCache->sendAtomicReqtoNIC(pkt);
 
     recvTimingRespfromNIC(pkt);
@@ -3396,7 +3440,14 @@ DTA::checkThreshold()
 {
     // Check the threshold for the number of requests that is sent to NIC, but the response is not received yet - If true, have to send new request
     if (dtaRXContext.valid) {
-        if (dtaRXContext.num_free_request_in_NIC < getCxlReqThreshold()) {
+        // num_free_request_in_NIC should be smaller and equal to the (dtaRXContext.n_mbuf_addr_received - dtaRXContext.n_recv)
+        // Also, have to consider the extra CXL requests that are needed to receive the remaining part of the ethernet packet (dtaRXContext.n_extra_cxl_req_needed - dtaRXContext.n_extra_cxl_req_received)
+        // Because, if the number of requests is greater, then even though the response is coming, the mbuf address is not yet received from the host!
+        assert(dtaRXContext.n_extra_cxl_req_needed >= dtaRXContext.n_extra_cxl_req_received);
+        uint32_t num_extra_cxl_req_needed = dtaRXContext.n_extra_cxl_req_needed - dtaRXContext.n_extra_cxl_req_received;
+        assert(dtaRXContext.n_mbuf_addr_received >= dtaRXContext.n_recv);
+        uint32_t num_cxl_req_needed = dtaRXContext.n_mbuf_addr_received - dtaRXContext.n_recv;
+        if (dtaRXContext.num_free_request_in_NIC < (num_cxl_req_needed + num_extra_cxl_req_needed)) {
             return true; // Send new request
         } else {
             return false; // Do not send new request
@@ -3412,6 +3463,7 @@ DTA::sendRequestToNIC()
     
     // Check the CXL.mem RD/WR request queue
     if (cxlReqQueue.size() > 0) {
+        assert(ioCache != nullptr);
         if (ioCache->system->isTimingMode()) {
             PacketPtr pkt = cxlReqQueue.front();
             bool success = sendTimingReqToNIC(pkt);
@@ -3455,6 +3507,8 @@ DTA::sendRequestToNIC()
         PacketPtr pkt = createDTARequest();
         if (cxlReqQueue.size() < cxlReqQueueMaxSize) {
             cxlReqQueue.push_back(pkt);
+            assert(dtaRXContext.valid);
+            dtaRXContext.num_free_request_in_NIC++;
         } else {
             // Drop the packet
             delete pkt;
@@ -3517,8 +3571,8 @@ DTA::checkRXJobCompletion()
                     assert(dtaRXContext.RXDescMap.find(dtaRXContext.mbuf_addr[i]) != dtaRXContext.RXDescMap.end());
                     assert(dtaRXContext.RXDescMap[dtaRXContext.mbuf_addr[i]] != nullptr);
                     RXDescriptor *desc = dtaRXContext.RXDescMap[dtaRXContext.mbuf_addr[i]];
-                    assert((i * sizeof(RXDescriptor)) + sizeof(RXDescriptor) <= cacheLineSize);
-                    memcpy(data + (i * sizeof(RXDescriptor)), desc, sizeof(RXDescriptor));
+                    uint32_t data_offset = (i - dtaRXContext.n_desc_write_completed) * sizeof(RXDescriptor);
+                    memcpy(data + data_offset, desc, sizeof(RXDescriptor));
                 }
                 
                 // Make the Request
@@ -3526,12 +3580,14 @@ DTA::checkRXJobCompletion()
                 RequestPtr req = std::make_shared<Request>(writeAddress, cacheLineSize, 0, requestorId);
                 req->taskId(context_switch_task_id::DMA);
                 PacketPtr pkt = new Packet(req, MemCmd::WriteReq);
+                pkt->allocate();
                 pkt->setData(data);
                 pkt->setFromDTA();
 
                 delete[] data;
 
                 // Send the packet through iocache (The name may be confused, because of the term "recv", but in the point of view of iocache, it receives the packet from DTA)
+                assert(ioCache != nullptr);
                 bool success = ioCache->recvTimingReqfromDTA(pkt);
                 if (success) {
                     dtaRXContext.n_desc_write_completed += num_desc_to_write;
@@ -3568,11 +3624,13 @@ DTA::checkRXJobCompletion()
                 memset(data, 0, cacheLineSize);
                 uint32_t completion_id = dtaRXContext.n_recv;
                 memcpy(data, &completion_id, sizeof(uint32_t));
+                pkt->allocate();
                 pkt->setData(data);
                 pkt->setFromDTA();
 
                 delete[] data;
 
+                assert(ioCache != nullptr);
                 bool success = ioCache->recvTimingReqfromDTA(pkt);
                 if (success) {
                     // Reset the RX context
@@ -3626,12 +3684,14 @@ DTA::checkTXJobCompletion()
             memset(data, 0, flitSize);
             uint32_t completion_id = dtaTXContext.n_sent;
             memcpy(data, &completion_id, sizeof(uint32_t));
+            pkt->allocate();
             pkt->setData(data);
             pkt->setFromDTA();
 
             delete[] data;           
 
             // Send the packet through iocache
+            assert(ioCache != nullptr);
             bool success = ioCache->recvTimingReqfromDTA(pkt);
             if (success) {               
                 // Reset the TX context
@@ -3658,6 +3718,7 @@ DTA::createDTARequest()
     // Make Request
     RequestPtr req = std::make_shared<Request>(M2funcRXAddr, flitSize, 0, requestorId);
     PacketPtr pkt = new Packet(req, MemCmd::ReadReq);
+    pkt->allocate(); // Allocate the data buffer
     
     return pkt;
 }
@@ -3670,10 +3731,6 @@ DTA::allocDTARequest(PacketPtr pkt)
     assert(isDTAEnabled());
     assert(dtaRequestTracker.find(pkt->req) == dtaRequestTracker.end());
     dtaRequestTracker[pkt->req] = false;
-
-    if (dtaRXContext.valid) {
-        dtaRXContext.num_free_request_in_NIC++;
-    }
 }
 
 bool 
@@ -3757,7 +3814,16 @@ DTA::recvTimingRespfromNIC(PacketPtr pkt)
                 delete pkt;
             } else {
                 // TODO - maybe have to check the queue size
-                workerWaitingQueue.push_back(pkt);      
+                workerWaitingQueue.push_back(std::pair<PacketPtr, uint32_t>(pkt, dtaRXContext.n_recv)); 
+
+                if (pkt->isDdioHeader()) {
+                    // Only increase the n_recv when the packet is the header of the ethernet packet
+                    // If not, it means one ethernet packet is not fully received from NIC (partially received in CXL flit size unit)
+                    dtaRXContext.n_recv++; 
+                } else {
+                    // This is the continuation of the previous packet
+                    dtaRXContext.n_extra_cxl_req_received++;
+                }     
 
                 // If tickEvent is not running, start the clock
                 rxTick = true;
@@ -3857,15 +3923,16 @@ DTA::allocateWorkerFromQueue()
 {
     // Allocate worker from the queue
     if (workerWaitingQueue.size() > 0) {
-        PacketPtr respPkt = workerWaitingQueue.front();
+        PacketPtr respPkt = workerWaitingQueue.front().first;
+        uint32_t n_recv = workerWaitingQueue.front().second;
         // Find free DTARXWorker or DTARXWorker waiting new CXL.mem response
         DTARXWorker* worker = findDTARXWorker(respPkt);
         if (worker != nullptr) {
             if (worker->isFree()) {
                 // If free, set new RX packet setting 
-                worker->allocateWorker(dtaRXContext.mbuf_addr[dtaRXContext.n_recv]);
+                assert(dtaRXContext.mbuf_addr[n_recv] != 0);
+                worker->allocateWorker(dtaRXContext.mbuf_addr[n_recv]);
                 //Process the response ASAP, to set the payload size !!! Must do that at this point
-                dtaRXContext.n_recv++; // Only increase the n_recv when the worker is free. If worker is not free, it means one ethernet packet is not fully received from NIC (partially received in CXL flit size unit)
             } 
             worker->processDTAResponse(respPkt);
 
@@ -3881,10 +3948,10 @@ DTA::allocateWorkerFromQueue()
 void
 DTA::DTARXWorker::processDTAResponse(PacketPtr currPkt)
 {
-    // Process the response from DTA
+    // Process the response from NIC
     // return true: done processing one ethernet packet, false: need to receive more CXL.mem responses
     assert(dta->isDTAEnabled());
-    assert(payloadWCBuffer == nullptr);
+    assert(payloadWCBuffer != nullptr);
     assert(currProcessingPkt == nullptr);
     currProcessingPkt = currPkt;
     // Parsing descriptor and payload from the response
@@ -3905,6 +3972,10 @@ DTA::DTARXWorker::processDTAResponse(PacketPtr currPkt)
         // currPayloadSize has to be modified to exclude the descriptor part
         payloadInCurrentPkt -= sizeof(RXDescriptor);
         receivedPayloadSize += payloadInCurrentPkt;
+
+        // Calculate the extra needed CXL.req to receive the full ethernet packet
+        uint32_t extraCxlReq = ((payloadSize - receivedPayloadSize) + dta->flitSize - 1) / dta->flitSize;
+        dta->dtaRXContext.n_extra_cxl_req_needed += extraCxlReq;
 
         // Copy payload part to payloadWCBuffer
         assert(currentPayloadWCBufferSize == 0);
@@ -3998,6 +4069,7 @@ DTA::DTARXWorker::makePacket()
         }
     }
 
+    pkt->allocate(); // Allocate the data buffer
     pkt->setRXDMA();
     pkt->setWorkerID(workerID);
     pkt->setFromDTA();
@@ -4017,7 +4089,8 @@ bool
 DTA::DTARXWorker::sendDMA(PacketPtr pkt)
 {
     // Send DMA request - exploit existing iocache's DMA functions
-    dta->ioCache->recvTimingReqfromDTA(pkt);
+    assert(dta->ioCache != nullptr);
+    return dta->ioCache->recvTimingReqfromDTA(pkt);
 }
 
 void
@@ -4184,6 +4257,7 @@ DTA::DTATXWorker::makePacket()
         req->taskId(context_switch_task_id::DMA);
         PacketPtr pkt = new Packet(req, MemCmd::ReadReq);
 
+        pkt->allocate(); // Allocate the data buffer
         pkt->setTXDMA();
         pkt->setWorkerID(workerID);
         pkt->setFromDTA();
@@ -4205,7 +4279,8 @@ bool
 DTA::DTATXWorker::sendDMA(PacketPtr pkt)
 {   
     // Send DMA request - exploit existing iocache's DMA functions
-    dta->ioCache->recvTimingReqfromDTA(pkt);
+    assert(dta->ioCache != nullptr);
+    return dta->ioCache->recvTimingReqfromDTA(pkt);
 }
 
 void  
@@ -4302,6 +4377,7 @@ DTA::DTATXWorker::notifyWorkerCompletion()
             
             RequestPtr req = std::make_shared<Request>(dta->M2funcTXAddr, size, 0, dta->requestorId);
             PacketPtr pkt = new Packet(req, MemCmd::WriteReq);
+            pkt->allocate(); // Allocate the data buffer
             pkt->setData(ethernetPkt + i);
 
             if (i == 0) {
