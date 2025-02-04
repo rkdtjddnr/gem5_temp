@@ -3477,7 +3477,7 @@ IGbE::TxM2funcContext::writeM2funcPacket(PacketPtr pkt)
     /**
      * Receive packet from the host (TX) and push it to the m2funcTxFifo
      */
-    assert(pkt->getSize() == igbe->flitSize);
+    assert(pkt->getSize() <= igbe->flitSize);
 
     m2funcTxFifoEntry entry;
     entry.packetLength = pkt->getSize();

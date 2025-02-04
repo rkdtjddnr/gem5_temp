@@ -13,6 +13,7 @@
 #include <sys/queue.h>
 #include <sys/stat.h>
 
+#include <gem5/m5ops.h>
 #include <rte_common.h>
 #include <rte_byteorder.h>
 #include <rte_log.h>
@@ -67,8 +68,12 @@ pkt_burst_mac_swap(struct fwd_stream *fs)
 	nb_rx = rte_eth_rx_burst(fs->rx_port, fs->rx_queue, pkts_burst,
 				 nb_pkt_per_burst);
 	inc_rx_burst_stats(fs, nb_rx);
-	if (unlikely(nb_rx == 0))
+	if (unlikely(nb_rx == 0)) {
+		// JM
+		// printf("pkt_burst_mac_swap: nb_rx == 0. So, Taking a checkpoint\n");
+		// m5_checkpoint(0, 0);
 		return;
+	}
 
 	fs->rx_packets += nb_rx;
 	txp = &ports[fs->tx_port];

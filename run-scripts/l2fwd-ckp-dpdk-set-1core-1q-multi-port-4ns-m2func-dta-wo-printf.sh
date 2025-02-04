@@ -57,7 +57,7 @@ fi
 
 GEM5_DIR=${GIT_ROOT}/gem5
 # RESOURCES=${GIT_ROOT}/resources
-RESOURCES=${GIT_ROOT}/resources-dpdk-m2func-dta
+RESOURCES=${GIT_ROOT}/resources-dpdk-m2func-dta-wo-printf
 GUEST_SCRIPT_DIR=${GIT_ROOT}/guest-scripts
 
 # parse command line arguments
@@ -116,7 +116,7 @@ while true; do
   esac
 done
 
-CKPT_DIR=${GIT_ROOT}/ckpts/"m2func-dta-"$num_nics"NIC"-$num_queues"Qs"-$GUEST_SCRIPT
+CKPT_DIR=${GIT_ROOT}/ckpts/"m2func-dta-wo-printf-"$num_nics"NIC"-$num_queues"Qs"-$GUEST_SCRIPT
 if [[ -z "$num_nics" ]]; then
   echo "Error: missing argument --num-nics" >&2
   usage
@@ -128,7 +128,7 @@ fi
 
 if [[ -n "$checkpoint" ]]; then
   # RUNDIR=${GIT_ROOT}/rundir/$num_nics"NIC-ckp"-$GUEST_SCRIPT
-  RUNDIR=${GIT_ROOT}/rundir/m2func-dta-SingleQueue/$num_nics"NIC-"$num_queues"Qs-1core-ckp-"$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/m2func-dta-wo-printf-SingleQueue/$num_nics"NIC-"$num_queues"Qs-1core-ckp-"$GUEST_SCRIPT
   setup_dirs
   echo "Taking Checkpoint for NICs=$num_nics Queues=$num_queues" >&2
   GEM5TYPE="fast"
@@ -150,7 +150,7 @@ else
     usage
   fi
   ((RATE = PACKET_RATE * PACKET_SIZE * 8 / 1024 / 1024 / 1024))
-  RUNDIR=${GIT_ROOT}/rundir/m2func-dta-dpdk-set-1core-l3-2port-4ns/$num_nics"NIC-"$num_queues"Qs-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/m2func-dta-wo-printf-dpdk-set-1core-l3-2port-4ns/$num_nics"NIC-"$num_queues"Qs-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
   setup_dirs
 # /dpdk-testpmd-freq-scaling-test
   echo "Running NICs=$num_nics at $RATE GBPS" >&2

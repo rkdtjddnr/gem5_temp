@@ -358,6 +358,7 @@ class BaseCache : public ClockedObject
         BaseCache *cache;
         PortID id;
         std::string label;
+        bool waitingOnRetry;
 
       protected:
         bool recvTimingResp(PacketPtr pkt) override;
@@ -366,9 +367,12 @@ class BaseCache : public ClockedObject
         
 
       public:
+        bool isWaitingOnRetry() const { return waitingOnRetry; }
+        void clearWaitingOnRetry() { waitingOnRetry = false; }
+        void setWaitingOnRetry() { waitingOnRetry = true; }
         IoSidePort(const std::string &_name, BaseCache *_cache,
                     const std::string &_label, PortID _id = InvalidPortID)
-            : RequestPort(_name, _cache, _id), cache(_cache), label(_label) { }
+            : RequestPort(_name, _cache, _id), cache(_cache), label(_label), waitingOnRetry(false) { }
     };
 
     class JobPort : public QueuedResponsePort
@@ -1482,12 +1486,27 @@ class BaseCache : public ClockedObject
     // JM
     bool sendTimingReqtoNIC(PacketPtr pkt) {
         assert(isIOCache);
-        ioSidePort->sendTimingReq(pkt);
+        return ioSidePort->sendTimingReq(pkt);
     }
 
     void sendAtomicReqtoNIC(PacketPtr pkt) {
         assert(isIOCache);
         ioSidePort->sendAtomic(pkt);
+    }
+
+    bool isIOPortWaitingOnRetry() {
+        assert(isIOCache);
+        return ioSidePort->isWaitingOnRetry();
+    }
+
+    void setIOPortWaitingOnRetry() {
+        assert(isIOCache);
+        ioSidePort->setWaitingOnRetry();
+    }
+
+    void clearIOPortWaitingOnRetry() {
+        assert(isIOCache);
+        ioSidePort->clearWaitingOnRetry();
     }
 
     void sendTimingResptoHost(PacketPtr pkt, Tick when) {
@@ -1805,6 +1824,9 @@ class DTA : public ClockedObject
         std::map<Addr, bool> RXCompleteMap; // RXCompleteMap[mbuf_addr] = true if the mbuf_addr's DMA is completed - job completion check condition
     } dtaRXContext;
 
+    uint32_t invalidRXJobRequestCount = 0; // For test
+    uint32_t validRXJobRequestCount = 0; // For test
+
     struct DTATXContext {
         bool valid; // if the context is valid
         Addr completion_addr; // DTA will write the completion status to this address to notify CPU
@@ -1816,6 +1838,7 @@ class DTA : public ClockedObject
         uint32_t n_mbuf_addr_received; // the number of mbuf address received - to track the job request managing
         std::map<Addr, TXDescriptor> descPayloadDMAWaiting; // descriptor map after DMA from desc_addr (mbuf_addr, descriptor)
         std::map<Addr, TXDescriptor> descPayloadDMAAssigned; // descriptor map that is assigned to the worker for the DMA of payload (mbuf_addr, descriptor)
+        std::map<uint64_t, TXDescriptor> descWaitingMbufAddr; // descriptor map that is waiting for the mbuf_addr (index within nb_pkts, descriptor)
         std::map<Addr, bool> TXCompleteMap; // TXCompleteMap[mbuf_addr] = true if the mbuf_addr's DMA is completed - job completion check condition
     } dtaTXContext;
 
@@ -1910,9 +1933,11 @@ class DTA : public ClockedObject
                 payloadSize = 0;
                 receivedPayloadSize = 0;
                 allPayloadReceived = false;
+                assert(descriptor == nullptr);
                 descriptor = nullptr;
                 currentPayloadWCBufferSize = 0;
                 payloadWCBuffer = new uint8_t[16384];
+                memset(payloadWCBuffer, 0, 16384);
                 sentDMASize = 0;
                 dmaTransferredSize = 0;
                 dmaReady = false;
@@ -1962,9 +1987,9 @@ class DTA : public ClockedObject
             void handleDMACompletion(PacketPtr pkt); // Handle DMA completion - exploit existing iocache's DMA functions
             bool DTAWork();// DTA work function - call above functions
             void setDescriptor(RXDescriptor* desc, Addr mbuf_addr) {
-                // Set the RXDescMap 
                 assert(desc != nullptr);
-                dta->dtaRXContext.RXDescMap[mbuf_addr] = desc;
+                RXDescriptor* desc_copy = new RXDescriptor(*desc); // deep copy
+                dta->dtaRXContext.RXDescMap[mbuf_addr] = desc_copy;
             }
             void setCachelineSize(uint32_t size) { cacheLineSize = size; }
         private:
@@ -2180,6 +2205,7 @@ class DTA : public ClockedObject
         dtaTXContext.n_mbuf_addr_received = 0;
         dtaTXContext.descPayloadDMAWaiting.clear();
         dtaTXContext.descPayloadDMAAssigned.clear();
+        dtaTXContext.descWaitingMbufAddr.clear();
         dtaTXContext.TXCompleteMap.clear();
     }
 

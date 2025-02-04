@@ -529,6 +529,9 @@ uint16_t eth_em_recv_pkts_m2func(void *rx_queue, struct rte_mbuf **rx_pkts,
 uint16_t eth_em_recv_pkts_m2func_dta(void *rx_queue, struct rte_mbuf **rx_pkts,
 		uint16_t nb_pkts);
 
+uint16_t eth_em_recv_pkts_m2func_poll_test(void *rx_queue,
+		struct rte_mbuf **rx_pkts, uint16_t nb_pkts);
+
 uint16_t eth_em_recv_scattered_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		uint16_t nb_pkts);
 

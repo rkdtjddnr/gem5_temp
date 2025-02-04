@@ -3071,6 +3071,8 @@ BaseCache::IoSidePort::recvReqRetry()
 {
     // call the dta's sendTimingReqToNIC function to retry sending the request to NIC
     assert((cache->dta) != nullptr);
+    assert(waitingOnRetry);
+    waitingOnRetry = false;
     cache->dta->sendRequestToNIC();
 }
 
@@ -3146,10 +3148,12 @@ DTA::recvTimingReq(PacketPtr pkt)
                 uint64_t nb_pkts_64bit = *(uint64_t*)data;
                 if (nb_pkts_64bit > 1024) {
                     isValidJob = false;
-                    printf("The second uint64_t value of the RX job request is greater than 1024. It is not valid. So we will discard\n");
+                    invalidRXJobRequestCount += 1;
+                    printf("The second uint64_t value of the RX job request is greater than 1024. It is not valid. So we will discard. The number of invalid RX job request is %d\n", invalidRXJobRequestCount);
                 } else {
                     isValidJob = true;
-                    printf("The second uint64_t value of the RX job request is less than 1024. It is valid. So we will start the new job\n");
+                    validRXJobRequestCount += 1;
+                    printf("The second uint64_t value of the RX job request is less than 1024. It is valid. So we will start the new job. The number of valid RX job request is %d\n", validRXJobRequestCount);
                 }
             }
 
@@ -3189,7 +3193,7 @@ DTA::recvTimingReq(PacketPtr pkt)
             // The original pkt will be responded to CPU
             PacketPtr pkt_copy = new Packet(pkt, false, true);
             assert(pkt_copy->isTXJobReq());
-            txJobSubmissionQueue.push_back(pkt);
+            txJobSubmissionQueue.push_back(pkt_copy);
             // Restart the clock if it is not running
             txTick = true;
             if (!tickEvent.scheduled()) {
@@ -3376,6 +3380,7 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
             dtaTXContext.n_sent = 0;
             dtaTXContext.descPayloadDMAAssigned.clear();
             dtaTXContext.descPayloadDMAWaiting.clear();
+            dtaTXContext.descWaitingMbufAddr.clear();
             dtaTXContext.TXCompleteMap.clear();
             dtaTXContext.n_desc_ready = 0; 
 
@@ -3402,9 +3407,17 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
             // Parse the job request from CPU
             n_job_packet_received = std::min(restJobPacketNumMbufAddr, dtaTXContext.nb_pkts - dtaTXContext.n_mbuf_addr_received);
             for (uint32_t i = 0; i < n_job_packet_received; i++) {
-                dtaTXContext.mbuf_addr[dtaTXContext.n_mbuf_addr_received] = *(Addr*)data;
-                dtaTXContext.TXCompleteMap[dtaTXContext.mbuf_addr[dtaTXContext.n_mbuf_addr_received]] = false;
+                Addr mbuf_addr = *(Addr*)data;
+                dtaTXContext.mbuf_addr[dtaTXContext.n_mbuf_addr_received] = mbuf_addr;
+                dtaTXContext.TXCompleteMap[mbuf_addr] = false;
                 data += sizeof(Addr);
+                // Check dtaTXContext.descWaitingMbufAddr with n_mbuf_addr_received to move the TXDesc to the dtaTXContext.descPayloadDMAWaiting
+                if (dtaTXContext.descWaitingMbufAddr.find(dtaTXContext.n_mbuf_addr_received) != dtaTXContext.descWaitingMbufAddr.end()) {
+                    assert(dtaTXContext.descPayloadDMAWaiting.find(mbuf_addr) == dtaTXContext.descPayloadDMAWaiting.end());
+                    TXDescriptor _desc = dtaTXContext.descWaitingMbufAddr[dtaTXContext.n_mbuf_addr_received];
+                    dtaTXContext.descPayloadDMAWaiting[mbuf_addr] = _desc;
+                    dtaTXContext.descWaitingMbufAddr.erase(dtaTXContext.n_mbuf_addr_received);
+                }
                 dtaTXContext.n_mbuf_addr_received += 1;
             }
             assert(dtaTXContext.n_mbuf_addr_received <= dtaTXContext.nb_pkts);
@@ -3460,44 +3473,52 @@ DTA::sendRequestToNIC()
 {
     // Send the request to NIC - internally call sendTimingReqToNIC
     assert(isDTAEnabled());
+    assert(ioCache != nullptr);
     
     // Check the CXL.mem RD/WR request queue
-    if (cxlReqQueue.size() > 0) {
-        assert(ioCache != nullptr);
-        if (ioCache->system->isTimingMode()) {
-            PacketPtr pkt = cxlReqQueue.front();
-            bool success = sendTimingReqToNIC(pkt);
-            if (success) {
-                if (pkt->isRead()) {
-                    // CXL RD request to read the RX data from the NIC
-                    numSentM2funcRXReq++;
-                    allocDTARequest(pkt);
-                } else if (pkt->isWrite()) {
-                    // CXL WR request to write the TX data to the NIC
-                    numSentM2funcTXReq++;
-                    if (pkt->isDdioHeader()) {
-                        dtaTXContext.n_sent++;
-                    }
-                }
-                cxlReqQueue.pop_front();
-            }
-        } else if (ioCache->system->isAtomicMode()) {
-            while (!cxlReqQueue.empty()) {
-                // Send every request in the queue to send in zero time
+    if (ioCache->isIOPortWaitingOnRetry()) {
+        // Do nothing for now. Just wait for the retry request
+    } else {
+        if (cxlReqQueue.size() > 0) {
+            assert(ioCache != nullptr);
+            if (ioCache->system->isTimingMode()) {
                 PacketPtr pkt = cxlReqQueue.front();
-                if (pkt->isRead()) {
-                    // CXL RD request to read the RX data from the NIC
-                    numSentM2funcRXReq++;
-                    allocDTARequest(pkt);
-                } else if (pkt->isWrite()) {
-                    // CXL WR request to write the TX data to the NIC
-                    numSentM2funcTXReq++;
-                    if (pkt->isDdioHeader()) {
-                        dtaTXContext.n_sent++;
+                bool success = sendTimingReqToNIC(pkt);
+                if (success) {
+                    if (pkt->isRead()) {
+                        // CXL RD request to read the RX data from the NIC
+                        numSentM2funcRXReq++;
+                        allocDTARequest(pkt);
+                    } else if (pkt->isWrite()) {
+                        // CXL WR request to write the TX data to the NIC
+                        numSentM2funcTXReq++;
+                        if (pkt->isDdioHeader()) {
+                            dtaTXContext.n_sent++;
+                        }
                     }
+                    cxlReqQueue.pop_front();
+                } else {
+                    // Have to skip the request
+                    ioCache->setIOPortWaitingOnRetry();
                 }
-                cxlReqQueue.pop_front();
-                sendAtomicReqToNIC(pkt);
+            } else if (ioCache->system->isAtomicMode()) {
+                while (!cxlReqQueue.empty()) {
+                    // Send every request in the queue to send in zero time
+                    PacketPtr pkt = cxlReqQueue.front();
+                    if (pkt->isRead()) {
+                        // CXL RD request to read the RX data from the NIC
+                        numSentM2funcRXReq++;
+                        allocDTARequest(pkt);
+                    } else if (pkt->isWrite()) {
+                        // CXL WR request to write the TX data to the NIC
+                        numSentM2funcTXReq++;
+                        if (pkt->isDdioHeader()) {
+                            dtaTXContext.n_sent++;
+                        }
+                    }
+                    cxlReqQueue.pop_front();
+                    sendAtomicReqToNIC(pkt);
+                }
             }
         }
     }
@@ -3660,28 +3681,31 @@ DTA::checkTXJobCompletion()
     if (dtaTXContext.valid) {
         assert(dtaTXContext.nb_pkts != 0);
         bool allPacketsSenttoNIC = (dtaTXContext.n_sent == dtaTXContext.nb_pkts);
-        bool allPacketsDMAed = false;
-        uint32_t numPacketsNotDMAed = 0;
-        for (uint32_t i = 0; i < dtaTXContext.nb_pkts; i++) {
-            if (dtaTXContext.TXCompleteMap[dtaTXContext.mbuf_addr[i]] == false) {
-                allPacketsDMAed = false;
-                numPacketsNotDMAed++;
-            }
-        }
-        DPRINTF(DDIO, "DTA TX completion checker: All packets sent to the NIC? %d, %d/%d packets are DMAed from the memory\n", allPacketsSenttoNIC, (dtaTXContext.nb_pkts - numPacketsNotDMAed), dtaTXContext.nb_pkts);
-
+        
         if (allPacketsSenttoNIC) {
             // For the TX, if the n_sent == nb_pkts, then all packets should be DMAed from the memory
+            bool allPacketsDMAed = true;
+            uint32_t numPacketsNotDMAed = 0;
+            for (uint32_t i = 0; i < dtaTXContext.nb_pkts; i++) {
+                assert(dtaTXContext.mbuf_addr[i] != 0);
+                assert(dtaTXContext.TXCompleteMap.find(dtaTXContext.mbuf_addr[i]) != dtaTXContext.TXCompleteMap.end());
+                if (dtaTXContext.TXCompleteMap[dtaTXContext.mbuf_addr[i]] == false) {
+                    allPacketsDMAed = false;
+                    numPacketsNotDMAed++;
+                }
+            }
+            DPRINTF(DDIO, "DTA TX completion checker: All packets sent to the NIC? %d, %d/%d packets are DMAed from the memory\n", allPacketsSenttoNIC, (dtaTXContext.nb_pkts - numPacketsNotDMAed), dtaTXContext.nb_pkts);
+
             assert(allPacketsDMAed);
 
             // Write the last completion id to the completion address
             // Make the Request
-            RequestPtr req = std::make_shared<Request>(dtaTXContext.completion_addr, flitSize, 0, requestorId);
+            RequestPtr req = std::make_shared<Request>(dtaTXContext.completion_addr, cacheLineSize, 0, requestorId);
             req->taskId(context_switch_task_id::DMA);
             PacketPtr pkt = new Packet(req, MemCmd::WriteReq);
             // Make the data
-            uint8_t *data = new uint8_t[flitSize];
-            memset(data, 0, flitSize);
+            uint8_t *data = new uint8_t[cacheLineSize];
+            memset(data, 0, cacheLineSize);
             uint32_t completion_id = dtaTXContext.n_sent;
             memcpy(data, &completion_id, sizeof(uint32_t));
             pkt->allocate();
@@ -3839,8 +3863,7 @@ DTA::recvTimingRespfromNIC(PacketPtr pkt)
         // Nothing to do now. But we can add some stats here.
         // This is the response for the TX packet write request, which is sent to the NIC
     } else {
-        printf("Error: DTA receive response. But cannot find the DTA request, pkt addr: %lx\n", pkt->req->getPaddr());
-        panic("Error: DTA receive response. But cannot find the DTA request\n");
+        // This can happen when the DTA TX response is received, but the DTA TX context is cleared (not checking the response of NIC)
     }
     
     
@@ -4179,8 +4202,8 @@ DTA::allocateDescriptorWorker()
 {   
     // For TX, have to allocate workers for descriptor DMA
     // Allocate workers for descriptor DMA
-    // Have to allocate until the nb_pkts * 4B is DMAed 
-    // Total DMA size = nb_pkts * 4B (descriptor size)
+    // Have to allocate until the nb_pkts * 8B is DMAed 
+    // Total DMA size = nb_pkts * 8B (descriptor size)
     // Worker will be allocated with cache line size (maybe 64B)
     // If no worker is available, have to wait until the worker is free
 
@@ -4302,10 +4325,17 @@ DTA::DTATXWorker::handleDMACompletion(PacketPtr pkt)
             memcpy(&dtaTXDesc, data + i * sizeof(TXDescriptor), sizeof(TXDescriptor));
             uint64_t mbufListOffset = startOffset + i;
             assert(mbufListOffset < DTA_MAX_MBUF_NUM);
-            assert(dta->dtaTXContext.mbuf_addr[mbufListOffset] != 0);
-            Addr mbufAddr = dta->dtaTXContext.mbuf_addr[mbufListOffset];
-            assert(dta->dtaTXContext.descPayloadDMAWaiting.find(mbufAddr) == dta->dtaTXContext.descPayloadDMAWaiting.end());
-            dta->dtaTXContext.descPayloadDMAWaiting[mbufAddr] = dtaTXDesc;
+            if (dta->dtaTXContext.mbuf_addr[mbufListOffset] == 0) {
+                // This can happen, when the mbuf_addr is not received yet. (Not enough job request to NIC).
+                // So, temporarily store the descriptor to the descWaitingMbufAddr with it's mbufListOffset. 
+                // When the job request is received, descWaitingMbufAddr will be checked and the descriptor will be moved to the descPayloadDMAWaiting
+                assert(dta->dtaTXContext.descWaitingMbufAddr.find(mbufListOffset) == dta->dtaTXContext.descWaitingMbufAddr.end());
+                dta->dtaTXContext.descWaitingMbufAddr[mbufListOffset] = dtaTXDesc;
+            } else {
+                Addr mbufAddr = dta->dtaTXContext.mbuf_addr[mbufListOffset];
+                assert(dta->dtaTXContext.descPayloadDMAWaiting.find(mbufAddr) == dta->dtaTXContext.descPayloadDMAWaiting.end());
+                dta->dtaTXContext.descPayloadDMAWaiting[mbufAddr] = dtaTXDesc;
+            }
         }
 
     } else if (state == workerState::PAYLOAD_PROCESSING) {
@@ -4353,6 +4383,10 @@ DTA::DTATXWorker::notifyWorkerCompletion()
         
         // Set dtaTXContext's TXCompleteMap to notify the completion
         assert(dta->dtaTXContext.TXCompleteMap.find(baseAddr) != dta->dtaTXContext.TXCompleteMap.end());
+        if (dta->dtaTXContext.TXCompleteMap[baseAddr] == true) {
+            printf("Error: TXCompleteMap[%lx] is already true\n", baseAddr);
+            fflush(stdout);
+        }
         assert(dta->dtaTXContext.TXCompleteMap[baseAddr] == false);
         dta->dtaTXContext.TXCompleteMap[baseAddr] = true;
 
@@ -4389,6 +4423,8 @@ DTA::DTATXWorker::notifyWorkerCompletion()
 
         // Delete the ethernetPkt
         delete[] ethernetPkt;
+
+        return true;
 
     }
 }
@@ -4437,6 +4473,7 @@ DTA::DTATXWorker::DTAWork()
             freeWorker();
             return false; // No need ticking
         } else {
+            // Fail to notify the worker completion - have to wait until the queue is free
             return true; // Need ticking
         }
     }
