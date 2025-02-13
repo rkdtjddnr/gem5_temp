@@ -114,6 +114,7 @@ def addNoISAOptions(parser):
     parser.add_argument("--enable-dta", action="store_true", default=False)
     parser.add_argument("--num-dta-worker", type=int, default=16)
     parser.add_argument("--cxl-req-threshold", type=int, default=128)
+    parser.add_argument("--enable-zero-copy", action="store_true", default=False)
     # For all loadgens:
     parser.add_argument("--num-loadgens", type=int, default=0)
     parser.add_argument("--loadgen-type", type=str, default="Simple")

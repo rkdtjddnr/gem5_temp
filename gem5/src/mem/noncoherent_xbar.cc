@@ -153,6 +153,14 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     DPRINTF(NoncoherentXBar, "recvTimingReq: src %s %s 0x%x\n",
             src_port->name(), pkt->cmdString(), pkt->getAddr());
 
+    // For LOG
+    if (pkt->getAddr() == 1073752256) {
+        printf("[LOG] %llu, IOXBAR, %s, 0, RX_RD_REQ\n", curTick(), pkt->print().c_str());
+    }
+    if (pkt->getAddr() == 1073756352) {
+        printf("[LOG] %llu, IOXBAR, %s, 0, TX_WR_REQ\n", curTick(), pkt->print().c_str());
+    }
+
     // store size and command as they might be modified when
     // forwarding the packet
     unsigned int pkt_size = pkt->hasData() ? pkt->getSize() : 0;
@@ -273,6 +281,15 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
 
     DPRINTF(NoncoherentXBar, "recvTimingResp: src %s %s 0x%x\n",
             src_port->name(), pkt->cmdString(), pkt->getAddr());
+
+    // For LOG
+    if (pkt->getAddr() == 1073752256) {
+        printf("[LOG] %llu, IOXBAR, %s, 0, RX_RD_RESP\n", curTick(), pkt->print().c_str());
+    }
+    if (pkt->getAddr() == 1073756352) {
+        printf("[LOG] %llu, IOXBAR, %s, 0, TX_WR_RESP\n", curTick(), pkt->print().c_str());
+    }
+
 
     // store size and command as they might be modified when
     // forwarding the packet

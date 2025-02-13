@@ -2906,13 +2906,57 @@ IGbE::RxM2funcContext::rxM2funcStateMachine()
         if (m2funcCXLReqBuf.empty()) {
             DPRINTF(EthernetDpdk, "RXM2func[%d]: No CXL request to process\n", queueID);
         } else {
-            if (!m2funcRxFifo.empty()) {
-                DPRINTF(EthernetDpdk, "RXM2func[%d]: Processing CXL request. Because m2funcRxFifo is not empty\n", queueID);
-                PacketPtr cxlReq = popCXLReqBuf();
-                readM2funcPacket(cxlReq);
-                DPRINTF(EthernetDpdk, "RXM2func[%d]: CXL request processed & Make a response using data in the m2funcRxFifo. Pop out from m2funcCXLReqBuf and return to DTA\n", queueID);
-                DPRINTF(EthernetDpdk, "Current free CXLReqBuf: %ld, numCXLReq: %ld\n", numFreeCXLReq, numCXLReq);
-                sendCXLResp(cxlReq);
+            // If m2funcCXLReqBuf is not empty, we have to check dtaRXJobSuccess map to see if the job is already sent to DTA with zero packet or not
+            // If it is already sent as zeroed packet (map is false), we have to skip the process and make a response with zero packet
+            // If it is already sent as non-zeroed packet (map is true), we have to process the packet and make a response with the data in the m2funcRxFifo. 
+              // So, in this case, if m2funcRxFifo is empty, we have to wait until the next RX packet comes from ethernet.
+            // If dtaRXJobSuccess is not found in the map, we have to check m2funcRxFifo. If it is empty, set the map with false and make a response with zero packet
+            // If m2funcRxFifo is not empty, set the map with true and process the packet and make a response with the data in the m2funcRxFifo
+            
+            PacketPtr cxlReq = m2funcCXLReqBuf.front();
+            if (dtaRXJobSuccess.find(cxlReq->getJobID()) == dtaRXJobSuccess.end()) {
+                if (m2funcRxFifo.empty()) {
+                    DPRINTF(EthernetDpdk, "RXM2func[%d]: No packet to process. Set dtaRXJobSuccess with false & Make zeroed packet\n", queueID);
+                    // printf("RXM2func[%d]: No packet to process. Set dtaRXJobSuccess with false & Make zeroed packet for job id: %llu\n", queueID, cxlReq->getJobID());
+                    dtaRXJobSuccess[cxlReq->getJobID()] = false;
+                    popCXLReqBuf();
+                    makeZeroedResponse(cxlReq);
+                    sendCXLResp(cxlReq);
+                } else {
+                    if (!isLoadGenStarted) {
+                        isLoadGenStarted = true;
+                        printf("RXM2func[%d]: LoadGen started at %ld\n", queueID, curTick());
+                    }
+                    DPRINTF(EthernetDpdk, "RXM2func[%d]: Received RX eth. packet. Set dtaRXJobSuccess with true & Make a response for job id: %llu\n", queueID, cxlReq->getJobID());
+                    // printf("RXM2func[%d]: Received RX eth. packet. Set dtaRXJobSuccess with true & Make a response for job id: %llu\n", queueID, cxlReq->getJobID());
+                    dtaRXJobSuccess[cxlReq->getJobID()] = true;
+                    popCXLReqBuf();
+                    readM2funcPacket(cxlReq);
+                    DPRINTF(EthernetDpdk, "RXM2func[%d]: CXL request processed & Make a response using data in the m2funcRxFifo. Pop out from m2funcCXLReqBuf and return to DTA\n", queueID);
+                    DPRINTF(EthernetDpdk, "Current free CXLReqBuf: %ld, numCXLReq: %ld\n", numFreeCXLReq, numCXLReq);
+                    sendCXLResp(cxlReq);
+                }
+            } else {
+                if (dtaRXJobSuccess[cxlReq->getJobID()]) {
+                    if (!m2funcRxFifo.empty()) {
+                        DPRINTF(EthernetDpdk, "RXM2func[%d]: Processing CXL request with m2funcRxFifo. Because dtaRXJobSuccess[%llu] is true\n", queueID, cxlReq->getJobID());
+                        // printf("RXM2func[%d]: Processing CXL request with m2funcRxFifo. Because dtaRXJobSuccess[%llu] is true\n", queueID, cxlReq->getJobID());
+                        popCXLReqBuf();
+                        readM2funcPacket(cxlReq);
+                        DPRINTF(EthernetDpdk, "RXM2func[%d]: CXL request processed & Make a response using data in the m2funcRxFifo. Pop out from m2funcCXLReqBuf and return to DTA\n", queueID);
+                        DPRINTF(EthernetDpdk, "Current free CXLReqBuf: %ld, numCXLReq: %ld\n", numFreeCXLReq, numCXLReq);
+                        sendCXLResp(cxlReq);
+                    } else {
+                        // printf("RXM2func[%d]: No packet to process. But, dtaRXJobSuccess[%llu] is true. So wait until the next RX packet comes from ethernet\n", queueID, cxlReq->getJobID());
+                    }
+                } else {
+                    DPRINTF(EthernetDpdk, "RXM2func[%d]: No packet to process. Because dtaRXJobSuccess[%llu] is false. So Make Zeroed packet\n", queueID, cxlReq->getJobID());
+                    // printf("RXM2func[%d]: No packet to process. Because dtaRXJobSuccess[%llu] is false. So Make Zeroed packet\n", queueID, cxlReq->getJobID());
+                    popCXLReqBuf();
+                    makeZeroedResponse(cxlReq);
+                    sendCXLResp(cxlReq);
+                }
+
             }
         }
     }
@@ -3059,6 +3103,63 @@ IGbE::RxM2funcContext::readM2funcPacket(PacketPtr pkt)
         }
 
     }
+}
+
+void 
+IGbE::RxM2funcContext::makeZeroedResponse(PacketPtr pkt)
+{
+    assert(pkt->getSize() == igbe->flitSize);
+    DPRINTF(EthernetDpdk, "RXM2func[%d]: No packet to read! set packet with size: %d\n", queueID, igbe->flitSize);
+    // printf("RXM2func[%d]: No packet to read! set packet with size: %d\n", queueID, igbe->flitSize);
+    // Make DD bit 0 in the descriptor and set the packet's data to 0
+    uint8_t *cxl_packet = new uint8_t[igbe->flitSize];
+    memset(cxl_packet, 0, igbe->flitSize);
+    RxM2funcDesc rxDesc;
+    unsigned desc_len = 8;
+    switch (igbe->regs.srrctl_array[queueID].desctype()) {
+        case RXDT_LEGACY:
+        {
+            desc_len = 8;
+            rxDesc.legacy.len = htole(0);
+            rxDesc.legacy.csum = htole(0);
+            rxDesc.legacy.status = htole(0);
+            rxDesc.legacy.errors = htole(0);
+            rxDesc.legacy.vlan = htole(0);
+
+            memcpy(cxl_packet, &rxDesc.legacy, (size_t) desc_len);
+            break;
+        }
+        case RXDT_ADV_ONEBUF:
+        case RXDT_ADV_SPLIT_A:
+        { 
+            desc_len = 16;
+            rxDesc.adv_wb.status = htole(0); // Set DD bit to 0
+            rxDesc.adv_wb.rss_type = htole(0);
+            rxDesc.adv_wb.pkt_type = htole(0);
+            rxDesc.adv_wb.__reserved1 = htole(0);
+            rxDesc.adv_wb.header_len = htole(0);
+            rxDesc.adv_wb.sph = htole(0);
+            rxDesc.adv_wb.rss_hash = htole(0);
+            rxDesc.adv_wb.errors = htole(0);
+            rxDesc.adv_wb.pkt_len = htole(0);
+            rxDesc.adv_wb.vlan_tag = htole(0);
+
+            memcpy(cxl_packet, &rxDesc.adv_wb, (size_t) desc_len);
+            break;
+        }
+        default:
+            panic("Unimplemnted RX receive buffer type %d\n",
+                igbe->regs.srrctl_array[queueID].desctype());
+    }
+    pkt->setData(cxl_packet);
+
+    // Update stat
+    igbe->etherDeviceStats.rxBytesM2func += igbe->flitSize;
+    igbe->etherDeviceStats.rxBytesM2funcDesc += desc_len;
+
+
+    // Free the memory
+    delete[] cxl_packet;
 }
 
 bool 
@@ -3794,6 +3895,15 @@ IGbE::enableSmTx()
 {
     if (drainState() != DrainState::Draining) {
         txTick = true;
+        restartClock();
+    }
+}
+
+void 
+IGbE::enableSmRx() 
+{
+    if (drainState() != DrainState::Draining) {
+        rxTick = true;
         restartClock();
     }
 }
@@ -4802,7 +4912,9 @@ IGbE::updateDropFSMM2func(int rxFifoFull, int pcieBusy, int txRingFull)
 bool
 IGbE::ethRxPkt(EthPacketPtr pkt)
 {
-    
+    if (etherDeviceStats.rxBytes.value() == 0) {
+        printf("IGbE::ethRxPkt:: Received first packet\n");
+    }
     etherDeviceStats.rxBytes += pkt->length;
     etherDeviceStats.rxPackets++;
     
@@ -5448,6 +5560,7 @@ bool M2funcPort::recvTimingReq(PacketPtr pkt)
         assert(queueID >= 0);
         if (dev->rxM2funcContextArray[queueID]->isDTAEnabled()) {
             bool success = dev->rxM2funcContextArray[queueID]->pushCXLReqBuf(pkt);
+            dev->enableSmRx();
             return success;
         } else {
             panic("DTA is not enabled for RX queue %d\n", queueID);

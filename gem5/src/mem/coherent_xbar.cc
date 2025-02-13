@@ -193,17 +193,17 @@ CoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     }
     if (isL3XBar && mem_side_port_id == DTAJobPortID) {
         isDTAJobReq = true;
-        printf("At L3XBar, receive DTA Job Request\n");
+        // printf("At L3XBar, receive DTA Job Request\n");
         // set pkt's DTAJobReq flag
         // Check the pkt's address
         // If address is corresponding to the rx_dta_job_req_addr, set the pkt's RXJobReq flag
         // If address is corresponding to the tx_dta_job_req_addr, set the pkt's TXJobReq flag
         if (pkt->getAddr() == rx_dta_job_req_addr) {
             pkt->setRXJobReq();
-            printf("This is RX Job Request\n");
+            // printf("This is RX Job Request\n");
         } else if (pkt->getAddr() == tx_dta_job_req_addr) {
             pkt->setTXJobReq();
-            printf("This is TX Job Request\n");
+            // printf("This is TX Job Request\n");
         } else {
             panic("Invalid DTA Job Request Address\n");
         }

@@ -81,6 +81,9 @@ namespace gem5
 
     void LoadGenerator::sendPacket()
     {
+        if (loadGeneratorStats.sentPackets.value() == 0) {
+            printf("Load Generator %d Started at %lu \n", loadgenId, curTick());
+        }
         loadGeneratorStats.sentPackets++;
         lastTxCount++;
 

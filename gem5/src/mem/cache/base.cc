@@ -579,6 +579,69 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         doWritebacks(writebacks, clockEdge(lat + forwardLatency));
     }
 
+    // For LOG
+    // RX_JOB_SUBMIT
+    // if (pkt->getAddr() == 1073752256) {
+    //     printf("[LOG] %llu, %s, %s, %d, RX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    // }
+    // // TX_JOB_SUBMIT
+    // if (pkt->getAddr() == 1073756352) {
+    //     printf("[LOG] %llu, %s, %s, %d, TX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    // }
+
+    // uint64_t mbuf_addr1[] = { // RX_JOB_ID 7
+    //     0x201095200, 0x201094880, 0x201093f00, 0x201093580, 0x201092c00, 0x201092280, 
+    //     0x201091900, 0x201090f80, 0x201090600, 0x20108fc80, 0x20108f300, 0x20108e980, 
+    //     0x20108e000, 0x20108d680, 0x20108cd00, 0x20108c380, 0x20108ba00, 0x20108b080, 
+    //     0x20108a700, 0x201089d80, 0x201089400, 0x201088a80, 0x201088100, 0x201087780, 
+    //     0x201086e00, 0x201086480, 0x201085b00, 0x201085180, 0x201084800, 0x201083e80, 
+    //     0x201083500, 0x201082b80
+    // };
+
+    // uint64_t mbuf_addr2[] = { // RX_JOB_ID 9
+    //     0x20106f200, 0x20106e880, 0x20106df00, 0x20106d580, 0x20106cc00, 0x20106c280,
+    //     0x20106b900, 0x20106af80, 0x20106a600, 0x201069c80, 0x201069300, 0x201068980,
+    //     0x201068000, 0x201067680, 0x201066d00, 0x201066380, 0x201065a00, 0x201065080,
+    //     0x201064700, 0x201063d80, 0x201063400, 0x201062a80, 0x201062100, 0x201061780,
+    //     0x201060e00, 0x201060480, 0x20105fb00, 0x20105f180, 0x20105e800, 0x20105de80,
+    //     0x20105d500, 0x20105cb80
+    // };
+
+    // // MBUF_1
+    // for (int i = 0; i < 32; i++) {
+    //     if (pkt->getAddr() == mbuf_addr1[i]) {
+    //         printf("[LOG] %llu, %s, %s, %d, MBUF_1[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+    //     }
+    // }
+
+    // // MBUF_2
+    // for (int i = 0; i < 32; i++) {
+    //     if (pkt->getAddr() == mbuf_addr2[i]) {
+    //         printf("[LOG] %llu, %s, %s, %d, MBUF_2[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+    //     }
+    // }
+
+    // // DESC_RX
+    // if (pkt->getAddr() == 8624136384 || pkt->getAddr() == 8624136448 || pkt->getAddr() == 8624136512 || pkt->getAddr() == 8624136576
+    //    || pkt->getAddr() == 8624136640 || pkt->getAddr() == 8624136704 || pkt->getAddr() == 8624136768 || pkt->getAddr() == 8624136832) {
+    //     int desc_idx = (pkt->getAddr() - 8624136384) / 64;
+    //     printf("[LOG] %llu, %s, %s, %d, DESC_RX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, desc_idx);
+    // }
+    // // DESC_TX
+    // if (pkt->getAddr() == 8624220032 || pkt->getAddr() == 8624220096 || pkt->getAddr() == 8624220160 || pkt->getAddr() == 8624220224) {
+    //     int desc_idx = (pkt->getAddr() - 8624220032) / 64;
+    //     printf("[LOG] %llu, %s, %s, %d, DESC_TX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, desc_idx);
+    // }
+
+    // // COMP_RX
+    // if (pkt->getAddr() == 0x20209e080) {
+    //     printf("[LOG] %llu, %s, %s, %d, COMP_RX\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+    // }
+    // // COMP_TX
+    // if (pkt->getAddr() == 0x2020b2c00) {
+    //     printf("[LOG] %llu, %s, %s, %d, COMP_TX\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+    // }
+
     // Here we charge the headerDelay that takes into account the latencies
     // of the bus, if the packet comes from it.
     // The latency charged is just the value set by the access() function.
@@ -675,6 +738,59 @@ BaseCache::recvTimingResp(PacketPtr pkt)
 
     DPRINTF(Cache, "%s: Handling response %s\n", __func__,
             pkt->print());
+
+    // uint64_t mbuf_addr1[] = { // RX_JOB_ID 7
+    //     0x201095200, 0x201094880, 0x201093f00, 0x201093580, 0x201092c00, 0x201092280, 
+    //     0x201091900, 0x201090f80, 0x201090600, 0x20108fc80, 0x20108f300, 0x20108e980, 
+    //     0x20108e000, 0x20108d680, 0x20108cd00, 0x20108c380, 0x20108ba00, 0x20108b080, 
+    //     0x20108a700, 0x201089d80, 0x201089400, 0x201088a80, 0x201088100, 0x201087780, 
+    //     0x201086e00, 0x201086480, 0x201085b00, 0x201085180, 0x201084800, 0x201083e80, 
+    //     0x201083500, 0x201082b80
+    // };
+
+    // uint64_t mbuf_addr2[] = { // RX_JOB_ID 9
+    //     0x20106f200, 0x20106e880, 0x20106df00, 0x20106d580, 0x20106cc00, 0x20106c280,
+    //     0x20106b900, 0x20106af80, 0x20106a600, 0x201069c80, 0x201069300, 0x201068980,
+    //     0x201068000, 0x201067680, 0x201066d00, 0x201066380, 0x201065a00, 0x201065080,
+    //     0x201064700, 0x201063d80, 0x201063400, 0x201062a80, 0x201062100, 0x201061780,
+    //     0x201060e00, 0x201060480, 0x20105fb00, 0x20105f180, 0x20105e800, 0x20105de80,
+    //     0x20105d500, 0x20105cb80
+    // };
+
+    // // MBUF_1
+    // for (int i = 0; i < 32; i++) {
+    //     if (pkt->getAddr() == mbuf_addr1[i]) {
+    //         printf("[LOG] %llu, %s, %s, %d, MBUF_1[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+    //     }
+    // }
+
+    // // MBUF_2
+    // for (int i = 0; i < 32; i++) {
+    //     if (pkt->getAddr() == mbuf_addr2[i]) {
+    //         printf("[LOG] %llu, %s, %s, %d, MBUF_2[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+    //     }
+    // }
+
+    // // DESC_RX
+    // if (pkt->getAddr() == 8624136384 || pkt->getAddr() == 8624136448 || pkt->getAddr() == 8624136512 || pkt->getAddr() == 8624136576
+    //    || pkt->getAddr() == 8624136640 || pkt->getAddr() == 8624136704 || pkt->getAddr() == 8624136768 || pkt->getAddr() == 8624136832) {
+    //     int desc_idx = (pkt->getAddr() - 8624136384) / 64;
+    //     printf("[LOG] %llu, %s, %s, %d, DESC_RX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, desc_idx);
+    // }
+    // // DESC_TX
+    // if (pkt->getAddr() == 8624220032 || pkt->getAddr() == 8624220096 || pkt->getAddr() == 8624220160 || pkt->getAddr() == 8624220224) {
+    //     int desc_idx = (pkt->getAddr() - 8624220032) / 64;
+    //     printf("[LOG] %llu, %s, %s, %d, DESC_TX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, desc_idx);
+    // }
+
+    // // COMP_RX
+    // if (pkt->getAddr() == 0x20209e080) {
+    //     printf("[LOG] %llu, %s, %s, %d, COMP_RX\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    // }
+    // // COMP_TX
+    // if (pkt->getAddr() == 0x2020b2c00) {
+    //     printf("[LOG] %llu, %s, %s, %d, COMP_TX\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    // }
 
     // if this is a write, we should be looking at an uncacheable
     // write
@@ -3159,7 +3275,8 @@ DTA::recvTimingReq(PacketPtr pkt)
 
             if (isValidJob) {
                 // Only do this when the received packet is the valid job
-                printf("Receive the RX job request from CPU\n");
+                // printf("Receive the RX job request from CPU\n");
+                // printf("[LOG] %llu, DTA, RX_JOB_REQ_RECV\n", curTick());
                 // Make copy of the pkt and push the copy to the submission queue
                 // The original pkt will be responded to CPU
                 PacketPtr pkt_copy = new Packet(pkt, false, true);
@@ -3171,6 +3288,8 @@ DTA::recvTimingReq(PacketPtr pkt)
                     restartClock();
                 }
                 DPRINTF(DDIO, "Received RX job request from CPU\n");
+            } else {
+                printf("The RX job request is invalid. So we will discard the job request\n");
             }
 
             // Make response packet and send it to CPU
@@ -3189,6 +3308,8 @@ DTA::recvTimingReq(PacketPtr pkt)
         if (txJobSubmissionQueue.size() >= submissionQueueMaxSize) {
             return false;
         } else {
+            // printf("Receive the TX job request from CPU\n");
+            // printf("[LOG] %llu, DTA, TX_JOB_REQ_RECV\n", curTick());
             // Make copy of the pkt and push the copy to the submission queue
             // The original pkt will be responded to CPU
             PacketPtr pkt_copy = new Packet(pkt, false, true);
@@ -3297,6 +3418,8 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
     if (pkt->isRXJobReq()) {
         if (!dtaRXContext.valid) {
             DPRINTF(DDIO, "Parsing RX job request 0th packet from CPU\n");
+            dtaRXContext.rx_job_id += 1;
+            // printf("DTA Parsing RX Job ID: %llu\n", dtaRXContext.rx_job_id);
             dtaRXContext.valid = true;
             dtaRXContext.completion_stage = false;
             uint32_t n_job_packet_received = 0;
@@ -3334,6 +3457,27 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
             for (uint32_t i = 0; i < dtaRXContext.n_mbuf_addr_received; i++) {
                 DPRINTF(DDIO, "dtaRXContext.mbuf_addr[%d]: %lx\n", i, dtaRXContext.mbuf_addr[i]);
             }
+
+            // Intialize the completion address with 0
+            // Make the Request
+            RequestPtr req = std::make_shared<Request>(dtaRXContext.completion_addr, cacheLineSize, 0, requestorId);
+            req->taskId(context_switch_task_id::DMA);
+            PacketPtr wr_pkt = new Packet(req, MemCmd::WriteReq);
+            // Make the data
+            uint8_t *wr_data = new uint8_t[cacheLineSize];
+            memset(wr_data, 0, cacheLineSize);
+            wr_pkt->allocate();
+            wr_pkt->setData(wr_data);
+            wr_pkt->setFromDTA();
+
+            delete[] wr_data;
+
+            assert(ioCache != nullptr);
+            bool success = ioCache->recvTimingReqfromDTA(wr_pkt);
+            if (!success) {
+                // Delete the packet
+                delete wr_pkt;
+            }
         } else {
             // This job request packet is the next part of the previous job request packet
             // This packet only contains the mbuf address
@@ -3353,12 +3497,39 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
                 dtaRXContext.RXCompleteMap[dtaRXContext.mbuf_addr[dtaRXContext.n_mbuf_addr_received]] = false;
                 data += sizeof(Addr);
                 dtaRXContext.n_mbuf_addr_received += 1;
+                // printf("dtaRXContext.mbuf_addr[%d]: %lx ", dtaRXContext.n_mbuf_addr_received - 1, dtaRXContext.mbuf_addr[dtaRXContext.n_mbuf_addr_received - 1]);
             }
+            // printf("\n");
             assert(dtaRXContext.n_mbuf_addr_received <= dtaRXContext.nb_pkts);
+            if (dtaRXContext.n_mbuf_addr_received == dtaRXContext.nb_pkts) {
+                // Write the temporal completion id to the completion address. To stop the break of while loop in the DPDK
+                // Make the Request
+                RequestPtr req = std::make_shared<Request>(dtaRXContext.completion_addr, cacheLineSize, 0, requestorId);
+                req->taskId(context_switch_task_id::DMA);
+                PacketPtr wr_pkt = new Packet(req, MemCmd::WriteReq);
+                // Make the data
+                uint8_t *wr_data = new uint8_t[cacheLineSize];
+                memset(wr_data, 0, cacheLineSize);
+                int64_t completion_id = dtaRXContext.n_recv;
+                memcpy(wr_data, &completion_id, sizeof(int64_t));
+                wr_pkt->allocate();
+                wr_pkt->setData(wr_data);
+                wr_pkt->setFromDTA();
+
+                delete[] wr_data;
+
+                assert(ioCache != nullptr);
+                // printf("dtaRX Write the current n_recv: %ld to the completion address: %lx\n", completion_id, dtaRXContext.completion_addr);
+
+                bool success = ioCache->recvTimingReqfromDTA(wr_pkt);
+                assert(success);
+            }
             DPRINTF(DDIO, "Parsed RX job request %dth packet from CPU, %ld/%ld mbuf addresses are received\n", packet_index, dtaRXContext.n_mbuf_addr_received, dtaRXContext.nb_pkts); 
         }
     } else if (pkt->isTXJobReq()) {
         if (!dtaTXContext.valid) {
+            dtaTXContext.tx_job_id += 1;
+            printf("DTA Parsing TX Job ID: %llu\n", dtaTXContext.tx_job_id);
             DPRINTF(DDIO, "Parsing TX job request 0th packet from CPU\n");
             dtaTXContext.valid = true;
             uint32_t n_job_packet_received = 0;
@@ -3367,7 +3538,7 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
             // 1. Descriptor address: where the descriptors of batch are stored
             // 2. Completion address: where the completion info will be stored by DTA after the job is done
             // 3. Number of packets: number of packets in the batch
-            // 4. mbuf address: the address of the mbufs in the batch
+            // 4. mbuf address: the address of the mbufs in the batch (only for not zero-copy mode)
 
             dtaTXContext.desc_addr =  *(Addr*)data;
             data = reinterpret_cast<uint8_t*>(data) + sizeof(Addr);
@@ -3384,15 +3555,31 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
             dtaTXContext.TXCompleteMap.clear();
             dtaTXContext.n_desc_ready = 0; 
 
-            n_job_packet_received = std::min(dtaTXContext.nb_pkts, txFirstJobPacketNumMbufAddr);
-            for (uint32_t i = 0; i < n_job_packet_received; i++) {
-                dtaTXContext.mbuf_addr[i] = *(Addr*)data;
-                dtaTXContext.TXCompleteMap[dtaTXContext.mbuf_addr[i]] = false;
-                data += sizeof(Addr);
-                dtaTXContext.n_mbuf_addr_received += 1;
+            if (zeroCopy) {
+                // Check the mbuf_addr is all valid until nb_pkts
+                for (uint32_t i = 0 ; i < dtaTXContext.nb_pkts; i++) {
+                    if (dtaTXContext.mbuf_addr[i] == 0) {
+                        assert(0 && "The mbuf address is not valid");
+                    }
+                    assert(dtaTXContext.mbuf_addr[i] != 0);
+                    dtaTXContext.TXCompleteMap[dtaTXContext.mbuf_addr[i]] = false;
+                    dtaTXContext.n_mbuf_addr_received += 1;
+                }
+            } else {
+                n_job_packet_received = std::min(dtaTXContext.nb_pkts, txFirstJobPacketNumMbufAddr);
+                for (uint32_t i = 0; i < n_job_packet_received; i++) {
+                    dtaTXContext.mbuf_addr[i] = *(Addr*)data;
+                    dtaTXContext.TXCompleteMap[dtaTXContext.mbuf_addr[i]] = false;
+                    data += sizeof(Addr);
+                    dtaTXContext.n_mbuf_addr_received += 1;
+                }
             }
             DPRINTF(DDIO, "Parsed TX job request from CPU\n");
         } else {
+            // printf("DTA Subsequent Parsing of TX Job ID: %llu\n", dtaTXContext.tx_job_id);
+            // If zeroCopy is true, the TX job request will only send once with descriptor address, completion address, and number of packets.
+            // Zerocopy will reuse the mbuf address that is used in RX job request
+            assert(!zeroCopy);
             // This job request packet is the next part of the previous job request packet
             // This packet only contains the mbuf address
             // Have to use the nb_pkts that is received from the first packet
@@ -3620,6 +3807,7 @@ DTA::checkRXJobCompletion()
                         // All the descriptors are written to the memory
                         DPRINTF(DDIO, "DTA RX completion checker: All the descriptors are written to the memory\n");
                     }
+                    // printf("DTA RX Completion Checker: Write the %d/%d descriptors to the memory with the RX Job ID: %llu\n", dtaRXContext.n_desc_write_completed, dtaRXContext.nb_pkts, dtaRXContext.rx_job_id);
 
                     return true; // Need tick - Maybe need to write the next cache line
                 } else {
@@ -3643,8 +3831,8 @@ DTA::checkRXJobCompletion()
                 // Make the data
                 uint8_t *data = new uint8_t[cacheLineSize];
                 memset(data, 0, cacheLineSize);
-                uint32_t completion_id = dtaRXContext.n_recv;
-                memcpy(data, &completion_id, sizeof(uint32_t));
+                int64_t completion_id = dtaRXContext.n_recv;
+                memcpy(data, &completion_id, sizeof(int64_t));
                 pkt->allocate();
                 pkt->setData(data);
                 pkt->setFromDTA();
@@ -3654,6 +3842,11 @@ DTA::checkRXJobCompletion()
                 assert(ioCache != nullptr);
                 bool success = ioCache->recvTimingReqfromDTA(pkt);
                 if (success) {
+                    if (zeroCopy) {
+                        // Before reset, move the mbuf_addr to the dtaTXContext.mbuf_addr
+                        // printf("DTA RX completion checker: Write Completion packets to completion addr: %lx with the RX Job ID: %llu. Move the mbuf addresses to the TX context\n", dtaRXContext.completion_addr, dtaRXContext.rx_job_id);
+                        copyMbufAddrFromRXContextToTXContext();
+                    }
                     // Reset the RX context
                     clearDTARXContext();
                     return false; // No need tick
@@ -3706,8 +3899,8 @@ DTA::checkTXJobCompletion()
             // Make the data
             uint8_t *data = new uint8_t[cacheLineSize];
             memset(data, 0, cacheLineSize);
-            uint32_t completion_id = dtaTXContext.n_sent;
-            memcpy(data, &completion_id, sizeof(uint32_t));
+            int64_t completion_id = dtaTXContext.n_sent;
+            memcpy(data, &completion_id, sizeof(int64_t));
             pkt->allocate();
             pkt->setData(data);
             pkt->setFromDTA();
@@ -3719,6 +3912,7 @@ DTA::checkTXJobCompletion()
             bool success = ioCache->recvTimingReqfromDTA(pkt);
             if (success) {               
                 // Reset the TX context
+                // printf("DTA TX Completion Checker: Write the completion id to the completion address with the TX Job ID: %llu\n", dtaTXContext.tx_job_id);
                 clearDTATXContext();
                 return false; // No need tick
             } else {
@@ -3743,6 +3937,7 @@ DTA::createDTARequest()
     RequestPtr req = std::make_shared<Request>(M2funcRXAddr, flitSize, 0, requestorId);
     PacketPtr pkt = new Packet(req, MemCmd::ReadReq);
     pkt->allocate(); // Allocate the data buffer
+    pkt->setJobID(dtaRXContext.rx_job_id);
     
     return pkt;
 }
@@ -3818,10 +4013,12 @@ DTA::recvTimingRespfromNIC(PacketPtr pkt)
 {   
     // Receive M2func RD/WR response from NIC - it can be RD/WR response
     assert(isDTAEnabled());
+    assert(pkt->isResponse());
 
-    if (dtaRXContext.valid) {
+    if (dtaRXContext.valid && dtaRXContext.rx_job_id == pkt->getJobID()) {
         if (findDTARequest(pkt)) {
             freeDTARequest(pkt->req);
+            assert(pkt->isRead());
             // Push to the worker waiting queue
             // Check the packet data - contain only 0s
             uint8_t* data = pkt->getPtr<uint8_t>();
@@ -3834,8 +4031,31 @@ DTA::recvTimingRespfromNIC(PacketPtr pkt)
             }
             if (allZero) {
                 DPRINTF(DDIO, "DTA receive response from NIC. But the packet data is all 0s\n");
-                // Just drop this packet
+                // printf("[NO_ETH_RX_PACKET]: DTA receive response from NIC. But the packet data is all 0s pkt's job id: %llu\n", pkt->getJobID());
                 delete pkt;
+                // Have to write -1 to the completion address to notify the host that the packet is not received
+                // Make the Request
+                RequestPtr req = std::make_shared<Request>(dtaRXContext.completion_addr, cacheLineSize, 0, requestorId);
+                req->taskId(context_switch_task_id::DMA);
+                PacketPtr wr_pkt = new Packet(req, MemCmd::WriteReq);
+                // Make the data
+                uint8_t *data = new uint8_t[cacheLineSize];
+                memset(data, 0, cacheLineSize);
+                int64_t completion_id = -1;
+                memcpy(data, &completion_id, sizeof(int64_t));
+                wr_pkt->allocate();
+                wr_pkt->setData(data);
+                wr_pkt->setFromDTA();
+
+                delete[] data;
+
+                assert(ioCache != nullptr);
+                bool success = ioCache->recvTimingReqfromDTA(wr_pkt);
+                assert(success);
+                
+                clearDTARXContext();
+
+                
             } else {
                 // TODO - maybe have to check the queue size
                 workerWaitingQueue.push_back(std::pair<PacketPtr, uint32_t>(pkt, dtaRXContext.n_recv)); 
@@ -3856,14 +4076,26 @@ DTA::recvTimingRespfromNIC(PacketPtr pkt)
                 }  
             }
         } else {
-            printf("Error: DTA receive response. But cannot find the DTA request, pkt addr: %lx\n", pkt->req->getPaddr());
+            // printf("Error: DTA receive response. But cannot find the DTA request, pkt addr: %lx\n", pkt->req->getPaddr());
             panic("Error: DTA receive response. But cannot find the DTA request\n");
         }
-    } else if (dtaTXContext.valid) {
+    } else if (dtaTXContext.valid && pkt->isWrite()) {
         // Nothing to do now. But we can add some stats here.
         // This is the response for the TX packet write request, which is sent to the NIC
+        delete pkt;
     } else {
         // This can happen when the DTA TX response is received, but the DTA TX context is cleared (not checking the response of NIC)
+        // Also, for the RX, this can happen when there are no ethernet packets to receive from the NIC. DTARXContext is already cleared from the previous CXL resp with all 0s
+        // Check the findDTARequest function
+        if (dtaRXContext.valid && dtaRXContext.rx_job_id != pkt->getJobID()) {
+            // printf("DTA receive response from NIC. But the DTA context's job id (%llu) is different from the packet's job id (%llu)\n", dtaRXContext.rx_job_id, pkt->getJobID());
+        } else {
+            // printf("DTA receive response from NIC. But the DTA context is not valid. pkt's job id: %llu\n", pkt->getJobID());
+        }
+        if (findDTARequest(pkt)) {
+            freeDTARequest(pkt->req);
+        }
+        delete pkt;
     }
     
     
@@ -3960,6 +4192,7 @@ DTA::allocateWorkerFromQueue()
             worker->processDTAResponse(respPkt);
 
             workerWaitingQueue.pop_front();
+            delete respPkt;
         }
         return true; // Need tick
     } else {
@@ -4284,6 +4517,7 @@ DTA::DTATXWorker::makePacket()
         pkt->setTXDMA();
         pkt->setWorkerID(workerID);
         pkt->setFromDTA();
+        pkt->setJobID(dta->dtaTXContext.tx_job_id);
 
         assert(dmaReqState != nullptr);
         pkt->senderState = dmaReqState;
@@ -4326,6 +4560,7 @@ DTA::DTATXWorker::handleDMACompletion(PacketPtr pkt)
             uint64_t mbufListOffset = startOffset + i;
             assert(mbufListOffset < DTA_MAX_MBUF_NUM);
             if (dta->dtaTXContext.mbuf_addr[mbufListOffset] == 0) {
+                assert(!dta->zeroCopy);
                 // This can happen, when the mbuf_addr is not received yet. (Not enough job request to NIC).
                 // So, temporarily store the descriptor to the descWaitingMbufAddr with it's mbufListOffset. 
                 // When the job request is received, descWaitingMbufAddr will be checked and the descriptor will be moved to the descPayloadDMAWaiting

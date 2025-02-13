@@ -3,11 +3,11 @@ import re
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
-# num_queues = 1
-# script = "dpdk-testpmd"
-num_queues = 2
-script = "dpdk-set" # have to set
-base_folder = "/home/jmhhh/Documents/CXL_network/gem5_dpdk_multiqueue/gem5-dpdk-setup/rundir/dpdk-set-2core-l3-4port-4ns"  # have to set
+num_queues = 1
+script = "dpdk-testpmd"
+# num_queues = 2
+# script = "dpdk-set" # have to set
+base_folder = "/home/jmhhh/Documents/CXL_network/gem5_dpdk_multiqueue/gem5-dpdk-setup/rundir/20241017-dpdk-set-1core-l3-2port-4ns"  # have to set
 
 def parse_stats(file_path):
     with open(file_path, 'r') as file:
@@ -53,13 +53,16 @@ def get_drop_rate(folder_path):
 
 def main(base_folder):
     data = {}
-    for packet_size in ["64", "128", "256", "512", "1024", "1518"]:
+    # for packet_size in ["64", "128", "256", "512", "1024", "1518"]:
+    for packet_size in ["48"]:
         data[packet_size] = {}
 
         for folder in os.listdir(base_folder):
             match = re.match(rf"1NIC-{num_queues}Qs-{packet_size}SIZE-(\d+)RATE-(\d+)Gbps-ddio-enabled-{script}.sh", folder)
             if match:
-                throughput = int(match.group(2))
+                # throughput = int(match.group(2))
+                pps = int(match.group(1))
+                throughput = pps * int(packet_size) * 8 / 1e9
                 folder_path = os.path.join(base_folder, folder)
                 drop_rate = get_drop_rate(folder_path)
                 if drop_rate is not None:
@@ -84,7 +87,8 @@ def main(base_folder):
     plt.grid(True)
     # Set x-axis ticks to be 1 unit apart
     # Set x-axis value to be 10 unit apart
-    plt.gca().xaxis.set_major_locator(ticker.MultipleLocator(10))
+    # plt.gca().xaxis.set_major_locator(ticker.MultipleLocator(10))
+    plt.gca().xaxis.set_major_locator(ticker.MultipleLocator(1))
     plt.gca().xaxis.set_minor_locator(ticker.MultipleLocator(1))
     plt.gca().yaxis.set_minor_locator(ticker.MultipleLocator(1))
     plt.grid(which='minor', color='gray', linestyle=':', linewidth=0.5)

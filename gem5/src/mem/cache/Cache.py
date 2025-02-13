@@ -80,6 +80,7 @@ class DTA(ClockedObject):
     dta_rx_job_addr = Param.Addr(0x400028C0, "DTA RX Job Address")
     dta_tx_job_addr = Param.Addr(0x400038C0, "DTA TX Job Address")
     num_dta_worker = Param.Int(16, "Number of DTA worker")
+    enable_zero_copy = Param.Bool(True, "Enable zero copy")
     cxl_req_threshold = Param.Int(128, "CXL request threshold")
     cache_line_size = Param.Int(64, "Cache line size")
     

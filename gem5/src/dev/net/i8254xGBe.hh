@@ -650,6 +650,9 @@ class IGbE : public EtherDevice
 
         // For stat
         Tick lastRxM2funcReadTick; // last tick when the M2func RD request is comming from host
+
+        bool isLoadGenStarted = false; // To check the LoadGen is started or not
+        std::map<uint64_t, bool> dtaRXJobSuccess; // To check the DTA RX job is success or not - to determine zeroed response or not
         
 
       public:
@@ -663,6 +666,7 @@ class IGbE : public EtherDevice
         void processRxPacket(EthPacketPtr packet); 
         bool rxM2funcStateMachine();
         void readM2funcPacket(PacketPtr pkt); // receive packet from host and make response 
+        void makeZeroedResponse(PacketPtr pkt); // make zeroed response to the host
 
         // DTA
         bool isDTAEnabled() { return enableDTA; }
@@ -842,6 +846,7 @@ class IGbE : public EtherDevice
     void drainResume() override;
     // For M2func
     void enableSmTx();
+    void enableSmRx();
 
 };
 

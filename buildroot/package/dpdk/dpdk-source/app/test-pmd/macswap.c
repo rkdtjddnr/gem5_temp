@@ -69,9 +69,6 @@ pkt_burst_mac_swap(struct fwd_stream *fs)
 				 nb_pkt_per_burst);
 	inc_rx_burst_stats(fs, nb_rx);
 	if (unlikely(nb_rx == 0)) {
-		// JM
-		// printf("pkt_burst_mac_swap: nb_rx == 0. So, Taking a checkpoint\n");
-		// m5_checkpoint(0, 0);
 		return;
 	}
 

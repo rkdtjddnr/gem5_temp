@@ -1692,6 +1692,9 @@ class DTA : public ClockedObject
     {
         clearDTARXContext();
         clearDTATXContext();
+        // Initialize with the max value of uint64_t
+        dtaRXContext.rx_job_id = 0;
+        dtaTXContext.tx_job_id = 0;
     
         rxJobSubmissionQueue.clear();
         txJobSubmissionQueue.clear();
@@ -1708,6 +1711,12 @@ class DTA : public ClockedObject
         numSentM2funcTXReq = 0;
         numDTARXWorker = p.num_dta_worker;
         numDTATXWorker = p.num_dta_worker;
+        zeroCopy = p.enable_zero_copy;
+        if (zeroCopy) {
+            printf("DTA - Zero copy is enabled\n");
+        } else {
+            printf("DTA - Zero copy is disabled\n");
+        }
 
         enableDdio = p.ddio_enabled;
 
@@ -1779,6 +1788,7 @@ class DTA : public ClockedObject
     EventFunctionWrapper tickEvent;
     bool rxTick;
     bool txTick;
+    bool zeroCopy;
 
     Addr M2funcRXAddr;
     Addr M2funcTXAddr;
@@ -1806,6 +1816,7 @@ class DTA : public ClockedObject
     // Context structure: have mbuf_addr list, nb_pkts, completion_addr (come from Job request) & n_recv, num_free_request_in_NIC
     #define DTA_MAX_MBUF_NUM 100 // or any other suitable value
     struct DTARXContext {
+        uint64_t rx_job_id; // Job ID 
         bool valid; // if the context is valid
         bool completion_stage; // true if the completion stage is started (DTA is waiting for the write completion status(descriptors, index) to the completion address)
         Addr completion_addr; // DTA will write the completion status to this address to notify CPU
@@ -1828,6 +1839,7 @@ class DTA : public ClockedObject
     uint32_t validRXJobRequestCount = 0; // For test
 
     struct DTATXContext {
+        uint64_t tx_job_id; // Job ID
         bool valid; // if the context is valid
         Addr completion_addr; // DTA will write the completion status to this address to notify CPU
         Addr desc_addr; // all descriptors are stored in this address
@@ -2207,6 +2219,25 @@ class DTA : public ClockedObject
         dtaTXContext.descPayloadDMAAssigned.clear();
         dtaTXContext.descWaitingMbufAddr.clear();
         dtaTXContext.TXCompleteMap.clear();
+    }
+
+    void copyMbufAddrFromRXContextToTXContext() {
+        assert(zeroCopy);
+
+        //Copy mbuf_addr from RX context to TX context
+        if (dtaTXContext.valid) {
+            // dtaTXContext is already in used.. In this case, we cannot copy
+            printf("DTA - TX context is already in used. Cannot copy mbuf_addr from RX context to TX context\n");
+            assert(0);
+        } else {
+            assert(dtaRXContext.valid);
+            assert(dtaRXContext.nb_pkts == dtaRXContext.n_mbuf_addr_received);
+            assert(dtaRXContext.n_mbuf_addr_received > 0);
+            clearDTATXContext();
+            for (int i = 0; i < dtaRXContext.n_mbuf_addr_received; i++) {
+                dtaTXContext.mbuf_addr[i] = dtaRXContext.mbuf_addr[i];
+            }
+        }
     }
 
     // State Machine for DTA

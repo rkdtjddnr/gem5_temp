@@ -330,6 +330,7 @@ def build_test_system(np):
             if args.enable_dta: # JM
                 test_sys.dta = DTA(enable_dta=args.enable_dta,
                                    num_dta_worker=args.num_dta_worker,
+                                   enable_zero_copy=args.enable_zero_copy,
                                    cxl_req_threshold=args.cxl_req_threshold,
                                    cache_line_size=test_sys.cache_line_size,
                                    ddio_enabled=True)

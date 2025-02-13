@@ -1502,6 +1502,7 @@ class Packet : public Printable
     bool is_rx_dma = false;
     bool is_tx_dma = false;
     int worker_id = -1;
+    uint64_t job_id = std::numeric_limits<uint64_t>::max();
 
   public:
     void setDdioPrefetchId(int ddio_id){ddio_prefetch_id = ddio_id;}
@@ -1540,6 +1541,9 @@ class Packet : public Printable
     bool isTXDMA() const       { return is_tx_dma; }
     void setWorkerID(int id) { worker_id = id; }
     int getWorkerID() const { return worker_id; }
+
+    void setJobID(uint64_t id) { job_id = id; }
+    uint64_t getJobID() const { return job_id; }
 
     // hardware transactional memory
 
