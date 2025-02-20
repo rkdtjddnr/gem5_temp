@@ -504,12 +504,14 @@ IGbE::read(PacketPtr pkt)
             pkt->setLE<uint32_t>(regs.rdh_array[queueid]());
             uint32_t rdh = regs.rdh_array[queueid]();
             DPRINTF(EthernetDpdk, "Read RDH[%d]: %d\n", queueid, rdh);
+            // printf("[LOG] %lu Read RDH[%d]: %d\n", curTick(), queueid, rdh);
         } else if (isRegisterAddress<E1000_RDT>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             pkt->setLE<uint32_t>(regs.rdt_array[queueid]());
             uint32_t rdt = regs.rdt_array[queueid]();
             DPRINTF(EthernetDpdk, "Read RDT[%d]: %d\n", queueid, rdt);
+            // printf("[LOG] %lu Read RDT[%d]: %d\n", curTick(), queueid, rdt);
         } else if (isRegisterAddress<E1000_RXM2FUNC>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
@@ -552,6 +554,7 @@ IGbE::read(PacketPtr pkt)
             pkt->setLE<uint32_t>(regs.tdh_array[queueid]());
             uint32_t tdh = regs.tdh_array[queueid]();
             DPRINTF(EthernetDpdk, "Read TDH[%d]: %d\n", queueid, tdh);
+            // printf("[LOG] %lu Read TDH[%d]: %d\n", curTick(), queueid, tdh);
         } else if (isRegisterAddress<E1000_TXDCA_CTL>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
@@ -562,6 +565,7 @@ IGbE::read(PacketPtr pkt)
             pkt->setLE<uint32_t>(regs.tdt_array[queueid]());
             uint32_t tdt = regs.tdt_array[queueid]();
             DPRINTF(EthernetDpdk, "Read TDT[%d]: %d\n", queueid, tdt);
+            // printf("[LOG] %lu Read TDT[%d]: %d\n", curTick(), queueid, tdt);
         } else if (isRegisterAddress<E1000_TXM2FUNC>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
@@ -1012,12 +1016,14 @@ IGbE::write(PacketPtr pkt)
             if (commType == CommunicationType::RING)
                 rxDescCacheArray[queueid]->areaChanged();
             DPRINTF(EthernetDpdk, "Write RDH[%d]: %d\n", queueid, regs.rdh_array[queueid]());
+            printf("[LOG] %lu Write RDH[%d]: %d\n", curTick(), queueid, val);
         } else if (isRegisterAddress<E1000_RDT>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.rdt_array[queueid] = val;
             DPRINTF(EthernetDpdk, "RXS: RDT Updated.\n");
             DPRINTF(EthernetDpdk, "Write RDT[%d]: %d\n", queueid, regs.rdt_array[queueid]());
+            printf("[LOG] %lu Write RDT[%d]: %d\n", curTick(), queueid, val);
             etherDeviceStats.rxTailWriteBytes += pkt->getSize();
             if (commType == CommunicationType::RING) {
                 if (drainState() == DrainState::Running) {
@@ -1071,6 +1077,7 @@ IGbE::write(PacketPtr pkt)
             if (commType == CommunicationType::RING)
                 txDescCacheArray[queueid]->areaChanged();
             DPRINTF(EthernetDpdk, "Write TDH[%d]: %d\n", queueid, regs.tdh_array[queueid]());
+            printf("[LOG] %lu Write TDH[%d]: %d\n", curTick(), queueid, val);
         } else if (isRegisterAddress<E1000_TXDCA_CTL>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
@@ -1083,6 +1090,7 @@ IGbE::write(PacketPtr pkt)
             regs.tdt_array[queueid] = val;
             DPRINTF(EthernetDpdk, "TXS: TX Tail pointer updated in queue %d\n", queueid);
             DPRINTF(EthernetDpdk, "Write TDT[%d]: %d\n", queueid, regs.tdt_array[queueid]());
+            printf("[LOG] %lu Write TDT[%d]: %d\n", curTick(), queueid, val);
             etherDeviceStats.txTailWriteBytes += pkt->getSize();
             if (commType == CommunicationType::RING) {
                 if (drainState() == DrainState::Running) {
@@ -1423,9 +1431,18 @@ IGbE::DescCache<T>::writeback1()
     // igbe->dmaWrite(pciToDma(descBase() + descHead() * sizeof(T)),
     //                wbOut * sizeof(T), &wbEvent, (uint8_t*)wbBuf,
     //                igbe->wbCompDelay);
-    // printf("WritebackDesc At clk: %ld IdioWrite Addr: %lx, Size: %d, Delay: %ld\n",
-    //         curTick(), pciToDma(descBase() + descHead() * sizeof(T)),
-    //         wbOut * sizeof(T), igbe->wbCompDelay);
+    if (isRx) {
+        printf("[LOG] %lu, RXDescWB, Addr: %llu, Size: %d, (Head: %ld, Tail: %ld)\n",
+            curTick(), pciToDma(descBase() + descHead() * sizeof(T)), wbOut * sizeof(T), descHead(), descTail());
+    } else {
+        printf("[LOG] %lu, TXDescWB, Addr: %llu, Size: %d, (Head: %ld, Tail: %ld)\n",
+            curTick(), pciToDma(descBase() + descHead() * sizeof(T)), wbOut * sizeof(T), descHead(), descTail());
+    }
+    for (int i = 0; i < wbOut; i++) {
+        printf("wbBuf[%d]: %s ", i, wbBufToString(i).c_str());
+    }
+    printf("\n");
+
     igbe->IdioWrite(pciToDma(descBase() + descHead() * sizeof(T)),
                     wbOut * sizeof(T), &wbEvent, (uint8_t*)wbBuf,
                     igbe->wbCompDelay, 0, igbe->adq);
@@ -1495,9 +1512,14 @@ IGbE::DescCache<T>::fetchDescriptors1()
             descBase() + cachePnt * sizeof(T),
             pciToDma(descBase() + cachePnt * sizeof(T)),
             curFetching * sizeof(T));
-    // printf("FetchDesc At clk: %ld DmaRead Addr: %lx, Size: %d, Delay: %ld\n",
-    //         curTick(), pciToDma(descBase() + cachePnt * sizeof(T)),
-    //         curFetching * sizeof(T), igbe->fetchCompDelay);
+
+    if (isRx) {
+        printf("[LOG] %lu, RXDescFetch, Addr: %llu, Size: %d, (cachePnt: %d, curFetching: %d, Head: %ld, Tail: %ld, unusedDesc: %d)\n",
+            curTick(), pciToDma(descBase() + cachePnt * sizeof(T)), curFetching * sizeof(T), cachePnt, curFetching, descHead(), descTail(), descUnused());
+    } else {
+        printf("[LOG] %lu, TXDescFetch, Addr: %llu, Size: %d, (cachePnt: %d, curFetching: %d, Head: %ld, Tail: %ld, unusedDesc: %d)\n",
+            curTick(), pciToDma(descBase() + cachePnt * sizeof(T)), curFetching * sizeof(T), cachePnt, curFetching, descHead(), descTail(), descUnused());
+    }
     assert(curFetching);
     igbe->dmaRead(pciToDma(descBase() + cachePnt * sizeof(T)),
                   curFetching * sizeof(T), &fetchEvent, (uint8_t*)fetchBuf,
@@ -1508,11 +1530,13 @@ template<class T>
 void
 IGbE::DescCache<T>::fetchComplete()
 {
+    std::string printStr = "";
     T *newDesc;
     for (int x = 0; x < curFetching; x++) {
         newDesc = new T;
         memcpy(newDesc, &fetchBuf[x], sizeof(T));
         unusedCache.push_back(newDesc);
+        printStr += "NewDesc[" + std::to_string(x) + "]: " + fetchBufToString(newDesc) + " | ";
     }
 
     igbe->etherDeviceStats.metaDMABytes += curFetching * sizeof(T);
@@ -1534,6 +1558,14 @@ IGbE::DescCache<T>::fetchComplete()
 
     DPRINTF(EthernetDesc, "Fetching complete cachePnt %d -> %d\n",
             oldCp, cachePnt);
+    
+    if (isRx) {
+        printf("[LOG] %lu, RXDescFetchComplete, cachePnt: %d -> %d, Head: %ld, Tail: %ld, unusedDesc: %d\n %s\n",
+            curTick(), oldCp, cachePnt, descHead(), descTail(), descUnused(), printStr.c_str());
+    } else {
+        printf("[LOG] %lu, TXDescFetchComplete, cachePnt: %d -> %d, Head: %ld, Tail: %ld, unusedDesc: %d\n %s\n",
+            curTick(), oldCp, cachePnt, descHead(), descTail(), descUnused(), printStr.c_str());
+    }
 
     enableSm();
     igbe->checkDrain();
@@ -1571,6 +1603,13 @@ IGbE::DescCache<T>::wbComplete()
 
     DPRINTF(EthernetDesc, "Writeback complete curHead %d -> %d\n",
             oldHead, curHead);
+    
+    if (isRx){
+        printf("[LOG] %lu, WBRXDescComplete UpdatedHead: %ld, Tail: %ld\n", curTick(), descHead(), descTail());
+    } else {
+        printf("[LOG] %lu, WBTXDescComplete UpdatedHead: %ld, Tail: %ld\n", curTick(), descHead(), descTail());
+    }
+    
 
     // If we still have more to wb, call wb now
     actionAfterWb();
@@ -1756,6 +1795,10 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset)
         // printf("RXD[%d] At clk: %ld IdioWrite pktPtr: %p, Addr: %lx, Size: %d, Delay: %ld\n",
         //         queueID, curTick(), pktPtr, pciToDma(desc->adv_read.pkt),
         //         packet->length, igbe->rxWriteDelay);
+        if (descTail() == 95) {
+            printf("[LOG] %lu, NIC_WR_RX_PKT_TO_MBUF, %lx, %d\n", curTick(), pciToDma(desc->adv_read.pkt), packet->length);
+        }
+
         igbe->IdioWrite(pciToDma(desc->adv_read.pkt),
                        packet->length, &pktEvent, packet->data,
                        igbe->rxWriteDelay, 0, igbe->adq);
@@ -1883,6 +1926,10 @@ IGbE::RxDescCache::pktComplete()
 
     DPRINTF(EthernetDesc, "RXD[%d] Packet written to memory updating Descriptor\n", queueID);
     DPRINTF(EthernetDpdk, "RXD[%d] Packet written to memory updating Descriptor\n", queueID);
+
+    if (descTail() == 95) {
+        printf("[LOG] %lu, NIC_WR_RESP_RX_PKT_TO_MBUF, %lx, Head: %d, Tail: %d\n", curTick(), pciToDma(desc->adv_read.pkt), descHead(), descTail());
+    }
 
     // printf("RXD[%d] At clk: %ld pktComplete() pktPtr: %p\n", queueID, curTick(), pktPtr);
 
@@ -2334,6 +2381,10 @@ IGbE::TxDescCache::getPacketData(EthPacketPtr p)
     } else {
         // printf("TXD[%d] At clk: %ld DmaRead pktPtr: %p, Addr: %lx, Size: %d, Delay: %ld\n", 
         //         queueID, curTick(), p, pciToDma(txd_op::getBuf(desc)), txd_op::getLen(desc), igbe->txReadDelay);
+
+        if (descTail() == 128) {
+            printf("[LOG] %lu, NIC_RD_REQ_TX_MBUF, %lx, %d\n", curTick(), pciToDma(txd_op::getBuf(desc)), txd_op::getLen(desc));
+        }
         igbe->dmaRead(pciToDma(txd_op::getBuf(desc)),
                       txd_op::getLen(desc), &pktEvent, p->data + p->length,
                       igbe->txReadDelay);
@@ -2397,6 +2448,10 @@ IGbE::TxDescCache::pktComplete()
         enableSm();
         igbe->checkDrain();
         return;
+    }
+
+    if (descTail() == 128) {
+        printf("[LOG] %lu, NIC_RD_RESP_TX_MBUF, %lx, Head: %d, Tail: %d\n", curTick(), pciToDma(txd_op::getBuf(desc)), descHead(), descTail());
     }
 
 
@@ -2667,6 +2722,24 @@ IGbE::TxDescCache::hasOutstandingEvents()
 {
     return pktEvent.scheduled() || wbEvent.scheduled() ||
         fetchEvent.scheduled();
+}
+
+std::string 
+IGbE::TxDescCache::wbBufToString(int idx) {
+    igbreg::TxDesc *desc;
+    desc = wbBuf + idx;
+    uint8_t Dd = txd_op::getDd(desc);
+    std::string descStr = "TxDescWb_DD: ";
+    descStr += csprintf("%u", Dd);
+    return descStr;
+}
+std::string 
+IGbE::TxDescCache::fetchBufToString(igbreg::TxDesc* desc) {
+    std::string descStr = "TxDescFetch_addr: ";
+    descStr += csprintf("%#x", txd_op::getBuf(desc));
+    descStr += " TxDescFetch_len: ";
+    descStr += csprintf("%u", txd_op::getLen(desc));
+    return descStr;
 }
 
 ///////////////////////////// IGbE::RxM2funcContext //////////////////////////////

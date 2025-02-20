@@ -237,6 +237,8 @@ class IGbE : public EtherDevice
         virtual void enableSm() = 0;
         virtual void actionAfterWb() {}
         virtual void fetchAfterWb() = 0;
+        virtual std::string wbBufToString(int idx) = 0;
+        virtual std::string fetchBufToString(T* desc) = 0;
 
         typedef std::deque<T *> CacheType;
         CacheType usedCache;
@@ -381,6 +383,19 @@ class IGbE : public EtherDevice
             if (!igbe->rxTick && igbe->drainState() == DrainState::Running)
                 fetchDescriptors();
         }
+        std::string wbBufToString(int idx) override {
+            // return the string of the wbBuf[idx] with igbreg::RxDesc format
+            igbreg::RxDesc *desc;
+            desc = wbBuf + idx;
+            std::string descStr = "RxDescWb_pktlen: ";
+            descStr += csprintf("%u", desc->adv_wb.pkt_len);
+            return descStr;
+        }
+        std::string fetchBufToString(igbreg::RxDesc* desc) override {
+            std::string descStr = "RxDescFetch_addr: ";
+            descStr += csprintf("%#x", desc->adv_read.pkt);
+            return descStr;
+        }
 
         bool pktDone;
 
@@ -482,6 +497,8 @@ class IGbE : public EtherDevice
             if (!igbe->txTick && igbe->drainState() == DrainState::Running)
                 fetchDescriptors();
         }
+        std::string wbBufToString(int idx) override;
+        std::string fetchBufToString(igbreg::TxDesc* desc) override;
 
 
 

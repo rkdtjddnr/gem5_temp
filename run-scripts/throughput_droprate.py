@@ -7,7 +7,7 @@ num_queues = 1
 script = "dpdk-testpmd"
 # num_queues = 2
 # script = "dpdk-set" # have to set
-base_folder = "/home/jmhhh/Documents/CXL_network/gem5_dpdk_multiqueue/gem5-dpdk-setup/rundir/20241017-dpdk-set-1core-l3-2port-4ns"  # have to set
+base_folder = "/home/jmhhh/Documents/CXL_network/gem5_dpdk_multiqueue/gem5-dpdk-setup/rundir/20250218-dpdk-set-1core-l3-2port-4ns-high-spec-fast-l3"  # have to set
 
 def parse_stats(file_path):
     with open(file_path, 'r') as file:

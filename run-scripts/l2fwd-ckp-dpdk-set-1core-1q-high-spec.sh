@@ -1,17 +1,19 @@
 #!/bin/bash
 #wbWidth=4 causes error when you run
-CACHE_CONFIG="--caches --l2cache --l3cache --l3_multiport --l3_size 16MB --l3_assoc 16 --ddio-enabled --l1i_size=64kB --l1i_assoc=4 \
---l1d_size=64kB --l1d_assoc=4 --l2_size=1MB --l2_assoc=8 --cacheline_size=64 --l3_cpu_side_ports_connection_count 2" 
-CPU_CONFIG="--param=system.cpu[0:4].l2cache.mshrs=46 --param=system.cpu[0:4].dcache.mshrs=20 \
-  --param=system.cpu[0:4].icache.mshrs=20 --param=system.l3.ddio_way_part=4 \
-  --param=system.switch_cpus[0:4].decodeWidth=4 --param=system.l3.is_llc=True \
-  --param=system.switch_cpus[0:4].numROBEntries=128 --param=system.switch_cpus[0:4].numIQEntries=120 \
-  --param=system.switch_cpus[0:4].LQEntries=68 --param=system.switch_cpus[0:4].SQEntries=72 \
+CACHE_CONFIG="--caches --l2cache --l3cache --l3_multiport --l3_size 16MB --l3_assoc 16 --ddio-enabled --l1i_size=64kB --l1i_assoc=8 \
+--l1d_size=64kB --l1d_assoc=8 --l2_size=1MB --l2_assoc=8 --cacheline_size=64 --l3_cpu_side_ports_connection_count 2" 
+CPU_CONFIG="--param=system.l3.mshrs=256 --param=system.cpu[0:4].l2cache.mshrs=46 --param=system.cpu[0:4].dcache.mshrs=20 --param=system.cpu[0:4].icache.mshrs=20 \
+  --param=system.l3.tgts_per_mshr=12 --param=system.cpu[0:4].l2cache.tgts_per_mshr=12 --param=system.cpu[0:4].dcache.tgts_per_mshr=20 --param=system.cpu[0:4].icache.tgts_per_mshr=20 \
+  --param=system.l3.data_latency=30 --param=system.l3.response_latency=30 --param=system.l3.tag_latency=30 --param=system.l3.ddio_way_part=4 \
+  --param=system.switch_cpus[0:4].decodeWidth=8 --param=system.l3.is_llc=True \
+  --param=system.switch_cpus[0:4].numROBEntries=512 --param=system.switch_cpus[0:4].numIQEntries=120 \
+  --param=system.switch_cpus[0:4].LQEntries=248 --param=system.switch_cpus[0:4].SQEntries=122 \
   --param=system.switch_cpus[0:4].numPhysIntRegs=256 --param=system.switch_cpus[0:4].numPhysFloatRegs=256 \
-  --param=system.switch_cpus[0:4].branchPred.BTBEntries=8192 --param=system.switch_cpus[0:4].issueWidth=8 \
+  --param=system.switch_cpus[0:4].branchPred.BTBEntries=16384 --param=system.switch_cpus[0:4].issueWidth=8 \
   --param=system.switch_cpus[0:4].commitWidth=8 --param=system.switch_cpus[0:4].dispatchWidth=8 \
-  --param=system.switch_cpus[0:4].fetchWidth=4 --param=system.switch_cpus[0:4].wbWidth=8 \
-  --param=system.switch_cpus[0:4].squashWidth=8 --param=system.switch_cpus[0:4].renameWidth=8"
+  --param=system.switch_cpus[0:4].fetchWidth=8 --param=system.switch_cpus[0:4].wbWidth=8 \
+  --param=system.switch_cpus[0:4].squashWidth=8 --param=system.switch_cpus[0:4].renameWidth=8 \
+  --param=system.iobus.is_ioxbar=True"
 
 function usage {
   echo "Usage: $0 --num-nics <num_nics> [--script <script>] [--packet-rate <packet_rate>] [--packet-size <packet_size>] [--loadgen-find-bw] [--take-checkpoint] [-h|--help]"
@@ -115,7 +117,7 @@ while true; do
   esac
 done
 
-CKPT_DIR=${GIT_ROOT}/ckpts/$num_nics"NIC"-$num_queues"Qs"-$GUEST_SCRIPT
+CKPT_DIR=${GIT_ROOT}/ckpts/"241014-"$num_nics"NIC"-$num_queues"Qs"-$GUEST_SCRIPT
 if [[ -z "$num_nics" ]]; then
   echo "Error: missing argument --num-nics" >&2
   usage
@@ -127,12 +129,12 @@ fi
 
 if [[ -n "$checkpoint" ]]; then
   # RUNDIR=${GIT_ROOT}/rundir/$num_nics"NIC-ckp"-$GUEST_SCRIPT
-  RUNDIR=${GIT_ROOT}/rundir/SingleQueue/$num_nics"NIC-"$num_queues"Qs-1core-ckp-"$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/241014-SingleQueue/$num_nics"NIC-"$num_queues"Qs-1core-ckp-"$GUEST_SCRIPT
   setup_dirs
   echo "Taking Checkpoint for NICs=$num_nics Queues=$num_queues" >&2
   GEM5TYPE="fast"
   # packet-size = 0 leads to segfault
-  PACKET_SIZE=128
+  PACKET_SIZE=48
   CPUTYPE="AtomicSimpleCPU"
   CONFIGARGS="--max-checkpoints 3 --cpu-clock=$Freq --loadgen-start=2628842328231400"
   # CONFIGARGS="--max-checkpoints 1 -r 1 --cpu-clock=$Freq --loadgen-start=2628842328231400"
@@ -149,7 +151,7 @@ else
     usage
   fi
   ((RATE = PACKET_RATE * PACKET_SIZE * 8 / 1024 / 1024 / 1024))
-  RUNDIR=${GIT_ROOT}/rundir/dpdk-set-1core-l3-2port/$num_nics"NIC-"$num_queues"Qs-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/$(date +%Y%m%d)-dpdk-set-1core-l3-2port-4ns-high-spec-short/$num_nics"NIC-"$num_queues"Qs-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
   setup_dirs
 # /dpdk-testpmd-freq-scaling-test
   echo "Running NICs=$num_nics at $RATE GBPS" >&2
@@ -160,8 +162,11 @@ else
   # DEBUG_FLAGS="--debug-flags=LoadgenDebug,EthernetDesc,EthernetDpdk" #--debug-start=33952834348" #EthernetAll,EthernetDesc,LoadgenDebug
   # CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=6497528130048 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   # --warmup-dpdk 200000000000"
-  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=34141583233884 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
-  --warmup-dpdk 200000000000"
+  # CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=11613827092665 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  # --warmup-dpdk 200000000000"
+
+  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=11413847092665 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  --warmup-dpdk 20000000"
   run_simulation > ${RUNDIR}/simout
   exit
 fi

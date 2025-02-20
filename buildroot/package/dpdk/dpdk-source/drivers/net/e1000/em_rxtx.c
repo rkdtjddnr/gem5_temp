@@ -1109,7 +1109,7 @@ eth_em_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 			txd->read.cmd_type_len =
 				rte_cpu_to_le_32(cmd_type_len | slen);
 			txd->read.olinfo_status =
-				rte_cpu_to_le_32(olinfo_status);
+				rte_cpu_to_le_32(olinfo_status); // TODO - gem5, tx descriptor write prints log
 
 			txe->last_id = tx_last;
 			tx_id = txe->next_id;
@@ -1152,7 +1152,7 @@ end_of_tx:
 	PMD_TX_LOG(DEBUG, "port_id=%u queue_id=%u tx_tail=%u nb_tx=%u",
 		(unsigned) txq->port_id, (unsigned) txq->queue_id,
 		(unsigned) tx_id, (unsigned) nb_tx);
-	E1000_PCI_REG_WRITE_RELAXED(txq->tdt_reg_addr, tx_id);
+	E1000_PCI_REG_WRITE_RELAXED(txq->tdt_reg_addr, tx_id); // TODO - gem5, tdt_reg_addr prints log
 	txq->tx_tail = tx_id;
 
 	return nb_tx;
@@ -1463,7 +1463,6 @@ eth_em_xmit_pkts_m2func_dta(void *tx_queue, struct rte_mbuf **tx_pkts,
 				current_batch_size = total_packets > M2FUNC_DTA_TX_REST_FLIT_BATCH_SIZE ? M2FUNC_DTA_TX_REST_FLIT_BATCH_SIZE : total_packets;
 			}
 
-			uint64_t job_packet[M2FUNC_DTA_FLIT_ARRAY_SIZE] = {0}; // 64B job packet
 			// Fill job packet
 			// Packet format
 			// 1. descriptor address (8B)
@@ -1474,29 +1473,30 @@ eth_em_xmit_pkts_m2func_dta(void *tx_queue, struct rte_mbuf **tx_pkts,
 
 			// If packet index is 0, fill the metadata
 			if (packet_index == 0) {
-				job_packet[0] = descriptor_addr;
-				job_packet[1] = completion_addr;
-				job_packet[2] = rte_cpu_to_le_64(total_packets);
+				// job_packet[0] = descriptor_addr;
+				// job_packet[1] = completion_addr;
+				// job_packet[2] = rte_cpu_to_le_64(nb_pkts);
 
+				// // Add mbuf addresses
+				// memcpy(&job_packet[3], mbuf_addr_buffer, current_batch_size * sizeof(uint64_t));
+
+				txq->zero_copy_job_packet[2] = rte_cpu_to_le_64(nb_pkts);
 				// Add mbuf addresses
-				memcpy(&job_packet[3], mbuf_addr_buffer, current_batch_size * sizeof(uint64_t));
-				// printf("DPDK[TX]: packet index[%d]\n", packet_index);
-				// for (int i = 0; i < M2FUNC_DTA_FLIT_ARRAY_SIZE; i++) {
-				// 	printf("DPDK[TX]: job_packet[%d]: %ld\n", i, job_packet[i]);
-				// }
+				memcpy(&(txq->zero_copy_job_packet[3]), mbuf_addr_buffer, current_batch_size * sizeof(uint64_t));
+				
+				// Submit the job to DTA
+				E1000_PCI_REG_WRITE64B(txq->dta_job_submit_reg_addr, txq->zero_copy_job_packet);
 			} else {
+				uint64_t job_packet[M2FUNC_DTA_FLIT_ARRAY_SIZE] = {0}; // 64B job packet
 				// Add mbuf addresses
 				memcpy(job_packet, &mbuf_addr_buffer[M2FUNC_DTA_TX_FIRST_FLIT_BATCH_SIZE + (packet_index - 1) * M2FUNC_DTA_TX_REST_FLIT_BATCH_SIZE], current_batch_size * sizeof(uint64_t));
 				// printf("DPDK[TX]: packet index[%d]\n", packet_index);
 				// for (int i = 0; i < M2FUNC_DTA_FLIT_ARRAY_SIZE; i++) {
 				// 	printf("DPDK[TX]: job_packet[%d]: %ld\n", i, job_packet[i]);
 				// }
-			}
-
-			// printf("DPDK[TX]: Submitting job to DTA\n");
-			// fflush(stdout);
-			// Submit the job to DTA
-			E1000_PCI_REG_WRITE64B(txq->dta_job_submit_reg_addr, job_packet);
+				// Submit the job to DTA
+				E1000_PCI_REG_WRITE64B(txq->dta_job_submit_reg_addr, job_packet);
+			}			
 
 			// Update counters
 			total_packets -= current_batch_size;
@@ -1809,7 +1809,7 @@ eth_em_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		 * not volatile, they could be reordered which could lead to
 		 * using invalid descriptor fields when read from rxd.
 		 */
-		rxdp = &rx_ring[rx_id];
+		rxdp = &rx_ring[rx_id]; // TODO -> gem5, set rx_ring's addresses to print logs
 		// status = rxdp->status;
 		staterr = rxdp->wb.upper.status_error; //jm
 		// if (! (status & E1000_RXD_STAT_DD))
@@ -1861,7 +1861,7 @@ eth_em_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		}
 
 		nb_hold++;
-		rxe = &sw_ring[rx_id];
+		rxe = &sw_ring[rx_id]; // TODO - gem5, set mbuf's addresses to print logs
 		rx_id++;
 		if (rx_id == rxq->nb_rx_desc)
 			rx_id = 0;
@@ -1971,7 +1971,7 @@ eth_em_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 			   (unsigned) nb_rx);
 		rx_id = (uint16_t) ((rx_id == 0) ?
 			(rxq->nb_rx_desc - 1) : (rx_id - 1));
-		E1000_PCI_REG_WRITE(rxq->rdt_reg_addr, rx_id);
+		E1000_PCI_REG_WRITE(rxq->rdt_reg_addr, rx_id); // TODO - gem5, set rdt_reg_addr to print logs
 		nb_hold = 0;
 	}
 	rxq->nb_rx_hold = nb_hold;
@@ -2351,15 +2351,11 @@ eth_em_recv_pkts_m2func_dta(void *rx_queue, struct rte_mbuf **rx_pkts,
 		// }
 
 		// TODO - JM : maybe we can consider offloading the below code to DTA. Give the nmb address to DTA
-		staterr = rxd.wb.upper.status_error;
-		pkt_len = (uint16_t) (rte_le_to_cpu_16(rxd.wb.upper.length) - rxq->crc_len);
-
-		// rte_mb();
-		// printf("DPDK[RX]: Completed packet[%ld] - pkt_len: %hu, staterr: %u\n", i, pkt_len, staterr);
-		// fflush(stdout);
-
 		nmb->data_off = RTE_PKTMBUF_HEADROOM;
 		rte_packet_prefetch((char *)nmb->buf_addr + nmb->data_off);
+
+		staterr = rxd.wb.upper.status_error;
+		pkt_len = (uint16_t) (rte_le_to_cpu_16(rxd.wb.upper.length) - rxq->crc_len);
 		nmb->nb_segs = 1;
 		nmb->next = NULL;
 		nmb->pkt_len = pkt_len;
@@ -3245,7 +3241,7 @@ eth_em_rx_queue_setup(struct rte_eth_dev *dev,
 		rxq->mbuf_array[i].mbuf = mbuf;
 		rxq->mbuf_addr_array[i] = rte_cpu_to_le_64(rte_mbuf_data_iova_default(mbuf));
 		if (i < 32) {
-			printf("======== rxq[%d]->mbuf_addr_array[%d]: 0x%lx ========\n", queue_idx, i, rxq->mbuf_addr_array[i]);			
+			printf("======== rxq[%d]->mbuf_addr_array[%d]: 0x%lx priv_size: %u ========\n", queue_idx, i, rxq->mbuf_addr_array[i], mbuf->priv_size);			
 			fflush(stdout);
 		}
 	}

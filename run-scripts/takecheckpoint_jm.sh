@@ -13,15 +13,15 @@
 # 1 core 1 queue
 # ./l2fwd-ckp-dpdk-set-1core-1q-multi-port-4ns-m2func.sh --take-checkpoint --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz
 
-RESOURCE_DIR="resources-dpdk-m2func-dta-zerocopy-volatile"
-RUN_COMMAND="./l2fwd-ckp-dpdk-set-1core-1q-multi-port-4ns-m2func-dta-zerocopy-volatile.sh --take-checkpoint --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz"
+RESOURCE_DIR="resources-dpdk-m2func-dta"
+RUN_COMMAND="./l2fwd-ckp-dpdk-set-1core-1q-multi-port-4ns-m2func-dta-high-spec.sh --take-checkpoint --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz"
 
 
 # build disk image for gem5
 cd $GIT_ROOT/buildroot_new
 
 # # echo current directory
-# echo "Current directory: $(pwd)"
+echo "Current directory: $(pwd)"
 
 make clean
 

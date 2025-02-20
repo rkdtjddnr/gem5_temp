@@ -70,6 +70,10 @@
 #include "debug/AdaptiveDdioCache.hh"
 #include "base.hh"
 
+// LOG_LEVEL: 0 - no log, 1 - ring buffer log, 2 - dta log, 3 - dta log prepare
+#define LOG_LEVEL 0
+
+
 namespace gem5
 {
 
@@ -580,68 +584,189 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     }
 
     // For LOG
+    // if LOG_LEVEL is 1, ring buffer log
+    // if LOG_LEVEL is 2, dta log
+    #if LOG_LEVEL == 1
+        // For Ring Buffer LOG
+        if (pkt->getAddr() == 1073752088) {
+            printf("[LOG] %llu, %s, %s, %d, RX_TAIL_WR\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+        }
+        if (pkt->getAddr() == 1073756184) {
+            printf("[LOG] %llu, %s, %s, %d, TX_TAIL_WR\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+        }
+
+        // RX Descriptor (63-95)
+        if (pkt->getAddr() >= 8624156656 && pkt->getAddr() < 8624156656 + 512) {
+            printf("[LOG] %llu, %s, %s, %d, RX_DESC_63_95_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+        }
+
+        // RX Descriptor (95-127)
+        if (pkt->getAddr() >= 8624157168 && pkt->getAddr() < 8624157168 + 512) {
+            printf("[LOG] %llu, %s, %s, %d, RX_DESC_95_127_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+        }
+
+        // TX Descriptor (96-128)
+        if (pkt->getAddr() >= 8624239616 && pkt->getAddr() < 8624239616 + 512) {
+            printf("[LOG] %llu, %s, %s, %d, TX_DESC_96_128_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+        }
+
+        // mbuf for RX Descriptor (63-95 prev)
+        uint64_t mbuf_addr_set_95_prev[] = {
+            0x20154c000, 0x20154c980, 0x20154d300, 0x20154dc80, 
+            0x20154e600, 0x20154ef80, 0x20154f900, 0x201550280, 
+            0x201550c00, 0x201551580, 0x201551f00, 0x201552880, 
+            0x201553200, 0x201553b80, 0x201554500, 0x201554e80, 
+            0x201555800, 0x201556180, 0x201556b00, 0x201557480,
+            0x201557e00, 0x201558780, 0x201559100, 0x201559a80, 
+            0x20155a400, 0x20155ad80, 0x20155b700, 0x20155c080, 
+            0x20155ca00, 0x20155d380, 0x20155dd00, 0x20155e680
+        };
+
+        // mbuf's start addr for RX Descriptor (63-95 prev)
+        uint64_t mbuf_start_addr_set_95_prev[] = {
+            0x20154bf00, 0x20154c880, 0x20154d200, 0x20154db80, 
+            0x20154e500, 0x20154ee80, 0x20154f800, 0x201550180, 
+            0x201550b00, 0x201551480, 0x201551e00, 0x201552780, 
+            0x201553100, 0x201553a80, 0x201554400, 0x201554d80, 
+            0x201555700, 0x201556080, 0x201556a00, 0x201557380, 
+            0x201557d00, 0x201558680, 0x201559000, 0x201559980, 
+            0x20155a300, 0x20155ac80, 0x20155b600, 0x20155bf80, 
+            0x20155c900, 0x20155d280, 0x20155dc00, 0x20155e580
+        };
+
+        // mbuf for RX Descriptor (63-95 new)
+        uint64_t mbuf_addr_set_95_new[] = {
+            0x201676d80, 0x201676400, 0x201675a80, 0x201675100,
+            0x201674780, 0x201673e00, 0x201673480, 0x201672b00,
+            0x201672180, 0x201671800, 0x201670e80, 0x201670500,
+            0x20166fb80, 0x20166f200, 0x20166e880, 0x20166df00,
+            0x20166d580, 0x20166cc00, 0x20166c280, 0x20166b900,
+            0x20166af80, 0x20166a600, 0x201669c80, 0x201669300,
+            0x201668980, 0x201668000, 0x201667680, 0x201666d00,
+            0x201666380, 0x201665a00, 0x201665080, 0x201664700
+        };
+
+        // mbuf's structure part
+        for (int i = 0; i < 32; i ++) {
+            if (pkt->getAddr() == mbuf_start_addr_set_95_prev[i]) {
+                printf("[LOG] %llu, %s, %s, %d, MBUFSTRUCT95PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+        }
+
+        // mbuf's data part
+        for (int i = 0; i < 32; i++) {
+            if (pkt->getAddr() == mbuf_addr_set_95_prev[i]) {
+                printf("[LOG] %llu, %s, %s, %d, MBUF95PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+        }
+
+        for (int i = 0; i < 32; i++) {
+            if (pkt->getAddr() == mbuf_addr_set_95_new[i]) {
+                printf("[LOG] %llu, %s, %s, %d, MBUF95NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+        }
+    #endif
+
+    #if LOG_LEVEL == 2
     // RX_JOB_SUBMIT
-    // if (pkt->getAddr() == 1073752256) {
-    //     printf("[LOG] %llu, %s, %s, %d, RX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
-    // }
-    // // TX_JOB_SUBMIT
-    // if (pkt->getAddr() == 1073756352) {
-    //     printf("[LOG] %llu, %s, %s, %d, TX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
-    // }
+    if (pkt->getAddr() == 1073752256) {
+        printf("[LOG] %llu, %s, %s, %d, RX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
+    // TX_JOB_SUBMIT
+    if (pkt->getAddr() == 1073756352) {
+        printf("[LOG] %llu, %s, %s, %d, TX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
 
-    // uint64_t mbuf_addr1[] = { // RX_JOB_ID 7
-    //     0x201095200, 0x201094880, 0x201093f00, 0x201093580, 0x201092c00, 0x201092280, 
-    //     0x201091900, 0x201090f80, 0x201090600, 0x20108fc80, 0x20108f300, 0x20108e980, 
-    //     0x20108e000, 0x20108d680, 0x20108cd00, 0x20108c380, 0x20108ba00, 0x20108b080, 
-    //     0x20108a700, 0x201089d80, 0x201089400, 0x201088a80, 0x201088100, 0x201087780, 
-    //     0x201086e00, 0x201086480, 0x201085b00, 0x201085180, 0x201084800, 0x201083e80, 
-    //     0x201083500, 0x201082b80
-    // };
+    uint64_t mbuf_addr1[] = { // RX_JOB_ID 7
+        // for zero-copy
+        // 0x201095200, 0x201094880, 0x201093f00, 0x201093580, 0x201092c00, 0x201092280, 
+        // 0x201091900, 0x201090f80, 0x201090600, 0x20108fc80, 0x20108f300, 0x20108e980, 
+        // 0x20108e000, 0x20108d680, 0x20108cd00, 0x20108c380, 0x20108ba00, 0x20108b080, 
+        // 0x20108a700, 0x201089d80, 0x201089400, 0x201088a80, 0x201088100, 0x201087780, 
+        // 0x201086e00, 0x201086480, 0x201085b00, 0x201085180, 0x201084800, 0x201083e80, 
+        // 0x201083500, 0x201082b80
 
-    // uint64_t mbuf_addr2[] = { // RX_JOB_ID 9
-    //     0x20106f200, 0x20106e880, 0x20106df00, 0x20106d580, 0x20106cc00, 0x20106c280,
-    //     0x20106b900, 0x20106af80, 0x20106a600, 0x201069c80, 0x201069300, 0x201068980,
-    //     0x201068000, 0x201067680, 0x201066d00, 0x201066380, 0x201065a00, 0x201065080,
-    //     0x201064700, 0x201063d80, 0x201063400, 0x201062a80, 0x201062100, 0x201061780,
-    //     0x201060e00, 0x201060480, 0x20105fb00, 0x20105f180, 0x20105e800, 0x20105de80,
-    //     0x20105d500, 0x20105cb80
-    // };
+        // for non zero-copy
+        0x2010a8200, 0x2010a7880, 0x2010a6f00, 0x2010a6580, 0x2010a5c00, 0x2010a5280,
+        0x2010a4900, 0x2010a3f80, 0x2010a3600, 0x2010a2c80, 0x2010a2300, 0x2010a1980, 0x2010a1000, 0x2010a0680, 
+        0x20109fd00, 0x20109f380, 0x20109ea00, 0x20109e080, 0x20109d700, 0x20109cd80, 0x20109c400, 0x20109ba80,
+        0x20109b100, 0x20109a780, 0x201099e00, 0x201099480, 0x201098b00, 0x201098180, 0x201097800, 0x201096e80,
+        0x201096500, 0x201095b80
+    };
 
-    // // MBUF_1
-    // for (int i = 0; i < 32; i++) {
-    //     if (pkt->getAddr() == mbuf_addr1[i]) {
-    //         printf("[LOG] %llu, %s, %s, %d, MBUF_1[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
-    //     }
-    // }
+    uint64_t mbuf_addr2[] = { // RX_JOB_ID 9
+        0x20106f200, 0x20106e880, 0x20106df00, 0x20106d580, 0x20106cc00, 0x20106c280,
+        0x20106b900, 0x20106af80, 0x20106a600, 0x201069c80, 0x201069300, 0x201068980,
+        0x201068000, 0x201067680, 0x201066d00, 0x201066380, 0x201065a00, 0x201065080,
+        0x201064700, 0x201063d80, 0x201063400, 0x201062a80, 0x201062100, 0x201061780,
+        0x201060e00, 0x201060480, 0x20105fb00, 0x20105f180, 0x20105e800, 0x20105de80,
+        0x20105d500, 0x20105cb80
+    };
 
-    // // MBUF_2
-    // for (int i = 0; i < 32; i++) {
-    //     if (pkt->getAddr() == mbuf_addr2[i]) {
-    //         printf("[LOG] %llu, %s, %s, %d, MBUF_2[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
-    //     }
-    // }
+    uint64_t desc_rx[] = {
+        // for zero-copy
+        // 8624136384, 8624136448, 8624136512, 8624136576, 8624136640, 8624136704, 8624136768, 8624136832
 
-    // // DESC_RX
-    // if (pkt->getAddr() == 8624136384 || pkt->getAddr() == 8624136448 || pkt->getAddr() == 8624136512 || pkt->getAddr() == 8624136576
-    //    || pkt->getAddr() == 8624136640 || pkt->getAddr() == 8624136704 || pkt->getAddr() == 8624136768 || pkt->getAddr() == 8624136832) {
-    //     int desc_idx = (pkt->getAddr() - 8624136384) / 64;
-    //     printf("[LOG] %llu, %s, %s, %d, DESC_RX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, desc_idx);
-    // }
-    // // DESC_TX
-    // if (pkt->getAddr() == 8624220032 || pkt->getAddr() == 8624220096 || pkt->getAddr() == 8624220160 || pkt->getAddr() == 8624220224) {
-    //     int desc_idx = (pkt->getAddr() - 8624220032) / 64;
-    //     printf("[LOG] %llu, %s, %s, %d, DESC_TX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, desc_idx);
-    // }
+        // for non-zero-copy
+        0x20209e0c0, 0x20209e100, 0x20209e140, 0x20209e180, 0x20209e1c0, 0x20209e200, 0x20209e240, 0x20209e280
+    };
 
-    // // COMP_RX
-    // if (pkt->getAddr() == 0x20209e080) {
-    //     printf("[LOG] %llu, %s, %s, %d, COMP_RX\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
-    // }
-    // // COMP_TX
-    // if (pkt->getAddr() == 0x2020b2c00) {
-    //     printf("[LOG] %llu, %s, %s, %d, COMP_TX\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
-    // }
+    uint64_t desc_tx[] = {
+        // for zero-copy
+        // 8624220032, 8624220096, 8624220160, 8624220224
 
+        // for non-zero-copy
+        0x2020b2780, 0x2020b27c0, 0x2020b2800, 0x2020b2840
+    };
+
+    // for zero-copy
+    // uint64_t comp_rx = 0x20209e080;
+    // uint64_t comp_tx = 0x2020b2c00;
+
+    // for non-zero-copy
+    uint64_t comp_rx = 0x20209e080;
+    uint64_t comp_tx = 0x2020b2c00;
+
+
+    // MBUF_1
+    for (int i = 0; i < 32; i++) {
+        if (pkt->getAddr() == mbuf_addr1[i]) {
+            printf("[LOG] %llu, %s, %s, %d, MBUF_1[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+    }
+
+    // MBUF_2
+    for (int i = 0; i < 32; i++) {
+        if (pkt->getAddr() == mbuf_addr2[i]) {
+            printf("[LOG] %llu, %s, %s, %d, MBUF_2[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+    }
+
+    // DESC_RX
+    for (int i = 0; i < 8; i++) {
+        if (pkt->getAddr() == desc_rx[i]) {
+            printf("[LOG] %llu, %s, %s, %d, DESC_RX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+    }
+    
+    // DESC_TX
+    for (int i = 0; i < 4; i++) {
+        if (pkt->getAddr() == desc_tx[i]) {
+            printf("[LOG] %llu, %s, %s, %d, DESC_TX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+    }
+
+    // COMP_RX
+    if (pkt->getAddr() == comp_rx) {
+        printf("[LOG] %llu, %s, %s, %d, COMP_RX\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+    }
+    // COMP_TX
+    if (pkt->getAddr() == comp_tx) {
+        printf("[LOG] %llu, %s, %s, %d, COMP_TX\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+    }
+
+    #endif
+    
     // Here we charge the headerDelay that takes into account the latencies
     // of the bus, if the packet comes from it.
     // The latency charged is just the value set by the access() function.
@@ -739,58 +864,170 @@ BaseCache::recvTimingResp(PacketPtr pkt)
     DPRINTF(Cache, "%s: Handling response %s\n", __func__,
             pkt->print());
 
-    // uint64_t mbuf_addr1[] = { // RX_JOB_ID 7
-    //     0x201095200, 0x201094880, 0x201093f00, 0x201093580, 0x201092c00, 0x201092280, 
-    //     0x201091900, 0x201090f80, 0x201090600, 0x20108fc80, 0x20108f300, 0x20108e980, 
-    //     0x20108e000, 0x20108d680, 0x20108cd00, 0x20108c380, 0x20108ba00, 0x20108b080, 
-    //     0x20108a700, 0x201089d80, 0x201089400, 0x201088a80, 0x201088100, 0x201087780, 
-    //     0x201086e00, 0x201086480, 0x201085b00, 0x201085180, 0x201084800, 0x201083e80, 
-    //     0x201083500, 0x201082b80
-    // };
+    #if LOG_LEVEL == 1
+    // For Ring Buffer LOG
+    // RX Descriptor (63-95)
+    uint64_t rx_desc_addr_63 = 8624156656;
+    if (pkt->getAddr() >= rx_desc_addr_63 && pkt->getAddr() < rx_desc_addr_63 + 512) {
+        printf("[LOG] %llu, %s, %s, %d, RX_DESC_63_95_RESP\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
 
-    // uint64_t mbuf_addr2[] = { // RX_JOB_ID 9
-    //     0x20106f200, 0x20106e880, 0x20106df00, 0x20106d580, 0x20106cc00, 0x20106c280,
-    //     0x20106b900, 0x20106af80, 0x20106a600, 0x201069c80, 0x201069300, 0x201068980,
-    //     0x201068000, 0x201067680, 0x201066d00, 0x201066380, 0x201065a00, 0x201065080,
-    //     0x201064700, 0x201063d80, 0x201063400, 0x201062a80, 0x201062100, 0x201061780,
-    //     0x201060e00, 0x201060480, 0x20105fb00, 0x20105f180, 0x20105e800, 0x20105de80,
-    //     0x20105d500, 0x20105cb80
-    // };
+    // RX Descriptor (95-127)
+    if (pkt->getAddr() >= 8624157168 && pkt->getAddr() < 8624157168 + 512) {
+        printf("[LOG] %llu, %s, %s, %d, RX_DESC_95_127_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
 
-    // // MBUF_1
-    // for (int i = 0; i < 32; i++) {
-    //     if (pkt->getAddr() == mbuf_addr1[i]) {
-    //         printf("[LOG] %llu, %s, %s, %d, MBUF_1[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
-    //     }
-    // }
+    // TX Descriptor (96-128)
+    if (pkt->getAddr() >= 8624239616 && pkt->getAddr() < 8624239616 + 512) {
+        printf("[LOG] %llu, %s, %s, %d, TX_DESC_96_128_RESP\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
 
-    // // MBUF_2
-    // for (int i = 0; i < 32; i++) {
-    //     if (pkt->getAddr() == mbuf_addr2[i]) {
-    //         printf("[LOG] %llu, %s, %s, %d, MBUF_2[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
-    //     }
-    // }
+    // mbuf for RX Descriptor (63-95 prev)
+    uint64_t mbuf_addr_set_95_prev[] = {
+        0x20154c000, 0x20154c980, 0x20154d300, 0x20154dc80, 
+        0x20154e600, 0x20154ef80, 0x20154f900, 0x201550280, 
+        0x201550c00, 0x201551580, 0x201551f00, 0x201552880, 
+        0x201553200, 0x201553b80, 0x201554500, 0x201554e80, 
+        0x201555800, 0x201556180, 0x201556b00, 0x201557480,
+        0x201557e00, 0x201558780, 0x201559100, 0x201559a80, 
+        0x20155a400, 0x20155ad80, 0x20155b700, 0x20155c080, 
+        0x20155ca00, 0x20155d380, 0x20155dd00, 0x20155e680
+    };
 
-    // // DESC_RX
-    // if (pkt->getAddr() == 8624136384 || pkt->getAddr() == 8624136448 || pkt->getAddr() == 8624136512 || pkt->getAddr() == 8624136576
-    //    || pkt->getAddr() == 8624136640 || pkt->getAddr() == 8624136704 || pkt->getAddr() == 8624136768 || pkt->getAddr() == 8624136832) {
-    //     int desc_idx = (pkt->getAddr() - 8624136384) / 64;
-    //     printf("[LOG] %llu, %s, %s, %d, DESC_RX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, desc_idx);
-    // }
-    // // DESC_TX
-    // if (pkt->getAddr() == 8624220032 || pkt->getAddr() == 8624220096 || pkt->getAddr() == 8624220160 || pkt->getAddr() == 8624220224) {
-    //     int desc_idx = (pkt->getAddr() - 8624220032) / 64;
-    //     printf("[LOG] %llu, %s, %s, %d, DESC_TX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, desc_idx);
-    // }
+    // mbuf's start addr for RX Descriptor (63-95 prev)
+    uint64_t mbuf_start_addr_set_95_prev[] = {
+        0x20154bf00, 0x20154c880, 0x20154d200, 0x20154db80, 
+        0x20154e500, 0x20154ee80, 0x20154f800, 0x201550180, 
+        0x201550b00, 0x201551480, 0x201551e00, 0x201552780, 
+        0x201553100, 0x201553a80, 0x201554400, 0x201554d80, 
+        0x201555700, 0x201556080, 0x201556a00, 0x201557380, 
+        0x201557d00, 0x201558680, 0x201559000, 0x201559980, 
+        0x20155a300, 0x20155ac80, 0x20155b600, 0x20155bf80, 
+        0x20155c900, 0x20155d280, 0x20155dc00, 0x20155e580
+    };
 
-    // // COMP_RX
-    // if (pkt->getAddr() == 0x20209e080) {
-    //     printf("[LOG] %llu, %s, %s, %d, COMP_RX\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
-    // }
-    // // COMP_TX
-    // if (pkt->getAddr() == 0x2020b2c00) {
-    //     printf("[LOG] %llu, %s, %s, %d, COMP_TX\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
-    // }
+    // mbuf for RX Descriptor (63-95 new)
+    uint64_t mbuf_addr_set_95_new[] = {
+        0x201676d80, 0x201676400, 0x201675a80, 0x201675100,
+        0x201674780, 0x201673e00, 0x201673480, 0x201672b00,
+        0x201672180, 0x201671800, 0x201670e80, 0x201670500,
+        0x20166fb80, 0x20166f200, 0x20166e880, 0x20166df00,
+        0x20166d580, 0x20166cc00, 0x20166c280, 0x20166b900,
+        0x20166af80, 0x20166a600, 0x201669c80, 0x201669300,
+        0x201668980, 0x201668000, 0x201667680, 0x201666d00,
+        0x201666380, 0x201665a00, 0x201665080, 0x201664700
+    };
+
+    // mbuf's structure part
+    for (int i = 0; i < 32; i ++) {
+        if (pkt->getAddr() == mbuf_start_addr_set_95_prev[i]) {
+            printf("[LOG] %llu, %s, %s, %d, MBUFSTRUCT95PREV[%d]_RESP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+
+    // mbuf's data part
+    for (int i = 0; i < 32; i++) {
+        if (pkt->getAddr() == mbuf_addr_set_95_prev[i]) {
+            printf("[LOG] %llu, %s, %s, %d, MBUF95PREV[%d]_RESP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+
+    for (int i = 0; i < 32; i++) {
+        if (pkt->getAddr() == mbuf_addr_set_95_new[i]) {
+            printf("[LOG] %llu, %s, %s, %d, MBUF95NEW[%d]_RESP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+    #endif
+
+    #if LOG_LEVEL == 2
+    // DTA log
+    uint64_t mbuf_addr1[] = { // RX_JOB_ID 7
+        // for zero-copy
+        // 0x201095200, 0x201094880, 0x201093f00, 0x201093580, 0x201092c00, 0x201092280, 
+        // 0x201091900, 0x201090f80, 0x201090600, 0x20108fc80, 0x20108f300, 0x20108e980, 
+        // 0x20108e000, 0x20108d680, 0x20108cd00, 0x20108c380, 0x20108ba00, 0x20108b080, 
+        // 0x20108a700, 0x201089d80, 0x201089400, 0x201088a80, 0x201088100, 0x201087780, 
+        // 0x201086e00, 0x201086480, 0x201085b00, 0x201085180, 0x201084800, 0x201083e80, 
+        // 0x201083500, 0x201082b80
+        
+        // for non zero-copy
+        0x2010a8200, 0x2010a7880, 0x2010a6f00, 0x2010a6580, 0x2010a5c00, 0x2010a5280,
+        0x2010a4900, 0x2010a3f80, 0x2010a3600, 0x2010a2c80, 0x2010a2300, 0x2010a1980, 0x2010a1000, 0x2010a0680, 
+        0x20109fd00, 0x20109f380, 0x20109ea00, 0x20109e080, 0x20109d700, 0x20109cd80, 0x20109c400, 0x20109ba80,
+        0x20109b100, 0x20109a780, 0x201099e00, 0x201099480, 0x201098b00, 0x201098180, 0x201097800, 0x201096e80,
+        0x201096500, 0x201095b80
+    };
+
+    uint64_t mbuf_addr2[] = { // RX_JOB_ID 9
+        0x20106f200, 0x20106e880, 0x20106df00, 0x20106d580, 0x20106cc00, 0x20106c280,
+        0x20106b900, 0x20106af80, 0x20106a600, 0x201069c80, 0x201069300, 0x201068980,
+        0x201068000, 0x201067680, 0x201066d00, 0x201066380, 0x201065a00, 0x201065080,
+        0x201064700, 0x201063d80, 0x201063400, 0x201062a80, 0x201062100, 0x201061780,
+        0x201060e00, 0x201060480, 0x20105fb00, 0x20105f180, 0x20105e800, 0x20105de80,
+        0x20105d500, 0x20105cb80
+    };
+
+    uint64_t desc_rx[] = {
+        // for zero-copy
+        // 8624136384, 8624136448, 8624136512, 8624136576, 8624136640, 8624136704, 8624136768, 8624136832
+
+        // for non-zero-copy
+        0x20209e0c0, 0x20209e100, 0x20209e140, 0x20209e180, 0x20209e1c0, 0x20209e200, 0x20209e240, 0x20209e280
+    };
+
+    uint64_t desc_tx[] = {
+        // for zero-copy
+        // 8624220032, 8624220096, 8624220160, 8624220224
+
+        // for non-zero-copy
+        0x2020b2780, 0x2020b27c0, 0x2020b2800, 0x2020b2840
+    };
+
+    // for zero-copy
+    // uint64_t comp_rx = 0x20209e080;
+    // uint64_t comp_tx = 0x2020b2c00;
+
+    // for non-zero-copy
+    uint64_t comp_rx = 0x20209e080;
+    uint64_t comp_tx = 0x2020b2c00;
+
+    // MBUF_1
+    for (int i = 0; i < 32; i++) {
+        if (pkt->getAddr() == mbuf_addr1[i]) {
+            printf("[LOG] %llu, %s, %s, %d, MBUF_1[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+
+    // MBUF_2
+    for (int i = 0; i < 32; i++) {
+        if (pkt->getAddr() == mbuf_addr2[i]) {
+            printf("[LOG] %llu, %s, %s, %d, MBUF_2[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+
+    // DESC_RX
+    for (int i = 0; i < 8; i++) {
+        if (pkt->getAddr() == desc_rx[i]) {
+            printf("[LOG] %llu, %s, %s, %d, DESC_RX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+
+    // DESC_TX
+    for (int i = 0; i < 4; i++) {
+        if (pkt->getAddr() == desc_tx[i]) {
+            printf("[LOG] %llu, %s, %s, %d, DESC_TX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+
+    // COMP_RX
+    if (pkt->getAddr() == comp_rx) {
+        printf("[LOG] %llu, %s, %s, %d, COMP_RX\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
+    // COMP_TX
+    if (pkt->getAddr() == comp_tx) {
+        printf("[LOG] %llu, %s, %s, %d, COMP_TX\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
+    #endif
 
     // if this is a write, we should be looking at an uncacheable
     // write
@@ -3265,11 +3502,11 @@ DTA::recvTimingReq(PacketPtr pkt)
                 if (nb_pkts_64bit > 1024) {
                     isValidJob = false;
                     invalidRXJobRequestCount += 1;
-                    printf("The second uint64_t value of the RX job request is greater than 1024. It is not valid. So we will discard. The number of invalid RX job request is %d\n", invalidRXJobRequestCount);
+                    // printf("The second uint64_t value of the RX job request is greater than 1024. It is not valid. So we will discard. The number of invalid RX job request is %d\n", invalidRXJobRequestCount);
                 } else {
                     isValidJob = true;
                     validRXJobRequestCount += 1;
-                    printf("The second uint64_t value of the RX job request is less than 1024. It is valid. So we will start the new job. The number of valid RX job request is %d\n", validRXJobRequestCount);
+                    // printf("The second uint64_t value of the RX job request is less than 1024. It is valid. So we will start the new job. The number of valid RX job request is %d\n", validRXJobRequestCount);
                 }
             }
 
@@ -3289,7 +3526,7 @@ DTA::recvTimingReq(PacketPtr pkt)
                 }
                 DPRINTF(DDIO, "Received RX job request from CPU\n");
             } else {
-                printf("The RX job request is invalid. So we will discard the job request\n");
+                // printf("The RX job request is invalid. So we will discard the job request\n");
             }
 
             // Make response packet and send it to CPU
@@ -3419,7 +3656,9 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
         if (!dtaRXContext.valid) {
             DPRINTF(DDIO, "Parsing RX job request 0th packet from CPU\n");
             dtaRXContext.rx_job_id += 1;
-            // printf("DTA Parsing RX Job ID: %llu\n", dtaRXContext.rx_job_id);
+            if (dtaRXContext.rx_job_id == 7 || dtaRXContext.rx_job_id == 8) {
+                printf("DTA Parsing RX Job ID: %llu\n", dtaRXContext.rx_job_id);
+            }
             dtaRXContext.valid = true;
             dtaRXContext.completion_stage = false;
             uint32_t n_job_packet_received = 0;
@@ -3458,6 +3697,21 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
                 DPRINTF(DDIO, "dtaRXContext.mbuf_addr[%d]: %lx\n", i, dtaRXContext.mbuf_addr[i]);
             }
 
+            #if LOG_LEVEL == 3
+            if (dtaRXContext.rx_job_id == 7) {
+                // Print the job info
+                printf("DTA RX Job ID: %llu\n", dtaRXContext.rx_job_id);
+                printf("DTA RX Completion Addr: %lx\n", dtaRXContext.completion_addr);
+                printf("DTA RX Descriptor Addr: %lx\n", dtaRXContext.desc_addr);
+                printf("DTA RX Number of Packets: %d\n", dtaRXContext.nb_pkts);
+                printf("DTA RX mbuf addresses:\n");
+                for (uint32_t i = 0; i < dtaRXContext.n_mbuf_addr_received; i++) {
+                    printf("%lx, ", dtaRXContext.mbuf_addr[i]);
+                }
+                printf("\n");
+            }
+            #endif
+
             // Intialize the completion address with 0
             // Make the Request
             RequestPtr req = std::make_shared<Request>(dtaRXContext.completion_addr, cacheLineSize, 0, requestorId);
@@ -3491,15 +3745,28 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
             
             uint8_t *data = pkt->getPtr<uint8_t>();
             // Parse the job request from CPU
+            #if LOG_LEVEL == 3
+            if (dtaRXContext.rx_job_id == 7) {
+                // Print the job info
+                printf("DTA RX Job ID: %llu\n", dtaRXContext.rx_job_id);
+                printf("DTA RX mbuf addresses:\n");
+            }
+            #endif
             n_job_packet_received = std::min(restJobPacketNumMbufAddr, dtaRXContext.nb_pkts - dtaRXContext.n_mbuf_addr_received);
             for (uint32_t i = 0; i < n_job_packet_received; i++) {
                 dtaRXContext.mbuf_addr[dtaRXContext.n_mbuf_addr_received] = *(Addr*)data;
                 dtaRXContext.RXCompleteMap[dtaRXContext.mbuf_addr[dtaRXContext.n_mbuf_addr_received]] = false;
                 data += sizeof(Addr);
                 dtaRXContext.n_mbuf_addr_received += 1;
-                // printf("dtaRXContext.mbuf_addr[%d]: %lx ", dtaRXContext.n_mbuf_addr_received - 1, dtaRXContext.mbuf_addr[dtaRXContext.n_mbuf_addr_received - 1]);
+                #if LOG_LEVEL == 3
+                if (dtaRXContext.rx_job_id == 7)
+                    printf("%lx, ", dtaRXContext.mbuf_addr[dtaRXContext.n_mbuf_addr_received - 1]);
+                #endif
             }
-            // printf("\n");
+            #if LOG_LEVEL == 3
+            if (dtaRXContext.rx_job_id == 7)
+                printf("\n");
+            #endif
             assert(dtaRXContext.n_mbuf_addr_received <= dtaRXContext.nb_pkts);
             if (dtaRXContext.n_mbuf_addr_received == dtaRXContext.nb_pkts) {
                 // Write the temporal completion id to the completion address. To stop the break of while loop in the DPDK
@@ -3529,7 +3796,7 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
     } else if (pkt->isTXJobReq()) {
         if (!dtaTXContext.valid) {
             dtaTXContext.tx_job_id += 1;
-            printf("DTA Parsing TX Job ID: %llu\n", dtaTXContext.tx_job_id);
+            // printf("DTA Parsing TX Job ID: %llu\n", dtaTXContext.tx_job_id);
             DPRINTF(DDIO, "Parsing TX job request 0th packet from CPU\n");
             dtaTXContext.valid = true;
             uint32_t n_job_packet_received = 0;
@@ -3573,6 +3840,20 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
                     data += sizeof(Addr);
                     dtaTXContext.n_mbuf_addr_received += 1;
                 }
+                #if LOG_LEVEL == 3
+                if (dtaTXContext.tx_job_id <= 7) {
+                    // Print the job info
+                    printf("DTA TX Job ID: %llu\n", dtaTXContext.tx_job_id);
+                    printf("DTA TX Descriptor Addr: %lx\n", dtaTXContext.desc_addr);
+                    printf("DTA TX Completion Addr: %lx\n", dtaTXContext.completion_addr);
+                    printf("DTA TX Number of Packets: %d\n", dtaTXContext.nb_pkts);
+                    printf("DTA TX mbuf addresses:\n");
+                    for (uint32_t i = 0; i < dtaTXContext.n_mbuf_addr_received; i++) {
+                        printf("%lx, ", dtaTXContext.mbuf_addr[i]);
+                    }
+                    printf("\n");
+                }
+                #endif
             }
             DPRINTF(DDIO, "Parsed TX job request from CPU\n");
         } else {
@@ -3590,6 +3871,13 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
             packet_index = 1 + int((dtaTXContext.n_mbuf_addr_received - txFirstJobPacketNumMbufAddr) / restJobPacketNumMbufAddr);
             DPRINTF(DDIO, "Parsing TX job request %dth packet from CPU\n", packet_index);
 
+            #if LOG_LEVEL == 3
+            if (dtaTXContext.tx_job_id <= 7) {
+                // Print the job info
+                printf("DTA TX Job ID: %llu\n", dtaTXContext.tx_job_id);
+                printf("DTA TX mbuf addresses:\n");
+            }
+            #endif
             uint8_t *data = pkt->getPtr<uint8_t>();
             // Parse the job request from CPU
             n_job_packet_received = std::min(restJobPacketNumMbufAddr, dtaTXContext.nb_pkts - dtaTXContext.n_mbuf_addr_received);
@@ -3606,7 +3894,15 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
                     dtaTXContext.descWaitingMbufAddr.erase(dtaTXContext.n_mbuf_addr_received);
                 }
                 dtaTXContext.n_mbuf_addr_received += 1;
+                #if LOG_LEVEL == 3
+                if (dtaTXContext.tx_job_id <= 7)
+                    printf("%lx, ", dtaTXContext.mbuf_addr[dtaTXContext.n_mbuf_addr_received - 1]);
+                #endif
             }
+            #if LOG_LEVEL == 3
+            if (dtaTXContext.tx_job_id <= 7)
+                printf("\n");
+            #endif
             assert(dtaTXContext.n_mbuf_addr_received <= dtaTXContext.nb_pkts);
             DPRINTF(DDIO, "Parsed TX job request %dth packet from CPU, %ld/%ld mbuf addresses are received\n", packet_index, dtaTXContext.n_mbuf_addr_received, dtaTXContext.nb_pkts);
         }
