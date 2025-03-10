@@ -1380,7 +1380,8 @@ Cache::recvTimingSnoopReq(PacketPtr pkt)
                 mshr->print());
 
         if (mshr->getNumTargets() > numTarget)
-            warn("allocating bonus target for snoop"); //handle later
+            warn("allocating bonus target for snoop. to blk %#llx mshrs: %s",
+                 blk_addr, mshr->print()); //handle later
         return;
     }
 

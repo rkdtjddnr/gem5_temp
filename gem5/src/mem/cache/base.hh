@@ -1690,16 +1690,28 @@ class DTA : public ClockedObject
         dmaCompletionEvent([this]{ handleDMACompletion(); }, name()),
         requestorId(p.sys->getRequestorId(this))
     {
-        clearDTARXContext();
-        clearDTATXContext();
-        // Initialize with the max value of uint64_t
-        dtaRXContext.rx_job_id = 0;
-        dtaTXContext.tx_job_id = 0;
+        // Initialize the dtaRXContextList
+        dtaRXContextList.resize(rx_context_list_size);
+        dtaTXContextList.resize(tx_context_list_size);
+        tempTXMbufAddrList.clear();
+        for (int i = 0; i < rx_context_list_size; i++) {
+            dtaRXContextList[i] = DTARXContext();
+            dtaTXContextList[i] = DTATXContext();
+            clearDTARXContext(i);
+            clearDTATXContext(i);
+        }
+        
+        global_rx_job_id = 0;
+        global_tx_job_id = 0;
+
+        rxContextIDQueue.clear();
+        txContextIDQueue.clear();
     
         rxJobSubmissionQueue.clear();
         txJobSubmissionQueue.clear();
         cxlReqQueue.clear();
         workerWaitingQueue.clear();
+        ioCacheRequestQueue.clear();
 
         rxTick = false;
         txTick = false;
@@ -1812,7 +1824,7 @@ class DTA : public ClockedObject
     //Submission Queue part
     bool recvTimingReq(PacketPtr pkt); // Receive Job request from CPU
     bool checkSubmissionQueue(); // Check the submission queue and set the context if the context is not valid
-    void parseJobRequestAndSetContext(PacketPtr pkt); // Parse Job request from CPU and make a new context
+    bool parseJobRequestAndSetContext(PacketPtr pkt); // Parse Job request from CPU and make a new context
     // Context structure: have mbuf_addr list, nb_pkts, completion_addr (come from Job request) & n_recv, num_free_request_in_NIC
     #define DTA_MAX_MBUF_NUM 100 // or any other suitable value
     struct DTARXContext {
@@ -1833,7 +1845,12 @@ class DTA : public ClockedObject
         uint32_t n_cacheline_idx_write_completed; // the number of cacheline index that are written to the completion address
         std::map<Addr, RXDescriptor*> RXDescMap; // Store the RX descriptor corresponding to the mbuf_addr
         std::map<Addr, bool> RXCompleteMap; // RXCompleteMap[mbuf_addr] = true if the mbuf_addr's DMA is completed - job completion check condition
-    } dtaRXContext;
+    };
+
+    std::vector<DTARXContext> dtaRXContextList; // dtaRXContextList[context_id] = dtaRXContext
+    uint64_t rx_context_list_size = 10; // The size of the dtaRXContextList
+    std::deque<uint64_t> rxContextIDQueue; // Queue for the RX context ID, that is valid
+    uint64_t global_rx_job_id; // Job ID 
 
     uint32_t invalidRXJobRequestCount = 0; // For test
     uint32_t validRXJobRequestCount = 0; // For test
@@ -1852,34 +1869,188 @@ class DTA : public ClockedObject
         std::map<Addr, TXDescriptor> descPayloadDMAAssigned; // descriptor map that is assigned to the worker for the DMA of payload (mbuf_addr, descriptor)
         std::map<uint64_t, TXDescriptor> descWaitingMbufAddr; // descriptor map that is waiting for the mbuf_addr (index within nb_pkts, descriptor)
         std::map<Addr, bool> TXCompleteMap; // TXCompleteMap[mbuf_addr] = true if the mbuf_addr's DMA is completed - job completion check condition
-    } dtaTXContext;
+    };
+
+    struct mbufAddrList {
+        Addr mbuf_addr[DTA_MAX_MBUF_NUM];
+    };
+
+    std::vector<DTATXContext> dtaTXContextList; // dtaTXContextList[context_id] = dtaTXContext
+    std::deque<mbufAddrList> tempTXMbufAddrList; // For zero-copy
+    uint64_t tx_context_list_size = 10; // The size of the dtaTXContextList
+    std::deque<uint64_t> txContextIDQueue; // Queue for the TX context ID, that is valid
+    uint64_t global_tx_job_id; // Job ID
 
     //Submission queue
+    bool hasNonActiveRXContext() {
+        // Check the RX context list and return true if there is a non-active context
+        // non-active context means that the context is not valid
+        for (int i = 0; i < dtaRXContextList.size(); i++) {
+            if (!dtaRXContextList[i].valid) {
+                return true;
+            }
+        }
+    }
+    int getNonActiveRXContextID() {
+        // Get the first non-active RX context ID
+        for (int i = 0; i < dtaRXContextList.size(); i++) {
+            if (!dtaRXContextList[i].valid) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    bool isActiveRXContext(int context_id) {
+        // Check the RX context list and return true if the context is valid
+        return dtaRXContextList[context_id].valid;
+    } 
+    bool isInitializedRXContext(int context_id) {
+        // Check the RX context list and return true if the context is valid and received the n_mbuf_addr_received same as the nb_pkts
+        return dtaRXContextList[context_id].valid && dtaRXContextList[context_id].n_mbuf_addr_received == dtaRXContextList[context_id].nb_pkts;
+    }
+    int getInitializationStageRXContextID() {
+        // Check the RX context list and return true if there is a context that is valid but not received the n_mbuf_addr_received same as the nb_pkts
+        int context_id = -1;
+        for (int i = 0; i < dtaRXContextList.size(); i++) {
+            if (dtaRXContextList[i].valid && dtaRXContextList[i].n_mbuf_addr_received < dtaRXContextList[i].nb_pkts) {
+                if (context_id != -1) {
+                    assert(0 && "There are multiple RX contexts that are in the initialization stage");
+                }
+                context_id = i;
+            }
+        }
+        return context_id;
+    }
+    int getParsingTargetRXContextID() {
+        // First check getInitializationStageRXContextID and if there is no context that is in the initialization stage, then return the first non-active RX context ID
+        int context_id = getInitializationStageRXContextID();
+        if (context_id == -1) {
+            context_id = getNonActiveRXContextID();
+        }
+        return context_id;
+    }
+    void pushRXContextIDQueue(uint64_t context_id) {
+        rxContextIDQueue.push_back(context_id);
+    }
+    bool hasRXContextIDQueue() {
+        return !rxContextIDQueue.empty();
+    }
+    uint64_t topRXContextIDQueue() {
+        assert(!rxContextIDQueue.empty());
+        return rxContextIDQueue.front();
+    }
+    void popRXContextIDQueue() {
+        rxContextIDQueue.pop_front();
+    }
+
+    bool hasNonActiveTXContext() {
+        // Check the TX context list and return true if there is a non-active context
+        // non-active context means that the context is not valid
+        for (int i = 0; i < dtaTXContextList.size(); i++) {
+            if (!dtaTXContextList[i].valid) {
+                return true;
+            }
+        }
+    }
+    int getNonActiveTXContextID() {
+        // Get the first non-active TX context ID
+        for (int i = 0; i < dtaTXContextList.size(); i++) {
+            if (!dtaTXContextList[i].valid) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    bool isActiveTXContext(int context_id) {
+        // Check the TX context list and return true if the context is valid
+        return dtaTXContextList[context_id].valid;
+    }
+    bool isInitializedTXContext(int context_id) {
+        // Check the TX context list and return true if the context is valid and received the n_mbuf_addr_received same as the nb_pkts
+        return dtaTXContextList[context_id].valid && dtaTXContextList[context_id].n_mbuf_addr_received == dtaTXContextList[context_id].nb_pkts;
+    }
+    int getInitializationStageTXContextID() {
+        // Check the TX context list and return true if there is a context that is valid but not received the n_mbuf_addr_received same as the nb_pkts
+        int context_id = -1;
+        for (int i = 0; i < dtaTXContextList.size(); i++) {
+            if (dtaTXContextList[i].valid && dtaTXContextList[i].n_mbuf_addr_received < dtaTXContextList[i].nb_pkts) {
+                if (context_id != -1) {
+                    assert(0 && "There are multiple TX contexts that are in the initialization stage");
+                }
+                context_id = i;
+            }
+        }
+        return context_id;
+    }
+    int getParsingTargetTXContextID() {
+        // First check getInitializationStageTXContextID and if there is no context that is in the initialization stage, then return the first non-active TX context ID
+        int context_id = getInitializationStageTXContextID();
+        if (context_id == -1) {
+            context_id = getNonActiveTXContextID();
+        }
+        return context_id;
+    }
+    void pushTXContextIDQueue(uint64_t context_id) {
+        txContextIDQueue.push_back(context_id);
+    }
+    bool hasTXContextIDQueue() {
+        return !txContextIDQueue.empty();
+    }
+    uint64_t topTXContextIDQueue() {
+        assert(!txContextIDQueue.empty());
+        return txContextIDQueue.front();
+    }
+    void popTXContextIDQueue() {
+        txContextIDQueue.pop_front();
+    }
+    
     std::deque<PacketPtr> rxJobSubmissionQueue; // Submission queue for DTA
     std::deque<PacketPtr> txJobSubmissionQueue; // Submission queue for DTA
     uint64_t submissionQueueMaxSize = 1024; // Maximum size of the submission queue
     bool checkRXJobQueue = true; // This is the turn for checking the RX job queue
 
+    std::deque<PacketPtr> ioCacheRequestQueue; // Queue for the ioCache request
+
     // Request Sender part
     bool sendTimingReqToNIC(PacketPtr pkt); // Send M2func RD/WR request to NIC
     void sendAtomicReqToNIC(PacketPtr pkt); // Atomic mode - Send M2func RD/WR request to NIC
-    bool checkThreshold(); // Check the threshold for the number of requests that is sent to NIC, but the response is not received yet - If true, have to send new request
+    bool checkThreshold(uint64_t rx_context_ptr); // Check the threshold for the number of requests that is sent to NIC, but the response is not received yet - If true, have to send new request
     void sendRequestToNIC(); // Send the RD/WR request to NIC - internally call sendTimingReq
-    bool checkRXJobCompletion(); // Check the job completion and notify the CPU
-    bool checkTXJobCompletion(); // Check the job completion and notify the CPU
-    PacketPtr createDTARequest(); // Create new DTA request
+    bool checkRXJobCompletion(uint64_t rx_context_ptr); // Check the job completion and notify the CPU
+    bool checkTXJobCompletion(uint64_t tx_context_ptr); // Check the job completion and notify the CPU
+    PacketPtr createDTARequest(uint64_t rx_context_ptr); // Create new DTA request
     // Request Tracker: track the sent request to NIC and track the response is coming or not
     std::unordered_map<RequestPtr, bool> dtaRequestTracker; // Request tracker for DTA - key: RequestPtr, value: isResponseReceived
     void allocDTARequest(PacketPtr pkt); // Allocate new DTA request tracker entry
     bool findDTARequest(PacketPtr pkt); // Find the DTA request tracker entry
-    void freeDTARequest(RequestPtr req); // Free the DTA request tracker entry 
+    void freeDTARequest(PacketPtr pkt); // Free the DTA request tracker entry 
 
     uint64_t cxlReqQueueMaxSize = 1024; // Maximum size of the CXL.mem WR request queue 
     std::deque<PacketPtr> cxlReqQueue; // CXL.mem request queue - TX Workers will push to this queue to send the request to the NIC. Also, DTA will push RD request to read the RX data from the NIC
 
     // Packet queue waiting for worker allocation
     std::deque<std::pair<PacketPtr, uint32_t>> workerWaitingQueue; // CXL.mem response packet queue waiting for worker allocation (PacketPtr, ethernetPacketIdx)
-    bool allocateWorkerFromQueue(); // Allocate worker from the queue
+    bool allocateWorkerFromQueue(uint64_t rx_context_ptr); // Allocate worker from the queue
+
+    // iocache request manage function
+    void pushIOCacheRequestQueue(PacketPtr pkt) {
+        // Push the packet to the ioCache request queue
+        ioCacheRequestQueue.push_back(pkt);
+    }
+    bool hasIOCacheRequestQueue() {
+        // Check the ioCache request queue is empty or not
+        return !ioCacheRequestQueue.empty();
+    }
+    PacketPtr topIOCacheRequestQueue() {
+        // Get the top packet from the ioCache request queue
+        assert(!ioCacheRequestQueue.empty());
+        return ioCacheRequestQueue.front();
+    }
+    void popIOCacheRequestQueue() {
+        // Pop the top packet from the ioCache request queue
+        ioCacheRequestQueue.pop_front();
+    }
+    void sendIOCacheRequest(); // Send the packet to the ioCache
 
     // DTA Worker part
     // 1. Receive the response from NIC
@@ -1896,6 +2067,7 @@ class DTA : public ClockedObject
     {
         public:
             DTARXWorker(DTA* _dta, int id) : dta(_dta), workerID(id), Named("DTARXWorker["+std::to_string(id)+"]") { 
+                rxContextID = -1;
                 cacheLineSize = 64;
                 currProcessingPkt = nullptr; 
                 state = workerState::IDLE; 
@@ -1939,8 +2111,9 @@ class DTA : public ClockedObject
                 return state == workerState::IDLE; 
             }
 
-            void allocateWorker(Addr addr) { 
+            void allocateWorker(Addr addr, int context_id) { 
                 mbuf_addr = addr; 
+                rxContextID = context_id;
                 state = workerState::WORKING; 
                 payloadSize = 0;
                 receivedPayloadSize = 0;
@@ -1961,6 +2134,7 @@ class DTA : public ClockedObject
             void freeWorker() {
                 state = workerState::IDLE;
                 mbuf_addr = 0;
+                rxContextID = -1;
                 payloadSize = 0;
                 receivedPayloadSize = 0;
                 allPayloadReceived = false;
@@ -2001,11 +2175,13 @@ class DTA : public ClockedObject
             void setDescriptor(RXDescriptor* desc, Addr mbuf_addr) {
                 assert(desc != nullptr);
                 RXDescriptor* desc_copy = new RXDescriptor(*desc); // deep copy
-                dta->dtaRXContext.RXDescMap[mbuf_addr] = desc_copy;
+                assert(rxContextID != -1);
+                dta->dtaRXContextList[rxContextID].RXDescMap[mbuf_addr] = desc_copy;
             }
             void setCachelineSize(uint32_t size) { cacheLineSize = size; }
         private:
             DTA* dta;
+            int rxContextID;
             int workerID;
             workerState state;
 
@@ -2035,6 +2211,7 @@ class DTA : public ClockedObject
     {
         public:
             DTATXWorker(DTA* _dta, int id) : dta(_dta), workerID(id), Named("DTATXWorker["+std::to_string(id)+"]") {
+                txContextID = -1;
                 cacheLineSize = 64;
                 state = workerState::IDLE;
                 dmaComplete = false;
@@ -2071,14 +2248,17 @@ class DTA : public ClockedObject
 
             bool isFree() { return state == workerState::IDLE; }
 
-            void allocateWorker(Addr addr, uint64_t size, workerState taskState, TXDescriptor* desc=nullptr) {
+            void allocateWorker(Addr addr, uint64_t size, int context_id, workerState taskState, TXDescriptor* desc=nullptr) {
                 assert(state == workerState::IDLE);
+                assert(context_id != -1);
+                assert(context_id < dta->dtaTXContextList.size());
                 state = taskState;
                 dmaComplete = false;
                 baseAddr = addr;
                 offsetFromDescAddr = 0;
                 dmaSize = size;
                 remainingSize = size;
+                txContextID = context_id;
                 transferredSize = 0;
                 dmaReceivedSize = 0;
 
@@ -2098,6 +2278,7 @@ class DTA : public ClockedObject
             void freeWorker() {
                 state = workerState::IDLE;
                 dmaComplete = false;
+                txContextID = -1;
                 baseAddr = 0;
                 offsetFromDescAddr = 0;
                 dmaSize = 0;
@@ -2131,6 +2312,7 @@ class DTA : public ClockedObject
 
         private:
             DTA* dta;
+            int txContextID;
             int workerID;
             workerState state;
             
@@ -2174,69 +2356,70 @@ class DTA : public ClockedObject
 
     bool enableDdio;
 
-    DTARXWorker* findDTARXWorker(PacketPtr pkt); // Find the free DTA worker or, if the response is partial of the previous request, find the worker that is processing the request
-    void allocatePayloadWorker();
-    void allocateDescriptorWorker();
+    DTARXWorker* findDTARXWorker(PacketPtr pkt, uint64_t rx_context_ptr); // Find the free DTA worker or, if the response is partial of the previous request, find the worker that is processing the request
+    void allocatePayloadWorker(uint64_t tx_context_ptr);
+    void allocateDescriptorWorker(uint64_t tx_context_ptr);
 
-    void clearDTARXContext() {
-        dtaRXContext.valid = false;
-        dtaRXContext.completion_stage = false;
-        dtaRXContext.completion_addr = 0;
-        dtaRXContext.desc_addr = 0;
-        for (int i = 0; i < DTA_MAX_MBUF_NUM; i++) {
-            dtaRXContext.mbuf_addr[i] = 0;
+    void clearDTARXContext(uint64_t contextID) {
+        dtaRXContextList[contextID].valid = false;
+        dtaRXContextList[contextID].rx_job_id = 0;
+        dtaRXContextList[contextID].completion_stage = false;
+        dtaRXContextList[contextID].completion_addr = 0;
+        dtaRXContextList[contextID].desc_addr = 0;
+        for (int j = 0; j < DTA_MAX_MBUF_NUM; j++) {
+            dtaRXContextList[contextID].mbuf_addr[j] = 0;
         }
-        dtaRXContext.nb_pkts = 0;
-        dtaRXContext.n_recv = 0;
-        dtaRXContext.num_free_request_in_NIC = 0;
-        dtaRXContext.lastDTARXWorker = 0;
-        dtaRXContext.n_mbuf_addr_received = 0;
-        dtaRXContext.n_extra_cxl_req_needed = 0;
-        dtaRXContext.n_extra_cxl_req_received = 0;
-        dtaRXContext.n_desc_write_completed = 0;
-        dtaRXContext.n_cacheline_idx_write_completed = 0;
-        for (auto it = dtaRXContext.RXDescMap.begin(); it != dtaRXContext.RXDescMap.end(); it++) {
+        dtaRXContextList[contextID].nb_pkts = 0;
+        dtaRXContextList[contextID].n_recv = 0;
+        dtaRXContextList[contextID].num_free_request_in_NIC = 0;
+        dtaRXContextList[contextID].lastDTARXWorker = 0;
+        dtaRXContextList[contextID].n_mbuf_addr_received = 0;
+        dtaRXContextList[contextID].n_extra_cxl_req_needed = 0;
+        dtaRXContextList[contextID].n_extra_cxl_req_received = 0;
+        dtaRXContextList[contextID].n_desc_write_completed = 0;
+        dtaRXContextList[contextID].n_cacheline_idx_write_completed = 0;
+        for (auto it = dtaRXContextList[contextID].RXDescMap.begin(); it != dtaRXContextList[contextID].RXDescMap.end(); it++) {
             if (it->second) {
                 delete it->second;
             }
         }    
-        dtaRXContext.RXDescMap.clear();
-        dtaRXContext.RXCompleteMap.clear();
+        dtaRXContextList[contextID].RXDescMap.clear();
+        dtaRXContextList[contextID].RXCompleteMap.clear();
     }
 
-    void clearDTATXContext() {
-        dtaTXContext.valid = false;
-        dtaTXContext.completion_addr = 0;
-        dtaTXContext.desc_addr = 0;
-        for (int i = 0; i < DTA_MAX_MBUF_NUM; i++) {
-            dtaTXContext.mbuf_addr[i] = 0;
+    void clearDTATXContext(uint64_t contextID) {
+        dtaTXContextList[contextID].valid = false;
+        dtaTXContextList[contextID].tx_job_id = 0;
+        dtaTXContextList[contextID].completion_addr = 0;
+        dtaTXContextList[contextID].desc_addr = 0;
+        for (int j = 0; j < DTA_MAX_MBUF_NUM; j++) {
+            dtaTXContextList[contextID].mbuf_addr[j] = 0;
         }
-        dtaTXContext.nb_pkts = 0;
-        dtaTXContext.n_sent = 0;
-        dtaTXContext.n_desc_ready = 0;
-        dtaTXContext.n_mbuf_addr_received = 0;
-        dtaTXContext.descPayloadDMAWaiting.clear();
-        dtaTXContext.descPayloadDMAAssigned.clear();
-        dtaTXContext.descWaitingMbufAddr.clear();
-        dtaTXContext.TXCompleteMap.clear();
+        dtaTXContextList[contextID].nb_pkts = 0;
+        dtaTXContextList[contextID].n_sent = 0;
+        dtaTXContextList[contextID].n_desc_ready = 0;
+        dtaTXContextList[contextID].n_mbuf_addr_received = 0;
+        dtaTXContextList[contextID].descPayloadDMAWaiting.clear();
+        dtaTXContextList[contextID].descPayloadDMAAssigned.clear();
+        dtaTXContextList[contextID].descWaitingMbufAddr.clear();
+        dtaTXContextList[contextID].TXCompleteMap.clear();
     }
 
-    void copyMbufAddrFromRXContextToTXContext() {
+    void copyMbufAddrFromRXContextToTXContext(uint64_t rxContextID) {
         assert(zeroCopy);
-
-        //Copy mbuf_addr from RX context to TX context
-        if (dtaTXContext.valid) {
-            // dtaTXContext is already in used.. In this case, we cannot copy
-            printf("DTA - TX context is already in used. Cannot copy mbuf_addr from RX context to TX context\n");
-            assert(0);
-        } else {
-            assert(dtaRXContext.valid);
-            assert(dtaRXContext.nb_pkts == dtaRXContext.n_mbuf_addr_received);
-            assert(dtaRXContext.n_mbuf_addr_received > 0);
-            clearDTATXContext();
-            for (int i = 0; i < dtaRXContext.n_mbuf_addr_received; i++) {
-                dtaTXContext.mbuf_addr[i] = dtaRXContext.mbuf_addr[i];
-            }
+        // Make a mbuf_addr list from RX context and push to tempTXMbufAddrList
+        assert(dtaRXContextList[rxContextID].valid);
+        assert(dtaRXContextList[rxContextID].nb_pkts == dtaRXContextList[rxContextID].n_mbuf_addr_received);
+        assert(dtaRXContextList[rxContextID].n_mbuf_addr_received > 0);
+        // Make a mbuf_addr list
+        tempTXMbufAddrList.push_back(mbufAddrList());
+        mbufAddrList &tempMbufAddrList = tempTXMbufAddrList.back();
+        // Initialize the mbuf_addr list
+        for (int i = 0; i < DTA_MAX_MBUF_NUM; i++) {
+            tempMbufAddrList.mbuf_addr[i] = 0;
+        }
+        for (int i = 0; i < dtaRXContextList[rxContextID].n_mbuf_addr_received; i++) {
+            tempMbufAddrList.mbuf_addr[i] = dtaRXContextList[rxContextID].mbuf_addr[i];
         }
     }
 

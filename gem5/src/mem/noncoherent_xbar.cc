@@ -158,19 +158,19 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     #if LOG_LEVEL == 1
     // For Ring Buffer LOG
     if (cpu_side_port_id == 2) {
-        printf("[LOG] %llu, IOXBAR_REQ, %s, 0, size: %d, NIC_DMA\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        printf("[LOG], %llu, IOXBAR_REQ, %s, 0, size: %d, NIC_DMA\n", curTick(), pkt->print().c_str(), pkt->getSize());
     }
     if (cpu_side_port_id == 0) {
-        printf("[LOG] %llu, IOXBAR_REQ, %s, 0, size: %d, NIC_PIO\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        printf("[LOG], %llu, IOXBAR_REQ, %s, 0, size: %d, NIC_PIO\n", curTick(), pkt->print().c_str(), pkt->getSize());
     }
     #endif
     #if LOG_LEVEL == 2
     // For DTA LOG
     if (pkt->getAddr() == 1073752256) {
-        printf("[LOG] %llu, IOXBAR, %s, 0, RX_RD_REQ\n", curTick(), pkt->print().c_str());
+        printf("[LOG], %llu, IOXBAR, %s, 0, RX_RD_REQ\n", curTick(), pkt->print().c_str());
     }
     if (pkt->getAddr() == 1073756352) {
-        printf("[LOG] %llu, IOXBAR, %s, 0, TX_WR_REQ\n", curTick(), pkt->print().c_str());
+        printf("[LOG], %llu, IOXBAR, %s, 0, TX_WR_REQ\n", curTick(), pkt->print().c_str());
     }
     #endif
     
@@ -299,19 +299,19 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
     #if LOG_LEVEL == 1
     // For Ring Buffer LOG
     if (cpu_side_port_id == 2) {
-        printf("[LOG] %llu, IOXBAR_RESP, %s, 0, size: %d, NIC_DMA\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        printf("[LOG], %llu, IOXBAR_RESP, %s, 0, size: %d, NIC_DMA\n", curTick(), pkt->print().c_str(), pkt->getSize());
     }
     if (cpu_side_port_id == 0) {
-        printf("[LOG] %llu, IOXBAR_RESP, %s, 0, size: %d, NIC_PIO\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        printf("[LOG], %llu, IOXBAR_RESP, %s, 0, size: %d, NIC_PIO\n", curTick(), pkt->print().c_str(), pkt->getSize());
     }
     #endif
     #if LOG_LEVEL == 2
     // For DTA LOG
     if (pkt->getAddr() == 1073752256) {
-        printf("[LOG] %llu, IOXBAR, %s, 0, RX_RD_RESP\n", curTick(), pkt->print().c_str());
+        printf("[LOG], %llu, IOXBAR, %s, 0, RX_RD_RESP\n", curTick(), pkt->print().c_str());
     }
     if (pkt->getAddr() == 1073756352) {
-        printf("[LOG] %llu, IOXBAR, %s, 0, TX_WR_RESP\n", curTick(), pkt->print().c_str());
+        printf("[LOG], %llu, IOXBAR, %s, 0, TX_WR_RESP\n", curTick(), pkt->print().c_str());
     }
     #endif    
 

@@ -70,8 +70,8 @@
 #include "debug/AdaptiveDdioCache.hh"
 #include "base.hh"
 
-// LOG_LEVEL: 0 - no log, 1 - ring buffer log, 2 - dta log, 3 - dta log prepare
-#define LOG_LEVEL 0
+// LOG_LEVEL: 0 - no log, 1 - ring buffer log, 2 - dta log, 3 - dta double buffer log, 4 - dta log prepare
+#define LOG_LEVEL 1
 
 
 namespace gem5
@@ -589,92 +589,339 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     #if LOG_LEVEL == 1
         // For Ring Buffer LOG
         if (pkt->getAddr() == 1073752088) {
-            printf("[LOG] %llu, %s, %s, %d, RX_TAIL_WR\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+            printf("[LOG], %llu, %s, %s, %d, RX_TAIL_WR\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
         }
         if (pkt->getAddr() == 1073756184) {
-            printf("[LOG] %llu, %s, %s, %d, TX_TAIL_WR\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+            printf("[LOG], %llu, %s, %s, %d, TX_TAIL_WR\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
         }
 
+        // vector macswap
+        // uint64_t rx_desc_base = 8624155648;
+        // uint64_t tx_desc_base = 8624238080;
+
+        // scalar macswap
+        uint64_t rx_desc_base = 8624127488;
+        uint64_t tx_desc_base = 8624237824;
+
         // RX Descriptor (63-95)
-        if (pkt->getAddr() >= 8624156656 && pkt->getAddr() < 8624156656 + 512) {
-            printf("[LOG] %llu, %s, %s, %d, RX_DESC_63_95_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+        uint64_t rx_desc_63 = rx_desc_base + 16 * 63;
+        if (pkt->getAddr() >= rx_desc_63 && pkt->getAddr() < rx_desc_63 + 512) {
+            int offset = (pkt->getAddr() - rx_desc_63) / 16;
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
         }
 
         // RX Descriptor (95-127)
-        if (pkt->getAddr() >= 8624157168 && pkt->getAddr() < 8624157168 + 512) {
-            printf("[LOG] %llu, %s, %s, %d, RX_DESC_95_127_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+        uint64_t rx_desc_95 = rx_desc_base + 16 * 95;
+        if (pkt->getAddr() >= rx_desc_95 && pkt->getAddr() < rx_desc_95 + 512) {
+            int offset = (pkt->getAddr() - rx_desc_95) / 16;
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_95_127[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
         }
 
         // TX Descriptor (96-128)
-        if (pkt->getAddr() >= 8624239616 && pkt->getAddr() < 8624239616 + 512) {
-            printf("[LOG] %llu, %s, %s, %d, TX_DESC_96_128_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+        uint64_t tx_desc_96 = tx_desc_base + 16 * 96;
+        if (pkt->getAddr() >= tx_desc_96 && pkt->getAddr() < tx_desc_96 + 512) {
+            int offset = (pkt->getAddr() - tx_desc_96) / 16;
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
         }
 
-        // mbuf for RX Descriptor (63-95 prev)
+        // mbuf for RX Descriptor (63-95 pre-prev) - for tx mbuf free
+        // uint64_t mbuf_addr_set_95_preprev[] = {
+        //     0x201650D80, 0x201651700, 0x201652080, 0x201652A00,
+        //     0x201653380, 0x201653D00, 0x201654680, 0x201655000,
+        //     0x201655980, 0x201656300, 0x201656C80, 0x201657600,
+        //     0x201657F80, 0x201658900, 0x201659280, 0x201659C00,
+        //     0x20165A580, 0x20165AF00, 0x20165B880, 0x20165C200,
+        //     0x20165CB80, 0x20165D500, 0x20165DE80, 0x20165E800,
+        //     0x20165F180, 0x20165FB00, 0x201660480, 0x201660E00,
+        //     0x201661780, 0x201662100, 0x201662A80, 0x201663400
+        // };
+
+        // uint64_t mbuf_first_cacheline_set_95_preprev[] = {
+        //     0x201650C80, 0x201651600, 0x201651F80, 0x201652900,
+        //     0x201653280, 0x201653C00, 0x201654580, 0x201654F00,
+        //     0x201655880, 0x201656200, 0x201656B80, 0x201657500,
+        //     0x201657E80, 0x201658800, 0x201659180, 0x201659B00,
+        //     0x20165A480, 0x20165AE00, 0x20165B780, 0x20165C100,
+        //     0x20165CA80, 0x20165D400, 0x20165DD80, 0x20165E700,
+        //     0x20165F080, 0x20165FA00, 0x201660380, 0x201660D00,
+        //     0x201661680, 0x201662000, 0x201662980, 0x201663300
+        // };
+
+        // uint64_t mbuf_second_cacheline_set_95_preprev[] = {
+        //     0x201650CC0, 0x201651640, 0x201651FC0, 0x201652940,
+        //     0x2016532C0, 0x201653C40, 0x2016545C0, 0x201654F40,
+        //     0x2016558C0, 0x201656240, 0x201656BC0, 0x201657540,
+        //     0x201657EC0, 0x201658840, 0x2016591C0, 0x201659B40,
+        //     0x20165A4C0, 0x20165AE40, 0x20165B7C0, 0x20165C140,
+        //     0x20165CAC0, 0x20165D440, 0x20165DDC0, 0x20165E740,
+        //     0x20165F0C0, 0x20165FA40, 0x2016603C0, 0x201660D40,
+        //     0x2016616C0, 0x201662040, 0x2016629C0, 0x201663340
+        // };
+
+        // // mbuf for RX Descriptor (63-95 prev)
+        // uint64_t mbuf_addr_set_95_prev[] = {
+        //     0x20154c000, 0x20154c980, 0x20154d300, 0x20154dc80, 
+        //     0x20154e600, 0x20154ef80, 0x20154f900, 0x201550280, 
+        //     0x201550c00, 0x201551580, 0x201551f00, 0x201552880, 
+        //     0x201553200, 0x201553b80, 0x201554500, 0x201554e80, 
+        //     0x201555800, 0x201556180, 0x201556b00, 0x201557480,
+        //     0x201557e00, 0x201558780, 0x201559100, 0x201559a80, 
+        //     0x20155a400, 0x20155ad80, 0x20155b700, 0x20155c080, 
+        //     0x20155ca00, 0x20155d380, 0x20155dd00, 0x20155e680
+        // };
+
+        // // mbuf's first cacheline for RX Descriptor (63-95 prev)
+        // uint64_t mbuf_first_cacheline_set_95_prev[] = {
+        //     0x20154bf00, 0x20154c880, 0x20154d200, 0x20154db80, 
+        //     0x20154e500, 0x20154ee80, 0x20154f800, 0x201550180, 
+        //     0x201550b00, 0x201551480, 0x201551e00, 0x201552780, 
+        //     0x201553100, 0x201553a80, 0x201554400, 0x201554d80, 
+        //     0x201555700, 0x201556080, 0x201556a00, 0x201557380, 
+        //     0x201557d00, 0x201558680, 0x201559000, 0x201559980, 
+        //     0x20155a300, 0x20155ac80, 0x20155b600, 0x20155bf80, 
+        //     0x20155c900, 0x20155d280, 0x20155dc00, 0x20155e580
+        // };
+
+        // // mbuf's second cacheline for RX Descriptor (63-95 prev)
+        // uint64_t mbuf_second_cacheline_set_95_prev[] = {
+        //     0x20154bf40, 0x20154c8c0, 0x20154d240, 0x20154dbc0,
+        //     0x20154e540, 0x20154eec0, 0x20154f840, 0x2015501c0,
+        //     0x201550b40, 0x2015514c0, 0x201551e40, 0x2015527c0,
+        //     0x201553140, 0x201553ac0, 0x201554440, 0x201554dc0,
+        //     0x201555740, 0x2015560c0, 0x201556a40, 0x2015573c0,
+        //     0x201557d40, 0x2015586c0, 0x201559040, 0x2015599c0,
+        //     0x20155a340, 0x20155acc0, 0x20155b640, 0x20155bfc0,
+        //     0x20155c940, 0x20155d2c0, 0x20155dc40, 0x20155e5c0
+        // };
+
+        // // mbuf for RX Descriptor (63-95 new)
+        // uint64_t mbuf_addr_set_95_new[] = {
+        //     0x201676d80, 0x201676400, 0x201675a80, 0x201675100,
+        //     0x201674780, 0x201673e00, 0x201673480, 0x201672b00,
+        //     0x201672180, 0x201671800, 0x201670e80, 0x201670500,
+        //     0x20166fb80, 0x20166f200, 0x20166e880, 0x20166df00,
+        //     0x20166d580, 0x20166cc00, 0x20166c280, 0x20166b900,
+        //     0x20166af80, 0x20166a600, 0x201669c80, 0x201669300,
+        //     0x201668980, 0x201668000, 0x201667680, 0x201666d00,
+        //     0x201666380, 0x201665a00, 0x201665080, 0x201664700
+        // };
+
+        // // mbuf's first cacheline for RX Descriptor (63-95 new) - minus 256 from the mbuf_addr_set_95_new
+        // uint64_t mbuf_first_cacheline_set_95_new[] = {
+        //     0x201676c80, 0x201676300, 0x201675980, 0x201675000,
+        //     0x201674680, 0x201673d00, 0x201673380, 0x201672a00,
+        //     0x201672080, 0x201671700, 0x201670d80, 0x201670400,
+        //     0x20166fa80, 0x20166f100, 0x20166e780, 0x20166de00,
+        //     0x20166d480, 0x20166cb00, 0x20166c180, 0x20166b800,
+        //     0x20166ae80, 0x20166a500, 0x201669b80, 0x201669200,
+        //     0x201668880, 0x201667f00, 0x201667580, 0x201666c00,
+        //     0x201666280, 0x201665900, 0x201664f80, 0x201664600
+        // };
+
+        // // mbuf's second cacheline for RX Descriptor (63-95 new) + 64 from the mbuf_first_cacheline_set_95_new
+        // uint64_t mbuf_second_cacheline_set_95_new[] = {
+        //     0x201676cc0, 0x201676340, 0x2016759c0, 0x201675040,
+        //     0x2016746c0, 0x201673d40, 0x2016733c0, 0x201672a40,
+        //     0x2016720c0, 0x201671740, 0x201670dc0, 0x201670440,
+        //     0x20166fac0, 0x20166f140, 0x20166e7c0, 0x20166de40,
+        //     0x20166d4c0, 0x20166cb40, 0x20166c1c0, 0x20166b840,
+        //     0x20166aec0, 0x20166a540, 0x201669bc0, 0x201669240,
+        //     0x2016688c0, 0x201667f40, 0x2016675c0, 0x201666c40,
+        //     0x2016662c0, 0x201665940, 0x201664fc0, 0x201664640
+        // };
+
+        // // mbuf for RX Descriptor (95-127 prev) -> TX Descriptor (128-160)
+        // uint64_t mbuf_addr_set_127_prev[] = {
+        //     0x201539000, 0x201539980, 0x20153A300, 0x20153AC80,
+        //     0x20153B600, 0x20153BF80, 0x20153C900, 0x20153D280,
+        //     0x20153DC00, 0x20153E580, 0x20153EF00, 0x20153F880,
+        //     0x201540200, 0x201540B80, 0x201541500, 0x201541E80,
+        //     0x201542800, 0x201543180, 0x201543B00, 0x201544480,
+        //     0x201544E00, 0x201545780, 0x201546100, 0x201546A80,
+        //     0x201547400, 0x201547D80, 0x201548700, 0x201549080,
+        //     0x201549A00, 0x20154A380, 0x20154AD00, 0x20154B680
+        // };
+
+        // uint64_t mbuf_first_cacheline_set_127_prev[] = {
+        //     0x201538F00, 0x201539880, 0x20153A200, 0x20153AB80,
+        //     0x20153B500, 0x20153BE80, 0x20153C800, 0x20153D180,
+        //     0x20153DB00, 0x20153E480, 0x20153EE00, 0x20153F780,
+        //     0x201540100, 0x201540A80, 0x201541400, 0x201541D80,
+        //     0x201542700, 0x201543080, 0x201543A00, 0x201544380,
+        //     0x201544D00, 0x201545680, 0x201546000, 0x201546980,
+        //     0x201547300, 0x201547C80, 0x201548600, 0x201548F80,
+        //     0x201549900, 0x20154A280, 0x20154AC00, 0x20154B580
+        // };
+
+        // uint64_t mbuf_second_cacheline_set_127_prev[] = {
+        //     0x201538F40, 0x2015398C0, 0x20153A240, 0x20153ABC0,
+        //     0x20153B540, 0x20153BEC0, 0x20153C840, 0x20153D1C0,
+        //     0x20153DB40, 0x20153E4C0, 0x20153EE40, 0x20153F7C0,
+        //     0x201540140, 0x201540AC0, 0x201541440, 0x201541DC0,
+        //     0x201542740, 0x2015430C0, 0x201543A40, 0x2015443C0,
+        //     0x201544D40, 0x2015456C0, 0x201546040, 0x2015469C0,
+        //     0x201547340, 0x201547CC0, 0x201548640, 0x201548FC0,
+        //     0x201549940, 0x20154A2C0, 0x20154AC40, 0x20154B5C0
+        // };
+
         uint64_t mbuf_addr_set_95_prev[] = {
-            0x20154c000, 0x20154c980, 0x20154d300, 0x20154dc80, 
-            0x20154e600, 0x20154ef80, 0x20154f900, 0x201550280, 
-            0x201550c00, 0x201551580, 0x201551f00, 0x201552880, 
-            0x201553200, 0x201553b80, 0x201554500, 0x201554e80, 
-            0x201555800, 0x201556180, 0x201556b00, 0x201557480,
-            0x201557e00, 0x201558780, 0x201559100, 0x201559a80, 
-            0x20155a400, 0x20155ad80, 0x20155b700, 0x20155c080, 
-            0x20155ca00, 0x20155d380, 0x20155dd00, 0x20155e680
+            0x2014DEC00, 0x2014DE280, 0x2014DD900, 0x2014DCF80,
+            0x2014DC600, 0x2014DBC80, 0x2014DB300, 0x2014DA980,
+            0x2014DA000, 0x2014D9680, 0x2014D8D00, 0x2014D8380,
+            0x2014D7A00, 0x2014D7080, 0x2014D6700, 0x2014D5D80,
+            0x2014D5400, 0x2014D4A80, 0x2014D4100, 0x2014D3780,
+            0x2014D2E00, 0x2014D2480, 0x2014D1B00, 0x2014D1180,
+            0x2014D0800, 0x2014CFE80, 0x2014CF500, 0x2014CEB80,
+            0x2014CE200, 0x2015F7980, 0x2015F7000, 0x2015F6680
         };
 
-        // mbuf's start addr for RX Descriptor (63-95 prev)
-        uint64_t mbuf_start_addr_set_95_prev[] = {
-            0x20154bf00, 0x20154c880, 0x20154d200, 0x20154db80, 
-            0x20154e500, 0x20154ee80, 0x20154f800, 0x201550180, 
-            0x201550b00, 0x201551480, 0x201551e00, 0x201552780, 
-            0x201553100, 0x201553a80, 0x201554400, 0x201554d80, 
-            0x201555700, 0x201556080, 0x201556a00, 0x201557380, 
-            0x201557d00, 0x201558680, 0x201559000, 0x201559980, 
-            0x20155a300, 0x20155ac80, 0x20155b600, 0x20155bf80, 
-            0x20155c900, 0x20155d280, 0x20155dc00, 0x20155e580
+        uint64_t mbuf_first_cacheline_set_95_prev[] = {
+            0x2014DEB00, 0x2014DE180, 0x2014DD800, 0x2014DCE80,
+            0x2014DC500, 0x2014DBB80, 0x2014DB200, 0x2014DA880,
+            0x2014D9F00, 0x2014D9580, 0x2014D8C00, 0x2014D8280,
+            0x2014D7900, 0x2014D6F80, 0x2014D6600, 0x2014D5C80,
+            0x2014D5300, 0x2014D4980, 0x2014D4000, 0x2014D3680,
+            0x2014D2D00, 0x2014D2380, 0x2014D1A00, 0x2014D1080,
+            0x2014D0700, 0x2014CFD80, 0x2014CF400, 0x2014CEA80,
+            0x2014CE100, 0x2015F7880, 0x2015F6F00, 0x2015F6580
         };
 
-        // mbuf for RX Descriptor (63-95 new)
+        uint64_t mbuf_second_cacheline_set_95_prev[] = {
+            0x2014DEB40, 0x2014DE1C0, 0x2014DD840, 0x2014DCEC0,
+            0x2014DC540, 0x2014DBBC0, 0x2014DB240, 0x2014DA8C0,
+            0x2014D9F40, 0x2014D95C0, 0x2014D8C40, 0x2014D82C0,
+            0x2014D7940, 0x2014D6FC0, 0x2014D6640, 0x2014D5CC0,
+            0x2014D5340, 0x2014D49C0, 0x2014D4040, 0x2014D36C0,
+            0x2014D2D40, 0x2014D23C0, 0x2014D1A40, 0x2014D10C0,
+            0x2014D0740, 0x2014CFDC0, 0x2014CF440, 0x2014CEAC0,
+            0x2014CE140, 0x2015F78C0, 0x2015F6F40, 0x2015F65C0
+        };
+
         uint64_t mbuf_addr_set_95_new[] = {
-            0x201676d80, 0x201676400, 0x201675a80, 0x201675100,
-            0x201674780, 0x201673e00, 0x201673480, 0x201672b00,
-            0x201672180, 0x201671800, 0x201670e80, 0x201670500,
-            0x20166fb80, 0x20166f200, 0x20166e880, 0x20166df00,
-            0x20166d580, 0x20166cc00, 0x20166c280, 0x20166b900,
-            0x20166af80, 0x20166a600, 0x201669c80, 0x201669300,
-            0x201668980, 0x201668000, 0x201667680, 0x201666d00,
-            0x201666380, 0x201665a00, 0x201665080, 0x201664700
+            0x2013D4900, 0x2013D3F80, 0x2013D3600, 0x2013D2C80,
+            0x2013D2300, 0x2013D1980, 0x2013D1000, 0x2013D0680,
+            0x2013CFD00, 0x2013CF380, 0x2013CEA00, 0x2013CE080,
+            0x2013CD700, 0x2013CCD80, 0x2013CC400, 0x2013CBA80,
+            0x2013CB100, 0x2013CA780, 0x2013C9E00, 0x2013C9480,
+            0x2013C8B00, 0x2013C8180, 0x2013C7800, 0x2013C6E80,
+            0x2013C6500, 0x2013C5B80, 0x2013C5200, 0x2013C4880,
+            0x2013C3F00, 0x2013C3580, 0x2013C2C00, 0x2013C2280
         };
+
+        uint64_t mbuf_first_cacheline_set_95_new[] = {
+            0x2013D4800, 0x2013D3E80, 0x2013D3500, 0x2013D2B80,
+            0x2013D2200, 0x2013D1880, 0x2013D0F00, 0x2013D0580,
+            0x2013CFC00, 0x2013CF280, 0x2013CE900, 0x2013CDF80,
+            0x2013CD600, 0x2013CCC80, 0x2013CC300, 0x2013CB980,
+            0x2013CB000, 0x2013CA680, 0x2013C9D00, 0x2013C9380,
+            0x2013C8A00, 0x2013C8080, 0x2013C7700, 0x2013C6D80,
+            0x2013C6400, 0x2013C5A80, 0x2013C5100, 0x2013C4780,
+            0x2013C3E00, 0x2013C3480, 0x2013C2B00, 0x2013C2180
+        };
+
+        uint64_t mbuf_second_cacheline_set_95_new[] = {
+            0x2013D4840, 0x2013D3EC0, 0x2013D3540, 0x2013D2BC0,
+            0x2013D2240, 0x2013D18C0, 0x2013D0F40, 0x2013D05C0,
+            0x2013CFC40, 0x2013CF2C0, 0x2013CE940, 0x2013CDFC0,
+            0x2013CD640, 0x2013CCCC0, 0x2013CC340, 0x2013CB9C0,
+            0x2013CB040, 0x2013CA6C0, 0x2013C9D40, 0x2013C93C0,
+            0x2013C8A40, 0x2013C80C0, 0x2013C7740, 0x2013C6DC0,
+            0x2013C6440, 0x2013C5AC0, 0x2013C5140, 0x2013C47C0,
+            0x2013C3E40, 0x2013C34C0, 0x2013C2B40, 0x2013C21C0
+        };
+
+        uint64_t mbuf_addr_set_127_prev[] = {
+            0x2015F5D00, 0x2015F5380, 0x2015F4A00, 0x2015F4080,
+            0x2015F3700, 0x2015F2D80, 0x2015F2400, 0x2015F1A80,
+            0x2015F1100, 0x2015F0780, 0x2015EFE00, 0x2015EF480,
+            0x2015EEB00, 0x2015EE180, 0x2015ED800, 0x2015ECE80,
+            0x2015EC500, 0x2015EBB80, 0x2015EB200, 0x2015EA880,
+            0x2015E9F00, 0x2015E9580, 0x2015E8C00, 0x2015E8280,
+            0x2015E7900, 0x2015E6F80, 0x2015E6600, 0x2015E5C80,
+            0x2015E5300, 0x2015E4980, 0x2015E4000, 0x2015E3680
+        };
+
+        uint64_t mbuf_first_cacheline_set_127_prev[] = {
+            0x2015F5C00, 0x2015F5280, 0x2015F4900, 0x2015F3F80,
+            0x2015F3600, 0x2015F2C80, 0x2015F2300, 0x2015F1980,
+            0x2015F1000, 0x2015F0680, 0x2015EFD00, 0x2015EF380,
+            0x2015EEA00, 0x2015EE080, 0x2015ED700, 0x2015ECD80,
+            0x2015EC400, 0x2015EBA80, 0x2015EB100, 0x2015EA780,
+            0x2015E9E00, 0x2015E9480, 0x2015E8B00, 0x2015E8180,
+            0x2015E7800, 0x2015E6E80, 0x2015E6500, 0x2015E5B80,
+            0x2015E5200, 0x2015E4880, 0x2015E3F00, 0x2015E3580
+        };
+
+        uint64_t mbuf_second_cacheline_set_127_prev[] = {
+            0x2015F5C40, 0x2015F52C0, 0x2015F4940, 0x2015F3FC0,
+            0x2015F3640, 0x2015F2CC0, 0x2015F2340, 0x2015F19C0,
+            0x2015F1040, 0x2015F06C0, 0x2015EFD40, 0x2015EF3C0,
+            0x2015EEA40, 0x2015EE0C0, 0x2015ED740, 0x2015ECDC0,
+            0x2015EC440, 0x2015EBAC0, 0x2015EB140, 0x2015EA7C0,
+            0x2015E9E40, 0x2015E94C0, 0x2015E8B40, 0x2015E81C0,
+            0x2015E7840, 0x2015E6EC0, 0x2015E6540, 0x2015E5BC0,
+            0x2015E5240, 0x2015E48C0, 0x2015E3F40, 0x2015E35C0
+        };
+
+
 
         // mbuf's structure part
         for (int i = 0; i < 32; i ++) {
-            if (pkt->getAddr() == mbuf_start_addr_set_95_prev[i]) {
-                printf("[LOG] %llu, %s, %s, %d, MBUFSTRUCT95PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            uint64_t pkt_addr = pkt->getAddr();
+            uint64_t pkt_addr_end = pkt_addr + pkt->getSize();
+            // Check if the packet address is in the mbuf's structure part
+            // if (pkt_addr >= mbuf_first_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_preprev[i] + 64) {
+            //     printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95PREPREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            // }
+            // if (pkt_addr >= mbuf_second_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_second_cacheline_set_95_preprev[i] + 64) {
+            //     printf("[LOG], %llu, %s, %s, %d, MBUF_$1_95PREPREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            // }
+            if (pkt_addr >= mbuf_first_cacheline_set_95_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_prev[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt_addr >= mbuf_second_cacheline_set_95_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_95_prev[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_95PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt_addr >= mbuf_first_cacheline_set_95_new[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_new[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt_addr >= mbuf_second_cacheline_set_95_new[i] && pkt_addr_end <= mbuf_second_cacheline_set_95_new[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_95NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt_addr >= mbuf_first_cacheline_set_127_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_127_prev[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$0_127PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt_addr >= mbuf_second_cacheline_set_127_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_127_prev[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_127PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
         }
 
         // mbuf's data part
         for (int i = 0; i < 32; i++) {
+            // if (pkt->getAddr() == mbuf_addr_set_95_preprev[i]) {
+            //     printf("[LOG], %llu, %s, %s, %d, MBUF95PREPREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            // }
             if (pkt->getAddr() == mbuf_addr_set_95_prev[i]) {
-                printf("[LOG] %llu, %s, %s, %d, MBUF95PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+                printf("[LOG], %llu, %s, %s, %d, MBUF95PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt->getAddr() == mbuf_addr_set_95_new[i]) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF95NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt->getAddr() == mbuf_addr_set_127_prev[i]) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF127PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
         }
 
-        for (int i = 0; i < 32; i++) {
-            if (pkt->getAddr() == mbuf_addr_set_95_new[i]) {
-                printf("[LOG] %llu, %s, %s, %d, MBUF95NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
-            }
-        }
     #endif
 
     #if LOG_LEVEL == 2
     // RX_JOB_SUBMIT
     if (pkt->getAddr() == 1073752256) {
-        printf("[LOG] %llu, %s, %s, %d, RX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+        printf("[LOG], %llu, %s, %s, %d, RX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
     }
     // TX_JOB_SUBMIT
     if (pkt->getAddr() == 1073756352) {
-        printf("[LOG] %llu, %s, %s, %d, TX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+        printf("[LOG], %llu, %s, %s, %d, TX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
     }
 
     uint64_t mbuf_addr1[] = { // RX_JOB_ID 7
@@ -731,38 +978,212 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     // MBUF_1
     for (int i = 0; i < 32; i++) {
         if (pkt->getAddr() == mbuf_addr1[i]) {
-            printf("[LOG] %llu, %s, %s, %d, MBUF_1[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            printf("[LOG], %llu, %s, %s, %d, MBUF_1[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
         }
     }
 
     // MBUF_2
     for (int i = 0; i < 32; i++) {
         if (pkt->getAddr() == mbuf_addr2[i]) {
-            printf("[LOG] %llu, %s, %s, %d, MBUF_2[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            printf("[LOG], %llu, %s, %s, %d, MBUF_2[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
         }
     }
 
     // DESC_RX
     for (int i = 0; i < 8; i++) {
         if (pkt->getAddr() == desc_rx[i]) {
-            printf("[LOG] %llu, %s, %s, %d, DESC_RX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            printf("[LOG], %llu, %s, %s, %d, DESC_RX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
         }
     }
     
     // DESC_TX
     for (int i = 0; i < 4; i++) {
         if (pkt->getAddr() == desc_tx[i]) {
-            printf("[LOG] %llu, %s, %s, %d, DESC_TX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            printf("[LOG], %llu, %s, %s, %d, DESC_TX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
         }
     }
 
     // COMP_RX
     if (pkt->getAddr() == comp_rx) {
-        printf("[LOG] %llu, %s, %s, %d, COMP_RX\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+        printf("[LOG], %llu, %s, %s, %d, COMP_RX\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
     }
     // COMP_TX
     if (pkt->getAddr() == comp_tx) {
-        printf("[LOG] %llu, %s, %s, %d, COMP_TX\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+        printf("[LOG], %llu, %s, %s, %d, COMP_TX\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
+    }
+
+    #endif
+
+    #if LOG_LEVEL == 3
+    uint64_t comp_rx = 0x202099900;
+    uint64_t comp_rx2 = 0x202099480;
+    uint64_t comp_tx = 0x2020b2b80;
+    uint64_t comp_tx2 = 0x2020b2600;
+    
+    uint64_t mbuf_arr_rx = 0x202097400;
+    uint64_t mbuf_arr_rx2 = 0x202095380;
+
+    // COMP_RX
+    if (pkt->getAddr() == comp_rx) {
+        int64_t comp_val = 1111111111;
+        if (pkt->isRead() && satisfied) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        } else if (pkt->isWrite()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        }
+        printf("[LOG], %llu, %s, %s, %ld, COMP_RX_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), comp_val);
+    }
+    if (pkt->getAddr() == comp_rx2) {
+        int64_t comp_val = 1111111111;
+        if (pkt->isRead() && satisfied) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        } else if (pkt->isWrite()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        }
+        printf("[LOG], %llu, %s, %s, %ld, COMP_RX2_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), comp_val);
+    }
+    // COMP_TX
+    if (pkt->getAddr() == comp_tx) {   
+        int64_t comp_val = 1111111111;
+        if (pkt->isRead() && satisfied) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        } else if (pkt->isWrite()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        }        
+        printf("[LOG], %llu, %s, %s, %ld, COMP_TX_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), comp_val);
+    }
+    if (pkt->getAddr() == comp_tx2) {
+        int64_t comp_val = 1111111111;
+        if (pkt->isRead() && satisfied) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        } else if (pkt->isWrite()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        }
+        printf("[LOG], %llu, %s, %s, %ld, COMP_TX2_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), comp_val);
+    }
+
+    // MBUF_ARR_RX
+    if (pkt->getAddr() == mbuf_arr_rx) {
+        int64_t pointer_addr = 1111111111;
+        if (pkt->isRead() && satisfied) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            pointer_addr = data[0];
+        } else if (pkt->isWrite()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            pointer_addr = data[0];
+        }
+        printf("[LOG], %llu, %s, %s, %d, MBUF_ARR_RX_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pointer_addr);
+    }
+    if (pkt->getAddr() == mbuf_arr_rx2) {
+        int64_t pointer_addr = 1111111111;
+        if (pkt->isRead() && satisfied) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            pointer_addr = data[0];
+        } else if (pkt->isWrite()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            pointer_addr = data[0];
+        }
+        printf("[LOG], %llu, %s, %s, %d, MBUF_ARR_RX2_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pointer_addr);
+    }
+
+
+    // RX_JOB_SUBMIT
+    if (pkt->getAddr() == 1073752256) {
+        printf("[LOG], %llu, %s, %s, %d, RX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
+    // TX_JOB_SUBMIT
+    if (pkt->getAddr() == 1073756352) {
+        printf("[LOG], %llu, %s, %s, %d, TX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
+
+    uint64_t mbuf_addr1[] = { // RX_JOB_ID 12
+        0x2010e1200, 0x2010e0880, 0x2010dff00, 0x2010df580, 0x2010dec00, 0x2010de280, 0x2010dd900, 0x2010dcf80, 
+        0x2010dc600, 0x2010dbc80, 0x2010db300, 0x2010da980, 0x2010da000, 0x2010d9680, 0x2010d8d00, 0x2010d8380, 
+        0x2010d7a00, 0x2010d7080, 0x2010d6700, 0x2010d5d80, 0x2010d5400, 0x2010d4a80, 0x2010d4100, 0x2010d3780, 
+        0x2010d2e00, 0x2010d2480, 0x2010d1b00, 0x2010d1180, 0x2010d0800, 0x2010cfe80, 0x2010cf500, 0x2010ceb80
+    };
+
+    uint64_t mbuf_addr2[] = { // TX_JOB_ID 9 (RX_JOB_ID 11)
+        0x2010bb200, 0x2010ba880, 0x2010b9f00, 0x2010b9580, 0x2010b8c00, 0x2010b8280, 0x2010b7900, 0x2010b6f80, 
+        0x2010b6600, 0x2010b5c80, 0x2010b5300, 0x2010b4980, 0x2010b4000, 0x2010b3680, 0x2010b2d00, 0x2010b2380, 
+        0x2010b1a00, 0x2010b1080, 0x2010b0700, 0x2010afd80, 0x2010af400, 0x2010aea80, 0x2010ae100, 0x2010ad780, 
+        0x2010ace00, 0x2010ac480, 0x2010abb00, 0x2010ab180, 0x2010aa800, 0x2010a9e80, 0x2010a9500, 0x2010a8b80
+    };
+
+    uint64_t desc_rx1[] = {
+        0x202099940, 0x202099980, 0x2020999c0, 0x202099a00, 0x202099a40, 0x202099a80, 0x202099ac0, 0x202099b00
+    };
+
+    uint64_t desc_rx2[] = {
+        0x2020994c0, 0x202099500, 0x202099540, 0x202099580, 0x2020995c0, 0x202099600, 0x202099640, 0x202099680
+    };
+
+    uint64_t desc_tx1[] = {
+        0x2020b2700, 0x2020b2740, 0x2020b2780, 0x2020b27c0
+    };
+
+    uint64_t desc_tx2[] = {
+        0x2020b2180, 0x2020b21c0, 0x2020b2200, 0x2020b2240
+    };
+
+    // MBUF_1
+    for (int i = 0; i < 32; i++) {
+        if (pkt->getAddr() == mbuf_addr1[i]) {
+            printf("[LOG], %llu, %s, %s, %d, BATCH_9_REQ[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+    }
+
+    // MBUF_2
+    for (int i = 0; i < 32; i++) {
+        if (pkt->getAddr() == mbuf_addr2[i]) {
+            printf("[LOG], %llu, %s, %s, %d, BATCH_8_REQ[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+    }
+
+    // DESC_RX
+    for (int i = 0; i < 8; i++) {
+        if (pkt->getAddr() == desc_rx1[i]) {
+            printf("[LOG], %llu, %s, %s, %d, DESC_RX1_REQ[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+    }
+
+    for (int i = 0; i <8; i++) {
+        if (pkt->getAddr() == desc_rx2[i]) {
+            printf("[LOG], %llu, %s, %s, %d, DESC_RX2_REQ[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+    }
+    
+    // DESC_TX
+    for (int i = 0; i < 4; i++) {
+        if (pkt->getAddr() == desc_tx1[i]) {
+            printf("[LOG], %llu, %s, %s, %d, DESC_TX1_REQ[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+    }
+
+    for (int i = 0; i < 4; i++) {
+        if (pkt->getAddr() == desc_tx2[i]) {
+            printf("[LOG], %llu, %s, %s, %d, DESC_TX2_REQ[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
     }
 
     #endif
@@ -866,75 +1287,325 @@ BaseCache::recvTimingResp(PacketPtr pkt)
 
     #if LOG_LEVEL == 1
     // For Ring Buffer LOG
+    if (pkt->getAddr() == 1073752088) {
+        printf("[LOG], %llu, %s, %s, %d, RX_TAIL_WR_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
+    if (pkt->getAddr() == 1073756184) {
+        printf("[LOG], %llu, %s, %s, %d, TX_TAIL_WR_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
+
+    // vector macswap
+    // uint64_t rx_desc_base = 8624155648;
+    // uint64_t tx_desc_base = 8624238080;
+
+    // scalar macswap
+    uint64_t rx_desc_base = 8624127488;
+    uint64_t tx_desc_base = 8624237824;
+
     // RX Descriptor (63-95)
-    uint64_t rx_desc_addr_63 = 8624156656;
-    if (pkt->getAddr() >= rx_desc_addr_63 && pkt->getAddr() < rx_desc_addr_63 + 512) {
-        printf("[LOG] %llu, %s, %s, %d, RX_DESC_63_95_RESP\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    uint64_t rx_desc_63 = rx_desc_base + 16 * 63;
+    if (pkt->getAddr() >= rx_desc_63 && pkt->getAddr() < rx_desc_63 + 512) {
+        int offset = (pkt->getAddr() - rx_desc_63) / 16;
+        printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
     }
 
     // RX Descriptor (95-127)
-    if (pkt->getAddr() >= 8624157168 && pkt->getAddr() < 8624157168 + 512) {
-        printf("[LOG] %llu, %s, %s, %d, RX_DESC_95_127_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    uint64_t rx_desc_95 = rx_desc_base + 16 * 95;
+    if (pkt->getAddr() >= rx_desc_95 && pkt->getAddr() < rx_desc_95 + 512) {
+        int offset = (pkt->getAddr() - rx_desc_95) / 16;
+        printf("[LOG], %llu, %s, %s, %d, RX_DESC_95_127[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
     }
-
+    
     // TX Descriptor (96-128)
-    if (pkt->getAddr() >= 8624239616 && pkt->getAddr() < 8624239616 + 512) {
-        printf("[LOG] %llu, %s, %s, %d, TX_DESC_96_128_RESP\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
-    }
+    uint64_t tx_desc_96 = tx_desc_base + 16 * 96;
+    if (pkt->getAddr() >= tx_desc_96 && pkt->getAddr() < tx_desc_96 + 512) {
+        int offset = (pkt->getAddr() - tx_desc_96) / 16;
+        printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+    }    
 
-    // mbuf for RX Descriptor (63-95 prev)
+    // mbuf for RX Descriptor (63-95 pre-prev) - for tx mbuf free
+    // uint64_t mbuf_addr_set_95_preprev[] = {
+    //     0x201650D80, 0x201651700, 0x201652080, 0x201652A00,
+    //     0x201653380, 0x201653D00, 0x201654680, 0x201655000,
+    //     0x201655980, 0x201656300, 0x201656C80, 0x201657600,
+    //     0x201657F80, 0x201658900, 0x201659280, 0x201659C00,
+    //     0x20165A580, 0x20165AF00, 0x20165B880, 0x20165C200,
+    //     0x20165CB80, 0x20165D500, 0x20165DE80, 0x20165E800,
+    //     0x20165F180, 0x20165FB00, 0x201660480, 0x201660E00,
+    //     0x201661780, 0x201662100, 0x201662A80, 0x201663400
+    // };
+
+    // uint64_t mbuf_first_cacheline_set_95_preprev[] = {
+    //     0x201650C80, 0x201651600, 0x201651F80, 0x201652900,
+    //     0x201653280, 0x201653C00, 0x201654580, 0x201654F00,
+    //     0x201655880, 0x201656200, 0x201656B80, 0x201657500,
+    //     0x201657E80, 0x201658800, 0x201659180, 0x201659B00,
+    //     0x20165A480, 0x20165AE00, 0x20165B780, 0x20165C100,
+    //     0x20165CA80, 0x20165D400, 0x20165DD80, 0x20165E700,
+    //     0x20165F080, 0x20165FA00, 0x201660380, 0x201660D00,
+    //     0x201661680, 0x201662000, 0x201662980, 0x201663300
+    // };
+
+    // uint64_t mbuf_second_cacheline_set_95_preprev[] = {
+    //     0x201650CC0, 0x201651640, 0x201651FC0, 0x201652940,
+    //     0x2016532C0, 0x201653C40, 0x2016545C0, 0x201654F40,
+    //     0x2016558C0, 0x201656240, 0x201656BC0, 0x201657540,
+    //     0x201657EC0, 0x201658840, 0x2016591C0, 0x201659B40,
+    //     0x20165A4C0, 0x20165AE40, 0x20165B7C0, 0x20165C140,
+    //     0x20165CAC0, 0x20165D440, 0x20165DDC0, 0x20165E740,
+    //     0x20165F0C0, 0x20165FA40, 0x2016603C0, 0x201660D40,
+    //     0x2016616C0, 0x201662040, 0x2016629C0, 0x201663340
+    // };
+
+    // // mbuf for RX Descriptor (63-95 prev)
+    // uint64_t mbuf_addr_set_95_prev[] = {
+    //     0x20154c000, 0x20154c980, 0x20154d300, 0x20154dc80, 
+    //     0x20154e600, 0x20154ef80, 0x20154f900, 0x201550280, 
+    //     0x201550c00, 0x201551580, 0x201551f00, 0x201552880, 
+    //     0x201553200, 0x201553b80, 0x201554500, 0x201554e80, 
+    //     0x201555800, 0x201556180, 0x201556b00, 0x201557480,
+    //     0x201557e00, 0x201558780, 0x201559100, 0x201559a80, 
+    //     0x20155a400, 0x20155ad80, 0x20155b700, 0x20155c080, 
+    //     0x20155ca00, 0x20155d380, 0x20155dd00, 0x20155e680
+    // };
+
+    // // mbuf's first cacheline for RX Descriptor (63-95 prev)
+    // uint64_t mbuf_first_cacheline_set_95_prev[] = {
+    //     0x20154bf00, 0x20154c880, 0x20154d200, 0x20154db80, 
+    //     0x20154e500, 0x20154ee80, 0x20154f800, 0x201550180, 
+    //     0x201550b00, 0x201551480, 0x201551e00, 0x201552780, 
+    //     0x201553100, 0x201553a80, 0x201554400, 0x201554d80, 
+    //     0x201555700, 0x201556080, 0x201556a00, 0x201557380, 
+    //     0x201557d00, 0x201558680, 0x201559000, 0x201559980, 
+    //     0x20155a300, 0x20155ac80, 0x20155b600, 0x20155bf80, 
+    //     0x20155c900, 0x20155d280, 0x20155dc00, 0x20155e580
+    // };
+
+    // // mbuf's second cacheline for RX Descriptor (63-95 prev)
+    // uint64_t mbuf_second_cacheline_set_95_prev[] = {
+    //     0x20154bf40, 0x20154c8c0, 0x20154d240, 0x20154dbc0,
+    //     0x20154e540, 0x20154eec0, 0x20154f840, 0x2015501c0,
+    //     0x201550b40, 0x2015514c0, 0x201551e40, 0x2015527c0,
+    //     0x201553140, 0x201553ac0, 0x201554440, 0x201554dc0,
+    //     0x201555740, 0x2015560c0, 0x201556a40, 0x2015573c0,
+    //     0x201557d40, 0x2015586c0, 0x201559040, 0x2015599c0,
+    //     0x20155a340, 0x20155acc0, 0x20155b640, 0x20155bfc0,
+    //     0x20155c940, 0x20155d2c0, 0x20155dc40, 0x20155e5c0
+    // };
+
+    // // mbuf for RX Descriptor (63-95 new)
+    // uint64_t mbuf_addr_set_95_new[] = {
+    //     0x201676d80, 0x201676400, 0x201675a80, 0x201675100,
+    //     0x201674780, 0x201673e00, 0x201673480, 0x201672b00,
+    //     0x201672180, 0x201671800, 0x201670e80, 0x201670500,
+    //     0x20166fb80, 0x20166f200, 0x20166e880, 0x20166df00,
+    //     0x20166d580, 0x20166cc00, 0x20166c280, 0x20166b900,
+    //     0x20166af80, 0x20166a600, 0x201669c80, 0x201669300,
+    //     0x201668980, 0x201668000, 0x201667680, 0x201666d00,
+    //     0x201666380, 0x201665a00, 0x201665080, 0x201664700
+    // };
+
+    // // mbuf's first cacheline for RX Descriptor (63-95 new) - minus 256 from the mbuf_addr_set_95_new
+    // uint64_t mbuf_first_cacheline_set_95_new[] = {
+    //     0x201676c80, 0x201676300, 0x201675980, 0x201675000,
+    //     0x201674680, 0x201673d00, 0x201673380, 0x201672a00,
+    //     0x201672080, 0x201671700, 0x201670d80, 0x201670400,
+    //     0x20166fa80, 0x20166f100, 0x20166e780, 0x20166de00,
+    //     0x20166d480, 0x20166cb00, 0x20166c180, 0x20166b800,
+    //     0x20166ae80, 0x20166a500, 0x201669b80, 0x201669200,
+    //     0x201668880, 0x201667f00, 0x201667580, 0x201666c00,
+    //     0x201666280, 0x201665900, 0x201664f80, 0x201664600
+    // };
+
+    // // mbuf's second cacheline for RX Descriptor (63-95 new) + 64 from the mbuf_first_cacheline_set_95_new
+    // uint64_t mbuf_second_cacheline_set_95_new[] = {
+    //     0x201676cc0, 0x201676340, 0x2016759c0, 0x201675040,
+    //     0x2016746c0, 0x201673d40, 0x2016733c0, 0x201672a40,
+    //     0x2016720c0, 0x201671740, 0x201670dc0, 0x201670440,
+    //     0x20166fac0, 0x20166f140, 0x20166e7c0, 0x20166de40,
+    //     0x20166d4c0, 0x20166cb40, 0x20166c1c0, 0x20166b840,
+    //     0x20166aec0, 0x20166a540, 0x201669bc0, 0x201669240,
+    //     0x2016688c0, 0x201667f40, 0x2016675c0, 0x201666c40,
+    //     0x2016662c0, 0x201665940, 0x201664fc0, 0x201664640
+    // };
+
+    // // mbuf for RX Descriptor (95-127 prev) -> TX Descriptor (128-160)
+    // uint64_t mbuf_addr_set_127_prev[] = {
+    //     0x201539000, 0x201539980, 0x20153A300, 0x20153AC80,
+    //     0x20153B600, 0x20153BF80, 0x20153C900, 0x20153D280,
+    //     0x20153DC00, 0x20153E580, 0x20153EF00, 0x20153F880,
+    //     0x201540200, 0x201540B80, 0x201541500, 0x201541E80,
+    //     0x201542800, 0x201543180, 0x201543B00, 0x201544480,
+    //     0x201544E00, 0x201545780, 0x201546100, 0x201546A80,
+    //     0x201547400, 0x201547D80, 0x201548700, 0x201549080,
+    //     0x201549A00, 0x20154A380, 0x20154AD00, 0x20154B680
+    // };
+
+    // uint64_t mbuf_first_cacheline_set_127_prev[] = {
+    //     0x201538F00, 0x201539880, 0x20153A200, 0x20153AB80,
+    //     0x20153B500, 0x20153BE80, 0x20153C800, 0x20153D180,
+    //     0x20153DB00, 0x20153E480, 0x20153EE00, 0x20153F780,
+    //     0x201540100, 0x201540A80, 0x201541400, 0x201541D80,
+    //     0x201542700, 0x201543080, 0x201543A00, 0x201544380,
+    //     0x201544D00, 0x201545680, 0x201546000, 0x201546980,
+    //     0x201547300, 0x201547C80, 0x201548600, 0x201548F80,
+    //     0x201549900, 0x20154A280, 0x20154AC00, 0x20154B580
+    // };
+
+    // uint64_t mbuf_second_cacheline_set_127_prev[] = {
+    //     0x201538F40, 0x2015398C0, 0x20153A240, 0x20153ABC0,
+    //     0x20153B540, 0x20153BEC0, 0x20153C840, 0x20153D1C0,
+    //     0x20153DB40, 0x20153E4C0, 0x20153EE40, 0x20153F7C0,
+    //     0x201540140, 0x201540AC0, 0x201541440, 0x201541DC0,
+    //     0x201542740, 0x2015430C0, 0x201543A40, 0x2015443C0,
+    //     0x201544D40, 0x2015456C0, 0x201546040, 0x2015469C0,
+    //     0x201547340, 0x201547CC0, 0x201548640, 0x201548FC0,
+    //     0x201549940, 0x20154A2C0, 0x20154AC40, 0x20154B5C0
+    // };
+
     uint64_t mbuf_addr_set_95_prev[] = {
-        0x20154c000, 0x20154c980, 0x20154d300, 0x20154dc80, 
-        0x20154e600, 0x20154ef80, 0x20154f900, 0x201550280, 
-        0x201550c00, 0x201551580, 0x201551f00, 0x201552880, 
-        0x201553200, 0x201553b80, 0x201554500, 0x201554e80, 
-        0x201555800, 0x201556180, 0x201556b00, 0x201557480,
-        0x201557e00, 0x201558780, 0x201559100, 0x201559a80, 
-        0x20155a400, 0x20155ad80, 0x20155b700, 0x20155c080, 
-        0x20155ca00, 0x20155d380, 0x20155dd00, 0x20155e680
+        0x2014DEC00, 0x2014DE280, 0x2014DD900, 0x2014DCF80,
+        0x2014DC600, 0x2014DBC80, 0x2014DB300, 0x2014DA980,
+        0x2014DA000, 0x2014D9680, 0x2014D8D00, 0x2014D8380,
+        0x2014D7A00, 0x2014D7080, 0x2014D6700, 0x2014D5D80,
+        0x2014D5400, 0x2014D4A80, 0x2014D4100, 0x2014D3780,
+        0x2014D2E00, 0x2014D2480, 0x2014D1B00, 0x2014D1180,
+        0x2014D0800, 0x2014CFE80, 0x2014CF500, 0x2014CEB80,
+        0x2014CE200, 0x2015F7980, 0x2015F7000, 0x2015F6680
     };
 
-    // mbuf's start addr for RX Descriptor (63-95 prev)
-    uint64_t mbuf_start_addr_set_95_prev[] = {
-        0x20154bf00, 0x20154c880, 0x20154d200, 0x20154db80, 
-        0x20154e500, 0x20154ee80, 0x20154f800, 0x201550180, 
-        0x201550b00, 0x201551480, 0x201551e00, 0x201552780, 
-        0x201553100, 0x201553a80, 0x201554400, 0x201554d80, 
-        0x201555700, 0x201556080, 0x201556a00, 0x201557380, 
-        0x201557d00, 0x201558680, 0x201559000, 0x201559980, 
-        0x20155a300, 0x20155ac80, 0x20155b600, 0x20155bf80, 
-        0x20155c900, 0x20155d280, 0x20155dc00, 0x20155e580
+    uint64_t mbuf_first_cacheline_set_95_prev[] = {
+        0x2014DEB00, 0x2014DE180, 0x2014DD800, 0x2014DCE80,
+        0x2014DC500, 0x2014DBB80, 0x2014DB200, 0x2014DA880,
+        0x2014D9F00, 0x2014D9580, 0x2014D8C00, 0x2014D8280,
+        0x2014D7900, 0x2014D6F80, 0x2014D6600, 0x2014D5C80,
+        0x2014D5300, 0x2014D4980, 0x2014D4000, 0x2014D3680,
+        0x2014D2D00, 0x2014D2380, 0x2014D1A00, 0x2014D1080,
+        0x2014D0700, 0x2014CFD80, 0x2014CF400, 0x2014CEA80,
+        0x2014CE100, 0x2015F7880, 0x2015F6F00, 0x2015F6580
     };
 
-    // mbuf for RX Descriptor (63-95 new)
+    uint64_t mbuf_second_cacheline_set_95_prev[] = {
+        0x2014DEB40, 0x2014DE1C0, 0x2014DD840, 0x2014DCEC0,
+        0x2014DC540, 0x2014DBBC0, 0x2014DB240, 0x2014DA8C0,
+        0x2014D9F40, 0x2014D95C0, 0x2014D8C40, 0x2014D82C0,
+        0x2014D7940, 0x2014D6FC0, 0x2014D6640, 0x2014D5CC0,
+        0x2014D5340, 0x2014D49C0, 0x2014D4040, 0x2014D36C0,
+        0x2014D2D40, 0x2014D23C0, 0x2014D1A40, 0x2014D10C0,
+        0x2014D0740, 0x2014CFDC0, 0x2014CF440, 0x2014CEAC0,
+        0x2014CE140, 0x2015F78C0, 0x2015F6F40, 0x2015F65C0
+    };
+
     uint64_t mbuf_addr_set_95_new[] = {
-        0x201676d80, 0x201676400, 0x201675a80, 0x201675100,
-        0x201674780, 0x201673e00, 0x201673480, 0x201672b00,
-        0x201672180, 0x201671800, 0x201670e80, 0x201670500,
-        0x20166fb80, 0x20166f200, 0x20166e880, 0x20166df00,
-        0x20166d580, 0x20166cc00, 0x20166c280, 0x20166b900,
-        0x20166af80, 0x20166a600, 0x201669c80, 0x201669300,
-        0x201668980, 0x201668000, 0x201667680, 0x201666d00,
-        0x201666380, 0x201665a00, 0x201665080, 0x201664700
+        0x2013D4900, 0x2013D3F80, 0x2013D3600, 0x2013D2C80,
+        0x2013D2300, 0x2013D1980, 0x2013D1000, 0x2013D0680,
+        0x2013CFD00, 0x2013CF380, 0x2013CEA00, 0x2013CE080,
+        0x2013CD700, 0x2013CCD80, 0x2013CC400, 0x2013CBA80,
+        0x2013CB100, 0x2013CA780, 0x2013C9E00, 0x2013C9480,
+        0x2013C8B00, 0x2013C8180, 0x2013C7800, 0x2013C6E80,
+        0x2013C6500, 0x2013C5B80, 0x2013C5200, 0x2013C4880,
+        0x2013C3F00, 0x2013C3580, 0x2013C2C00, 0x2013C2280
+    };
+
+    uint64_t mbuf_first_cacheline_set_95_new[] = {
+        0x2013D4800, 0x2013D3E80, 0x2013D3500, 0x2013D2B80,
+        0x2013D2200, 0x2013D1880, 0x2013D0F00, 0x2013D0580,
+        0x2013CFC00, 0x2013CF280, 0x2013CE900, 0x2013CDF80,
+        0x2013CD600, 0x2013CCC80, 0x2013CC300, 0x2013CB980,
+        0x2013CB000, 0x2013CA680, 0x2013C9D00, 0x2013C9380,
+        0x2013C8A00, 0x2013C8080, 0x2013C7700, 0x2013C6D80,
+        0x2013C6400, 0x2013C5A80, 0x2013C5100, 0x2013C4780,
+        0x2013C3E00, 0x2013C3480, 0x2013C2B00, 0x2013C2180
+    };
+
+    uint64_t mbuf_second_cacheline_set_95_new[] = {
+        0x2013D4840, 0x2013D3EC0, 0x2013D3540, 0x2013D2BC0,
+        0x2013D2240, 0x2013D18C0, 0x2013D0F40, 0x2013D05C0,
+        0x2013CFC40, 0x2013CF2C0, 0x2013CE940, 0x2013CDFC0,
+        0x2013CD640, 0x2013CCCC0, 0x2013CC340, 0x2013CB9C0,
+        0x2013CB040, 0x2013CA6C0, 0x2013C9D40, 0x2013C93C0,
+        0x2013C8A40, 0x2013C80C0, 0x2013C7740, 0x2013C6DC0,
+        0x2013C6440, 0x2013C5AC0, 0x2013C5140, 0x2013C47C0,
+        0x2013C3E40, 0x2013C34C0, 0x2013C2B40, 0x2013C21C0
+    };
+
+    uint64_t mbuf_addr_set_127_prev[] = {
+        0x2015F5D00, 0x2015F5380, 0x2015F4A00, 0x2015F4080,
+        0x2015F3700, 0x2015F2D80, 0x2015F2400, 0x2015F1A80,
+        0x2015F1100, 0x2015F0780, 0x2015EFE00, 0x2015EF480,
+        0x2015EEB00, 0x2015EE180, 0x2015ED800, 0x2015ECE80,
+        0x2015EC500, 0x2015EBB80, 0x2015EB200, 0x2015EA880,
+        0x2015E9F00, 0x2015E9580, 0x2015E8C00, 0x2015E8280,
+        0x2015E7900, 0x2015E6F80, 0x2015E6600, 0x2015E5C80,
+        0x2015E5300, 0x2015E4980, 0x2015E4000, 0x2015E3680
+    };
+
+    uint64_t mbuf_first_cacheline_set_127_prev[] = {
+        0x2015F5C00, 0x2015F5280, 0x2015F4900, 0x2015F3F80,
+        0x2015F3600, 0x2015F2C80, 0x2015F2300, 0x2015F1980,
+        0x2015F1000, 0x2015F0680, 0x2015EFD00, 0x2015EF380,
+        0x2015EEA00, 0x2015EE080, 0x2015ED700, 0x2015ECD80,
+        0x2015EC400, 0x2015EBA80, 0x2015EB100, 0x2015EA780,
+        0x2015E9E00, 0x2015E9480, 0x2015E8B00, 0x2015E8180,
+        0x2015E7800, 0x2015E6E80, 0x2015E6500, 0x2015E5B80,
+        0x2015E5200, 0x2015E4880, 0x2015E3F00, 0x2015E3580
+    };
+
+    uint64_t mbuf_second_cacheline_set_127_prev[] = {
+        0x2015F5C40, 0x2015F52C0, 0x2015F4940, 0x2015F3FC0,
+        0x2015F3640, 0x2015F2CC0, 0x2015F2340, 0x2015F19C0,
+        0x2015F1040, 0x2015F06C0, 0x2015EFD40, 0x2015EF3C0,
+        0x2015EEA40, 0x2015EE0C0, 0x2015ED740, 0x2015ECDC0,
+        0x2015EC440, 0x2015EBAC0, 0x2015EB140, 0x2015EA7C0,
+        0x2015E9E40, 0x2015E94C0, 0x2015E8B40, 0x2015E81C0,
+        0x2015E7840, 0x2015E6EC0, 0x2015E6540, 0x2015E5BC0,
+        0x2015E5240, 0x2015E48C0, 0x2015E3F40, 0x2015E35C0
     };
 
     // mbuf's structure part
     for (int i = 0; i < 32; i ++) {
-        if (pkt->getAddr() == mbuf_start_addr_set_95_prev[i]) {
-            printf("[LOG] %llu, %s, %s, %d, MBUFSTRUCT95PREV[%d]_RESP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        uint64_t pkt_addr = pkt->getAddr();
+        uint64_t pkt_addr_end = pkt_addr + pkt->getSize();
+        // Check if the packet address is in the mbuf's structure part
+        // if (pkt_addr >= mbuf_first_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_preprev[i] + 64) {
+        //     printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95PREPREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        // }
+        // if (pkt_addr >= mbuf_second_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_second_cacheline_set_95_preprev[i] + 64) {
+        //     printf("[LOG], %llu, %s, %s, %d, MBUF_$1_95PREPREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        // }
+        if (pkt_addr >= mbuf_first_cacheline_set_95_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_prev[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_95_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_95_prev[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_95PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_95_new[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_new[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_95_new[i] && pkt_addr_end <= mbuf_second_cacheline_set_95_new[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_95NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_127_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_127_prev[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_127PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_127_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_127_prev[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_127PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
 
     // mbuf's data part
     for (int i = 0; i < 32; i++) {
+        // if (pkt->getAddr() == mbuf_addr_set_95_preprev[i]) {
+        //     printf("[LOG], %llu, %s, %s, %d, MBUF95PREPREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        // }
         if (pkt->getAddr() == mbuf_addr_set_95_prev[i]) {
-            printf("[LOG] %llu, %s, %s, %d, MBUF95PREV[%d]_RESP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+            printf("[LOG], %llu, %s, %s, %d, MBUF95PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-    }
-
-    for (int i = 0; i < 32; i++) {
         if (pkt->getAddr() == mbuf_addr_set_95_new[i]) {
-            printf("[LOG] %llu, %s, %s, %d, MBUF95NEW[%d]_RESP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+            printf("[LOG], %llu, %s, %s, %d, MBUF95NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt->getAddr() == mbuf_addr_set_127_prev[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF127PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
     #endif
@@ -994,38 +1665,187 @@ BaseCache::recvTimingResp(PacketPtr pkt)
     // MBUF_1
     for (int i = 0; i < 32; i++) {
         if (pkt->getAddr() == mbuf_addr1[i]) {
-            printf("[LOG] %llu, %s, %s, %d, MBUF_1[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+            printf("[LOG], %llu, %s, %s, %d, MBUF_1[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
 
     // MBUF_2
     for (int i = 0; i < 32; i++) {
         if (pkt->getAddr() == mbuf_addr2[i]) {
-            printf("[LOG] %llu, %s, %s, %d, MBUF_2[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+            printf("[LOG], %llu, %s, %s, %d, MBUF_2[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
 
     // DESC_RX
     for (int i = 0; i < 8; i++) {
         if (pkt->getAddr() == desc_rx[i]) {
-            printf("[LOG] %llu, %s, %s, %d, DESC_RX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+            printf("[LOG], %llu, %s, %s, %d, DESC_RX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
 
     // DESC_TX
     for (int i = 0; i < 4; i++) {
         if (pkt->getAddr() == desc_tx[i]) {
-            printf("[LOG] %llu, %s, %s, %d, DESC_TX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+            printf("[LOG], %llu, %s, %s, %d, DESC_TX[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
 
     // COMP_RX
     if (pkt->getAddr() == comp_rx) {
-        printf("[LOG] %llu, %s, %s, %d, COMP_RX\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+        printf("[LOG], %llu, %s, %s, %d, COMP_RX\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
     }
     // COMP_TX
     if (pkt->getAddr() == comp_tx) {
-        printf("[LOG] %llu, %s, %s, %d, COMP_TX\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+        printf("[LOG], %llu, %s, %s, %d, COMP_TX\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
+    #endif
+
+    #if LOG_LEVEL == 3
+    uint64_t comp_rx = 0x202099900;
+    uint64_t comp_rx2 = 0x202099480;
+    uint64_t comp_tx = 0x2020b2b80;
+    uint64_t comp_tx2 = 0x2020b2600;
+
+    uint64_t mbuf_arr_rx = 0x202097400;
+    uint64_t mbuf_arr_rx2 = 0x202095380;
+
+
+    // COMP_RX
+    if (pkt->getAddr() == comp_rx) {
+        int64_t comp_val = 1111111111;
+        if (pkt->isRead()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        }
+        printf("[LOG], %llu, %s, %s, %ld, COMP_RX_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), comp_val);
+    }
+    if (pkt->getAddr() == comp_rx2) {
+        int64_t comp_val = 1111111111;
+        if (pkt->isRead()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        }
+        printf("[LOG], %llu, %s, %s, %ld, COMP_RX2_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), comp_val);
+    }
+    // COMP_TX
+    if (pkt->getAddr() == comp_tx) {
+        int64_t comp_val = 1111111111;
+        if (pkt->isRead()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        }
+        printf("[LOG], %llu, %s, %s, %ld, COMP_TX_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), comp_val);
+    }
+    if (pkt->getAddr() == comp_tx2) {
+        int64_t comp_val = 1111111111;
+        if (pkt->isRead()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            comp_val = data[0];
+        }
+        printf("[LOG], %llu, %s, %s, %ld, COMP_TX2_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), comp_val);
+    }
+
+    // MBUF_ARR_RX
+    if (pkt->getAddr() == mbuf_arr_rx) {
+        int64_t pointer_addr = 1111111111;
+        if (pkt->isRead()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            pointer_addr = data[0];
+        } 
+        printf("[LOG], %llu, %s, %s, %d, MBUF_ARR_RX_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), pointer_addr);
+    }
+    if (pkt->getAddr() == mbuf_arr_rx2) {
+        int64_t pointer_addr = 1111111111;
+        if (pkt->isRead()) {
+            // Get value from pkt's data
+            int64_t* data = pkt->getPtr<int64_t>();
+            pointer_addr = data[0];
+        }
+        printf("[LOG], %llu, %s, %s, %d, MBUF_ARR_RX2_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), pointer_addr);
+    }
+
+    // RX_JOB_SUBMIT
+    if (pkt->getAddr() == 1073752256) {
+        printf("[LOG], %llu, %s, %s, %d, RX_JOB_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
+    // TX_JOB_SUBMIT
+    if (pkt->getAddr() == 1073756352) {
+        printf("[LOG], %llu, %s, %s, %d, TX_JOB_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
+    }
+
+    uint64_t mbuf_addr1[] = { // RX_JOB_ID 12
+        0x2010e1200, 0x2010e0880, 0x2010dff00, 0x2010df580, 0x2010dec00, 0x2010de280, 0x2010dd900, 0x2010dcf80, 
+        0x2010dc600, 0x2010dbc80, 0x2010db300, 0x2010da980, 0x2010da000, 0x2010d9680, 0x2010d8d00, 0x2010d8380, 
+        0x2010d7a00, 0x2010d7080, 0x2010d6700, 0x2010d5d80, 0x2010d5400, 0x2010d4a80, 0x2010d4100, 0x2010d3780, 
+        0x2010d2e00, 0x2010d2480, 0x2010d1b00, 0x2010d1180, 0x2010d0800, 0x2010cfe80, 0x2010cf500, 0x2010ceb80
+    };
+
+    uint64_t mbuf_addr2[] = { // TX_JOB_ID 9 (RX_JOB_ID 11)
+        0x2010bb200, 0x2010ba880, 0x2010b9f00, 0x2010b9580, 0x2010b8c00, 0x2010b8280, 0x2010b7900, 0x2010b6f80, 
+        0x2010b6600, 0x2010b5c80, 0x2010b5300, 0x2010b4980, 0x2010b4000, 0x2010b3680, 0x2010b2d00, 0x2010b2380, 
+        0x2010b1a00, 0x2010b1080, 0x2010b0700, 0x2010afd80, 0x2010af400, 0x2010aea80, 0x2010ae100, 0x2010ad780, 
+        0x2010ace00, 0x2010ac480, 0x2010abb00, 0x2010ab180, 0x2010aa800, 0x2010a9e80, 0x2010a9500, 0x2010a8b80
+    };
+
+    uint64_t desc_rx1[] = {
+        0x202099940, 0x202099980, 0x2020999c0, 0x202099a00, 0x202099a40, 0x202099a80, 0x202099ac0, 0x202099b00
+    };
+
+    uint64_t desc_rx2[] = {
+        0x2020994c0, 0x202099500, 0x202099540, 0x202099580, 0x2020995c0, 0x202099600, 0x202099640, 0x202099680
+    };
+
+    uint64_t desc_tx1[] = {
+        0x2020b2700, 0x2020b2740, 0x2020b2780, 0x2020b27c0
+    };
+
+    uint64_t desc_tx2[] = {
+        0x2020b2180, 0x2020b21c0, 0x2020b2200, 0x2020b2240
+    };
+
+    // MBUF_1
+    for (int i = 0; i < 32; i++) {
+        if (pkt->getAddr() == mbuf_addr1[i]) {
+            printf("[LOG], %llu, %s, %s, %d, BATCH_9_RSP[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+
+    // MBUF_2
+    for (int i = 0; i < 32; i++) {
+        if (pkt->getAddr() == mbuf_addr2[i]) {
+            printf("[LOG], %llu, %s, %s, %d, BATCH_8_RSP[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+
+    // DESC_RX
+    for (int i = 0; i < 8; i++) {
+        if (pkt->getAddr() == desc_rx1[i]) {
+            printf("[LOG], %llu, %s, %s, %d, DESC_RX1_RSP[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+
+    for (int i = 0; i <8; i++) {
+        if (pkt->getAddr() == desc_rx2[i]) {
+            printf("[LOG], %llu, %s, %s, %d, DESC_RX2_RSP[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+    
+    // DESC_TX
+    for (int i = 0; i < 4; i++) {
+        if (pkt->getAddr() == desc_tx1[i]) {
+            printf("[LOG], %llu, %s, %s, %d, DESC_TX1_RSP[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+    }
+
+    for (int i = 0; i < 4; i++) {
+        if (pkt->getAddr() == desc_tx2[i]) {
+            printf("[LOG], %llu, %s, %s, %d, DESC_TX2_RSP[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
     }
     #endif
 
@@ -3492,8 +4312,9 @@ DTA::recvTimingReq(PacketPtr pkt)
             // Have to check the second uint64_t value of the packet is less than the 1024 if the rxContext is not valid
             // Because, checkpoint can be made during sending the job packet from the DPDK.
             // Have to begin with the new job request if the rxContext is not valid
-            bool isValidJob = true; // If dtaRXContext is valid, we don't need to check the second uint64_t value
-            if (!dtaRXContext.valid) {
+            bool isValidJob = true; // If there is no initialization stage RXContext, we don't need to check the second uint64_t value
+            if (getInitializationStageRXContextID() == -1) {
+                // If there are no intialization stage RXContext, we have to check the second uint64_t value to filter-out the mid-job packet
                 // Check the packet's second uint64_t value
                 uint8_t *data = pkt->getPtr<uint8_t>();
                 // Parse the job request from CPU
@@ -3506,6 +4327,7 @@ DTA::recvTimingReq(PacketPtr pkt)
                 } else {
                     isValidJob = true;
                     validRXJobRequestCount += 1;
+                    // printf("[LOG], %llu, DTA_RX, NEW_BATCH_JOB_REQ_RECV\n", curTick());
                     // printf("The second uint64_t value of the RX job request is less than 1024. It is valid. So we will start the new job. The number of valid RX job request is %d\n", validRXJobRequestCount);
                 }
             }
@@ -3513,7 +4335,7 @@ DTA::recvTimingReq(PacketPtr pkt)
             if (isValidJob) {
                 // Only do this when the received packet is the valid job
                 // printf("Receive the RX job request from CPU\n");
-                // printf("[LOG] %llu, DTA, RX_JOB_REQ_RECV\n", curTick());
+                // printf("[LOG], %llu, DTA, RX_JOB_REQ_RECV\n", curTick());
                 // Make copy of the pkt and push the copy to the submission queue
                 // The original pkt will be responded to CPU
                 PacketPtr pkt_copy = new Packet(pkt, false, true);
@@ -3546,7 +4368,12 @@ DTA::recvTimingReq(PacketPtr pkt)
             return false;
         } else {
             // printf("Receive the TX job request from CPU\n");
-            // printf("[LOG] %llu, DTA, TX_JOB_REQ_RECV\n", curTick());
+            // printf("[LOG], %llu, DTA, TX_JOB_REQ_RECV\n", curTick());
+            // Check if this is new batch job
+            if (getInitializationStageTXContextID() == -1) {
+                // This is new batch job
+                // printf("[LOG], %llu, DTA_TX, NEW_BATCH_JOB_REQ_RECV\n", curTick());
+            }
             // Make copy of the pkt and push the copy to the submission queue
             // The original pkt will be responded to CPU
             PacketPtr pkt_copy = new Packet(pkt, false, true);
@@ -3586,9 +4413,9 @@ DTA::checkSubmissionQueue() {
     bool scheduleTXJob = false;
 
     bool canScheduleRXJob = (!rxJobSubmissionQueue.empty()) && 
-                            ((!dtaRXContext.valid) || (dtaRXContext.valid && dtaRXContext.n_mbuf_addr_received < dtaRXContext.nb_pkts));
+                            (hasNonActiveRXContext() || (getInitializationStageRXContextID() != -1));
     bool canScheduleTXJob = (!txJobSubmissionQueue.empty()) && 
-                            ((!dtaTXContext.valid) || (dtaTXContext.valid && dtaTXContext.n_mbuf_addr_received < dtaTXContext.nb_pkts));
+                            (hasNonActiveTXContext() || (getInitializationStageTXContextID() != -1));
     
     // Decide which job to schedule
     if (checkRXJobQueue) {
@@ -3623,162 +4450,116 @@ DTA::checkSubmissionQueue() {
         assert(!rxJobSubmissionQueue.empty());
         PacketPtr pkt = rxJobSubmissionQueue.front();
         assert(pkt->isRXJobReq());
-        assert(!dtaRXContext.valid || (dtaRXContext.valid && dtaRXContext.n_mbuf_addr_received < dtaRXContext.nb_pkts));
-        parseJobRequestAndSetContext(pkt);
-        rxJobSubmissionQueue.pop_front();
-
-        delete pkt; // This is the copy of the original packet
-
-        return true; // Need tick
+        assert(hasNonActiveRXContext() || (getInitializationStageRXContextID() != -1));
+        bool successParsing = parseJobRequestAndSetContext(pkt);
+        if (successParsing) {
+            rxJobSubmissionQueue.pop_front();
+            delete pkt; // This is the copy of the original packet
+            return true; // Need tick
+        } else {
+            return true; // Need tick
+        }
     } else if (scheduleTXJob) {
         assert(!txJobSubmissionQueue.empty());
         PacketPtr pkt = txJobSubmissionQueue.front();
         assert(pkt->isTXJobReq());
-        assert(!dtaTXContext.valid || (dtaTXContext.valid && dtaTXContext.n_mbuf_addr_received < dtaTXContext.nb_pkts));
-        parseJobRequestAndSetContext(pkt);
-        txJobSubmissionQueue.pop_front();
-
-        delete pkt; // This is the copy of the original packet
-
-        return true; // Need tick
+        assert(hasNonActiveTXContext() || (getInitializationStageTXContextID() != -1));
+        bool successParsing = parseJobRequestAndSetContext(pkt);
+        if (successParsing) {
+            txJobSubmissionQueue.pop_front();
+            delete pkt; // This is the copy of the original packet
+            return true; // Need tick
+        } else {
+            return true; // Need tick
+        }
     } else {
         assert(0 && "Cannot reach here");
         return false; // No need tick
     }
 }
 
-void 
+bool 
 DTA::parseJobRequestAndSetContext(PacketPtr pkt) 
 {
     // Parse Job request from CPU and make a new context
     assert(isDTAEnabled());
     if (pkt->isRXJobReq()) {
-        if (!dtaRXContext.valid) {
-            DPRINTF(DDIO, "Parsing RX job request 0th packet from CPU\n");
-            dtaRXContext.rx_job_id += 1;
-            if (dtaRXContext.rx_job_id == 7 || dtaRXContext.rx_job_id == 8) {
-                printf("DTA Parsing RX Job ID: %llu\n", dtaRXContext.rx_job_id);
-            }
-            dtaRXContext.valid = true;
-            dtaRXContext.completion_stage = false;
-            uint32_t n_job_packet_received = 0;
-            uint8_t *data = pkt->getPtr<uint8_t>();
-            // Parse the job request from CPU
-            dtaRXContext.completion_addr =  *(Addr*)data;
-            dtaRXContext.desc_addr = dtaRXContext.completion_addr + cacheLineSize;
-            data = reinterpret_cast<uint8_t*>(data) + sizeof(Addr);
-            uint64_t nb_pkts_64bit = *(uint64_t*)data;
-            dtaRXContext.nb_pkts = (uint32_t)nb_pkts_64bit;
-            data = reinterpret_cast<uint8_t*>(data) + sizeof(uint64_t);
-            dtaRXContext.n_recv = 0;
-            dtaRXContext.num_free_request_in_NIC = 0;
-            dtaRXContext.lastDTARXWorker = 0;
-            dtaRXContext.n_mbuf_addr_received = 0;
-            dtaRXContext.n_extra_cxl_req_needed = 0;
-            dtaRXContext.n_extra_cxl_req_received = 0;
-            dtaRXContext.n_desc_write_completed = 0;
-            dtaRXContext.n_cacheline_idx_write_completed = 0;
-            dtaRXContext.RXDescMap.clear();
-            dtaRXContext.RXCompleteMap.clear();
-            
-            n_job_packet_received = std::min(dtaRXContext.nb_pkts, rxFirstJobPacketNumMbufAddr);
-            for (uint32_t i = 0; i < n_job_packet_received; i++) {
-                dtaRXContext.mbuf_addr[i] = *(Addr*)data;
-                dtaRXContext.RXCompleteMap[dtaRXContext.mbuf_addr[i]] = false;
-                data += sizeof(Addr);
-                dtaRXContext.n_mbuf_addr_received += 1;
-            }            
-            DPRINTF(DDIO, "Parsed RX job request from CPU\n");
-            DPRINTF(DDIO, "dtaRXContext.completion_addr: %lx\n", dtaRXContext.completion_addr);
-            DPRINTF(DDIO, "dtaRXContext.desc_addr: %lx\n", dtaRXContext.desc_addr);
-            DPRINTF(DDIO, "dtaRXContext.nb_pkts: %d\n", dtaRXContext.nb_pkts);
-            DPRINTF(DDIO, "dtaRXContext.n_mbuf_addr_received: %d\n", dtaRXContext.n_mbuf_addr_received);
-            for (uint32_t i = 0; i < dtaRXContext.n_mbuf_addr_received; i++) {
-                DPRINTF(DDIO, "dtaRXContext.mbuf_addr[%d]: %lx\n", i, dtaRXContext.mbuf_addr[i]);
-            }
-
-            #if LOG_LEVEL == 3
-            if (dtaRXContext.rx_job_id == 7) {
-                // Print the job info
-                printf("DTA RX Job ID: %llu\n", dtaRXContext.rx_job_id);
-                printf("DTA RX Completion Addr: %lx\n", dtaRXContext.completion_addr);
-                printf("DTA RX Descriptor Addr: %lx\n", dtaRXContext.desc_addr);
-                printf("DTA RX Number of Packets: %d\n", dtaRXContext.nb_pkts);
-                printf("DTA RX mbuf addresses:\n");
-                for (uint32_t i = 0; i < dtaRXContext.n_mbuf_addr_received; i++) {
-                    printf("%lx, ", dtaRXContext.mbuf_addr[i]);
-                }
-                printf("\n");
-            }
-            #endif
-
-            // Intialize the completion address with 0
-            // Make the Request
-            RequestPtr req = std::make_shared<Request>(dtaRXContext.completion_addr, cacheLineSize, 0, requestorId);
-            req->taskId(context_switch_task_id::DMA);
-            PacketPtr wr_pkt = new Packet(req, MemCmd::WriteReq);
-            // Make the data
-            uint8_t *wr_data = new uint8_t[cacheLineSize];
-            memset(wr_data, 0, cacheLineSize);
-            wr_pkt->allocate();
-            wr_pkt->setData(wr_data);
-            wr_pkt->setFromDTA();
-
-            delete[] wr_data;
-
-            assert(ioCache != nullptr);
-            bool success = ioCache->recvTimingReqfromDTA(wr_pkt);
-            if (!success) {
-                // Delete the packet
-                delete wr_pkt;
-            }
+        int rx_context_id = getParsingTargetRXContextID();
+        if (rx_context_id == -1) {
+            printf("DTA::parseJobRequestAndSetContext - RX Context ID is -1. Not enough RXContextList\n");
+            return false;
         } else {
-            // This job request packet is the next part of the previous job request packet
-            // This packet only contains the mbuf address
-            // Have to use the nb_pkts that is received from the first packet
-            uint32_t n_job_packet_received = 0;
-            uint32_t packet_index = 0;
-            // Calculate the index of the job request packet
-            // Can calculate the index of the job request packet using the number of packets that are received (n_mbuf_addr_received)
-            packet_index = 1 + int((dtaRXContext.n_mbuf_addr_received - rxFirstJobPacketNumMbufAddr) / restJobPacketNumMbufAddr);
-            DPRINTF(DDIO, "Parsing RX job request %dth packet from CPU\n", packet_index);
-            
-            uint8_t *data = pkt->getPtr<uint8_t>();
-            // Parse the job request from CPU
-            #if LOG_LEVEL == 3
-            if (dtaRXContext.rx_job_id == 7) {
-                // Print the job info
-                printf("DTA RX Job ID: %llu\n", dtaRXContext.rx_job_id);
-                printf("DTA RX mbuf addresses:\n");
-            }
-            #endif
-            n_job_packet_received = std::min(restJobPacketNumMbufAddr, dtaRXContext.nb_pkts - dtaRXContext.n_mbuf_addr_received);
-            for (uint32_t i = 0; i < n_job_packet_received; i++) {
-                dtaRXContext.mbuf_addr[dtaRXContext.n_mbuf_addr_received] = *(Addr*)data;
-                dtaRXContext.RXCompleteMap[dtaRXContext.mbuf_addr[dtaRXContext.n_mbuf_addr_received]] = false;
-                data += sizeof(Addr);
-                dtaRXContext.n_mbuf_addr_received += 1;
-                #if LOG_LEVEL == 3
-                if (dtaRXContext.rx_job_id == 7)
-                    printf("%lx, ", dtaRXContext.mbuf_addr[dtaRXContext.n_mbuf_addr_received - 1]);
+            if (!isActiveRXContext(rx_context_id)) {
+                pushRXContextIDQueue((uint64_t)rx_context_id);
+                DPRINTF(DDIO, "Parsing RX job request 0th packet from CPU\n");
+                global_rx_job_id += 1;
+                dtaRXContextList[rx_context_id].rx_job_id = global_rx_job_id;
+                if (global_rx_job_id <= 13) {
+                    printf("%llu, DTA Parsing RX Job ID: %llu\n", curTick(), global_rx_job_id);
+                }
+                // printf("[LOG], %llu, DTA_RX, %lu, RX_JOB_REQ_PARSE\n", curTick(), global_rx_job_id);
+                dtaRXContextList[rx_context_id].valid = true;
+                dtaRXContextList[rx_context_id].completion_stage = false;
+                uint32_t n_job_packet_received = 0;
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                // Parse the job request from CPU
+                dtaRXContextList[rx_context_id].completion_addr =  *(Addr*)data;
+                dtaRXContextList[rx_context_id].desc_addr = dtaRXContextList[rx_context_id].completion_addr + cacheLineSize;
+                data = reinterpret_cast<uint8_t*>(data) + sizeof(Addr);
+                uint64_t nb_pkts_64bit = *(uint64_t*)data;
+                dtaRXContextList[rx_context_id].nb_pkts = (uint32_t)nb_pkts_64bit;
+                data = reinterpret_cast<uint8_t*>(data) + sizeof(uint64_t);
+                dtaRXContextList[rx_context_id].n_recv = 0;
+                dtaRXContextList[rx_context_id].num_free_request_in_NIC = 0;
+                dtaRXContextList[rx_context_id].lastDTARXWorker = 0;
+                dtaRXContextList[rx_context_id].n_mbuf_addr_received = 0;
+                dtaRXContextList[rx_context_id].n_extra_cxl_req_needed = 0;
+                dtaRXContextList[rx_context_id].n_extra_cxl_req_received = 0;
+                dtaRXContextList[rx_context_id].n_desc_write_completed = 0;
+                dtaRXContextList[rx_context_id].n_cacheline_idx_write_completed = 0;
+                dtaRXContextList[rx_context_id].RXDescMap.clear();
+                dtaRXContextList[rx_context_id].RXCompleteMap.clear();
+                
+                n_job_packet_received = std::min(dtaRXContextList[rx_context_id].nb_pkts, rxFirstJobPacketNumMbufAddr);
+                for (uint32_t i = 0; i < n_job_packet_received; i++) {
+                    Addr temp_mbuf_addr = *(Addr*)data;
+                    dtaRXContextList[rx_context_id].mbuf_addr[i] = temp_mbuf_addr;
+                    dtaRXContextList[rx_context_id].RXCompleteMap[temp_mbuf_addr] = false;
+                    data += sizeof(Addr);
+                    dtaRXContextList[rx_context_id].n_mbuf_addr_received += 1;
+                }            
+                DPRINTF(DDIO, "Parsed RX job request from CPU\n");
+                DPRINTF(DDIO, "dtaRXContextList[%d].completion_addr: %lx\n", rx_context_id, dtaRXContextList[rx_context_id].completion_addr);
+                DPRINTF(DDIO, "dtaRXContextList[%d].desc_addr: %lx\n", rx_context_id, dtaRXContextList[rx_context_id].desc_addr);
+                DPRINTF(DDIO, "dtaRXContextList[%d].nb_pkts: %d\n", rx_context_id, dtaRXContextList[rx_context_id].nb_pkts);
+                DPRINTF(DDIO, "dtaRXContextList[%d].n_mbuf_addr_received: %d\n", rx_context_id, dtaRXContextList[rx_context_id].n_mbuf_addr_received);
+                for (uint32_t i = 0; i < dtaRXContextList[rx_context_id].n_mbuf_addr_received; i++) {
+                    DPRINTF(DDIO, "dtaRXContextList[%d].mbuf_addr[%d]: %lx\n", rx_context_id, i, dtaRXContextList[rx_context_id].mbuf_addr[i]);
+                }
+
+                #if LOG_LEVEL == 4
+                if (global_rx_job_id <= 13) { //global_rx_job_id >= 11 && 
+                    // Print the job info
+                    printf("DTA RX Job ID: %llu\n", dtaRXContextList[rx_context_id].rx_job_id);
+                    printf("DTA RX Completion Addr: %#lx\n", dtaRXContextList[rx_context_id].completion_addr);
+                    printf("DTA RX Descriptor Addr: %#lx\n", dtaRXContextList[rx_context_id].desc_addr);
+                    printf("DTA RX Number of Packets: %d\n", dtaRXContextList[rx_context_id].nb_pkts);
+                    printf("DTA RX mbuf addresses:\n");
+                    for (uint32_t i = 0; i < dtaRXContextList[rx_context_id].n_mbuf_addr_received; i++) {
+                        printf("%#lx, ", dtaRXContextList[rx_context_id].mbuf_addr[i]);
+                    }
+                    printf("\n");
+                }
                 #endif
-            }
-            #if LOG_LEVEL == 3
-            if (dtaRXContext.rx_job_id == 7)
-                printf("\n");
-            #endif
-            assert(dtaRXContext.n_mbuf_addr_received <= dtaRXContext.nb_pkts);
-            if (dtaRXContext.n_mbuf_addr_received == dtaRXContext.nb_pkts) {
-                // Write the temporal completion id to the completion address. To stop the break of while loop in the DPDK
+
+                // Intialize the completion address with 0
                 // Make the Request
-                RequestPtr req = std::make_shared<Request>(dtaRXContext.completion_addr, cacheLineSize, 0, requestorId);
+                RequestPtr req = std::make_shared<Request>(dtaRXContextList[rx_context_id].completion_addr, cacheLineSize, 0, requestorId);
                 req->taskId(context_switch_task_id::DMA);
                 PacketPtr wr_pkt = new Packet(req, MemCmd::WriteReq);
                 // Make the data
                 uint8_t *wr_data = new uint8_t[cacheLineSize];
                 memset(wr_data, 0, cacheLineSize);
-                int64_t completion_id = dtaRXContext.n_recv;
-                memcpy(wr_data, &completion_id, sizeof(int64_t));
                 wr_pkt->allocate();
                 wr_pkt->setData(wr_data);
                 wr_pkt->setFromDTA();
@@ -3786,125 +4567,199 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
                 delete[] wr_data;
 
                 assert(ioCache != nullptr);
-                // printf("dtaRX Write the current n_recv: %ld to the completion address: %lx\n", completion_id, dtaRXContext.completion_addr);
+                pushIOCacheRequestQueue(wr_pkt);
 
-                bool success = ioCache->recvTimingReqfromDTA(wr_pkt);
-                assert(success);
+            } else {
+                // This job request packet is the next part of the previous job request packet
+                // This packet only contains the mbuf address
+                // Have to use the nb_pkts that is received from the first packet
+                uint32_t n_job_packet_received = 0;
+                uint32_t packet_index = 0;
+                // Calculate the index of the job request packet
+                // Can calculate the index of the job request packet using the number of packets that are received (n_mbuf_addr_received)
+                packet_index = 1 + int((dtaRXContextList[rx_context_id].n_mbuf_addr_received - rxFirstJobPacketNumMbufAddr) / restJobPacketNumMbufAddr);
+                DPRINTF(DDIO, "Parsing RX job request %dth packet from CPU\n", packet_index);
+                
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                // Parse the job request from CPU
+                #if LOG_LEVEL == 4
+                if (global_rx_job_id <= 13) { //global_rx_job_id >= 11 && 
+                    // Print the job info
+                    printf("DTA RX Job ID: %llu\n", dtaRXContextList[rx_context_id].rx_job_id);
+                    printf("DTA RX mbuf addresses:\n");
+                }
+                #endif
+                n_job_packet_received = std::min(restJobPacketNumMbufAddr, dtaRXContextList[rx_context_id].nb_pkts - dtaRXContextList[rx_context_id].n_mbuf_addr_received);
+                for (uint32_t i = 0; i < n_job_packet_received; i++) {
+                    Addr temp_mbuf_addr = *(Addr*)data;
+                    dtaRXContextList[rx_context_id].mbuf_addr[dtaRXContextList[rx_context_id].n_mbuf_addr_received] = temp_mbuf_addr;
+                    dtaRXContextList[rx_context_id].RXCompleteMap[temp_mbuf_addr] = false;
+                    data += sizeof(Addr);
+                    dtaRXContextList[rx_context_id].n_mbuf_addr_received += 1;
+                    #if LOG_LEVEL == 4
+                    if (global_rx_job_id <= 13) //global_rx_job_id >= 11 && 
+                        printf("%#lx, ", temp_mbuf_addr);
+                    #endif
+                }
+                #if LOG_LEVEL == 4
+                if (global_rx_job_id <= 13) //global_rx_job_id >= 11 && 
+                    printf("\n");
+                #endif
+                assert(dtaRXContextList[rx_context_id].n_mbuf_addr_received <= dtaRXContextList[rx_context_id].nb_pkts);
+                if (dtaRXContextList[rx_context_id].n_mbuf_addr_received == dtaRXContextList[rx_context_id].nb_pkts) {
+                    // Write the temporal completion id to the completion address. To stop the break of while loop in the DPDK
+                    // Make the Request
+                    RequestPtr req = std::make_shared<Request>(dtaRXContextList[rx_context_id].completion_addr, cacheLineSize, 0, requestorId);
+                    req->taskId(context_switch_task_id::DMA);
+                    PacketPtr wr_pkt = new Packet(req, MemCmd::WriteReq);
+                    // Make the data
+                    uint8_t *wr_data = new uint8_t[cacheLineSize];
+                    memset(wr_data, 0, cacheLineSize);
+                    int64_t completion_id = dtaRXContextList[rx_context_id].n_recv;
+                    if (completion_id == 0) {
+                        // Just set as 1, to notify DPDK to not exit the loop
+                        completion_id = 1;
+                    }
+                    memcpy(wr_data, &completion_id, sizeof(int64_t));
+                    wr_pkt->allocate();
+                    wr_pkt->setData(wr_data);
+                    wr_pkt->setFromDTA();
+
+                    delete[] wr_data;
+
+                    assert(ioCache != nullptr);
+                    // printf("dtaRX Write the current n_recv: %ld to the completion address: %lx\n", completion_id, dtaRXContextList[rx_context_id].completion_addr);
+
+                    pushIOCacheRequestQueue(wr_pkt);
+                }
+                DPRINTF(DDIO, "Parsed RX job request %dth packet from CPU, %ld/%ld mbuf addresses are received\n", packet_index, dtaRXContextList[rx_context_id].n_mbuf_addr_received, dtaRXContextList[rx_context_id].nb_pkts); 
             }
-            DPRINTF(DDIO, "Parsed RX job request %dth packet from CPU, %ld/%ld mbuf addresses are received\n", packet_index, dtaRXContext.n_mbuf_addr_received, dtaRXContext.nb_pkts); 
+            return true;
         }
     } else if (pkt->isTXJobReq()) {
-        if (!dtaTXContext.valid) {
-            dtaTXContext.tx_job_id += 1;
-            // printf("DTA Parsing TX Job ID: %llu\n", dtaTXContext.tx_job_id);
-            DPRINTF(DDIO, "Parsing TX job request 0th packet from CPU\n");
-            dtaTXContext.valid = true;
-            uint32_t n_job_packet_received = 0;
-            uint8_t *data = pkt->getPtr<uint8_t>();
-            // Parse the job request from CPU
-            // 1. Descriptor address: where the descriptors of batch are stored
-            // 2. Completion address: where the completion info will be stored by DTA after the job is done
-            // 3. Number of packets: number of packets in the batch
-            // 4. mbuf address: the address of the mbufs in the batch (only for not zero-copy mode)
-
-            dtaTXContext.desc_addr =  *(Addr*)data;
-            data = reinterpret_cast<uint8_t*>(data) + sizeof(Addr);
-            dtaTXContext.completion_addr =  *(Addr*)data;
-            data = reinterpret_cast<uint8_t*>(data) + sizeof(Addr);
-            uint64_t nb_pkts_64bit = *(uint64_t*)data;
-            dtaTXContext.nb_pkts = (uint32_t)nb_pkts_64bit;
-            data = reinterpret_cast<uint8_t*>(data) + sizeof(uint64_t);
-            dtaTXContext.n_mbuf_addr_received = 0;
-            dtaTXContext.n_sent = 0;
-            dtaTXContext.descPayloadDMAAssigned.clear();
-            dtaTXContext.descPayloadDMAWaiting.clear();
-            dtaTXContext.descWaitingMbufAddr.clear();
-            dtaTXContext.TXCompleteMap.clear();
-            dtaTXContext.n_desc_ready = 0; 
-
-            if (zeroCopy) {
-                // Check the mbuf_addr is all valid until nb_pkts
-                for (uint32_t i = 0 ; i < dtaTXContext.nb_pkts; i++) {
-                    if (dtaTXContext.mbuf_addr[i] == 0) {
-                        assert(0 && "The mbuf address is not valid");
-                    }
-                    assert(dtaTXContext.mbuf_addr[i] != 0);
-                    dtaTXContext.TXCompleteMap[dtaTXContext.mbuf_addr[i]] = false;
-                    dtaTXContext.n_mbuf_addr_received += 1;
-                }
-            } else {
-                n_job_packet_received = std::min(dtaTXContext.nb_pkts, txFirstJobPacketNumMbufAddr);
-                for (uint32_t i = 0; i < n_job_packet_received; i++) {
-                    dtaTXContext.mbuf_addr[i] = *(Addr*)data;
-                    dtaTXContext.TXCompleteMap[dtaTXContext.mbuf_addr[i]] = false;
-                    data += sizeof(Addr);
-                    dtaTXContext.n_mbuf_addr_received += 1;
-                }
-                #if LOG_LEVEL == 3
-                if (dtaTXContext.tx_job_id <= 7) {
-                    // Print the job info
-                    printf("DTA TX Job ID: %llu\n", dtaTXContext.tx_job_id);
-                    printf("DTA TX Descriptor Addr: %lx\n", dtaTXContext.desc_addr);
-                    printf("DTA TX Completion Addr: %lx\n", dtaTXContext.completion_addr);
-                    printf("DTA TX Number of Packets: %d\n", dtaTXContext.nb_pkts);
-                    printf("DTA TX mbuf addresses:\n");
-                    for (uint32_t i = 0; i < dtaTXContext.n_mbuf_addr_received; i++) {
-                        printf("%lx, ", dtaTXContext.mbuf_addr[i]);
-                    }
-                    printf("\n");
-                }
-                #endif
-            }
-            DPRINTF(DDIO, "Parsed TX job request from CPU\n");
+        int tx_context_id = getParsingTargetTXContextID();
+        if (tx_context_id == -1) {
+            printf("DTA::parseJobRequestAndSetContext - TX Context ID is -1. Not enough TXContextList\n");
+            return false;
         } else {
-            // printf("DTA Subsequent Parsing of TX Job ID: %llu\n", dtaTXContext.tx_job_id);
-            // If zeroCopy is true, the TX job request will only send once with descriptor address, completion address, and number of packets.
-            // Zerocopy will reuse the mbuf address that is used in RX job request
-            assert(!zeroCopy);
-            // This job request packet is the next part of the previous job request packet
-            // This packet only contains the mbuf address
-            // Have to use the nb_pkts that is received from the first packet
-            uint32_t n_job_packet_received = 0;
-            uint32_t packet_index = 0;
-            // Calculate the index of the job request packet
-            // Can calculate the index of the job request packet using the number of packets that are received (n_mbuf_addr_received)
-            packet_index = 1 + int((dtaTXContext.n_mbuf_addr_received - txFirstJobPacketNumMbufAddr) / restJobPacketNumMbufAddr);
-            DPRINTF(DDIO, "Parsing TX job request %dth packet from CPU\n", packet_index);
+            if (!isActiveTXContext(tx_context_id)) {
+                pushTXContextIDQueue((uint64_t)tx_context_id);
+                DPRINTF(DDIO, "Parsing TX job request 0th packet from CPU\n");
+                global_tx_job_id += 1;
+                dtaTXContextList[tx_context_id].tx_job_id = global_tx_job_id;
+                // printf("[LOG], %llu, DTA_TX, %lu, TX_JOB_REQ_PARSE\n", curTick(), global_tx_job_id);
+                dtaTXContextList[tx_context_id].valid = true;
+                uint32_t n_job_packet_received = 0;
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                // Parse the job request from CPU
+                // 1. Descriptor address: where the descriptors of batch are stored
+                // 2. Completion address: where the completion info will be stored by DTA after the job is done
+                // 3. Number of packets: number of packets in the batch
+                // 4. mbuf address: the address of the mbufs in the batch (only for not zero-copy mode)
+                dtaTXContextList[tx_context_id].desc_addr =  *(Addr*)data;
+                data = reinterpret_cast<uint8_t*>(data) + sizeof(Addr);
+                dtaTXContextList[tx_context_id].completion_addr =  *(Addr*)data;
+                data = reinterpret_cast<uint8_t*>(data) + sizeof(Addr);
+                uint64_t nb_pkts_64bit = *(uint64_t*)data;
+                dtaTXContextList[tx_context_id].nb_pkts = (uint32_t)nb_pkts_64bit;
+                data = reinterpret_cast<uint8_t*>(data) + sizeof(uint64_t);
+                dtaTXContextList[tx_context_id].n_mbuf_addr_received = 0;
+                dtaTXContextList[tx_context_id].n_sent = 0;
+                dtaTXContextList[tx_context_id].descPayloadDMAAssigned.clear();
+                dtaTXContextList[tx_context_id].descPayloadDMAWaiting.clear();
+                dtaTXContextList[tx_context_id].descWaitingMbufAddr.clear();
+                dtaTXContextList[tx_context_id].TXCompleteMap.clear();
+                dtaTXContextList[tx_context_id].n_desc_ready = 0; 
 
-            #if LOG_LEVEL == 3
-            if (dtaTXContext.tx_job_id <= 7) {
-                // Print the job info
-                printf("DTA TX Job ID: %llu\n", dtaTXContext.tx_job_id);
-                printf("DTA TX mbuf addresses:\n");
-            }
-            #endif
-            uint8_t *data = pkt->getPtr<uint8_t>();
-            // Parse the job request from CPU
-            n_job_packet_received = std::min(restJobPacketNumMbufAddr, dtaTXContext.nb_pkts - dtaTXContext.n_mbuf_addr_received);
-            for (uint32_t i = 0; i < n_job_packet_received; i++) {
-                Addr mbuf_addr = *(Addr*)data;
-                dtaTXContext.mbuf_addr[dtaTXContext.n_mbuf_addr_received] = mbuf_addr;
-                dtaTXContext.TXCompleteMap[mbuf_addr] = false;
-                data += sizeof(Addr);
-                // Check dtaTXContext.descWaitingMbufAddr with n_mbuf_addr_received to move the TXDesc to the dtaTXContext.descPayloadDMAWaiting
-                if (dtaTXContext.descWaitingMbufAddr.find(dtaTXContext.n_mbuf_addr_received) != dtaTXContext.descWaitingMbufAddr.end()) {
-                    assert(dtaTXContext.descPayloadDMAWaiting.find(mbuf_addr) == dtaTXContext.descPayloadDMAWaiting.end());
-                    TXDescriptor _desc = dtaTXContext.descWaitingMbufAddr[dtaTXContext.n_mbuf_addr_received];
-                    dtaTXContext.descPayloadDMAWaiting[mbuf_addr] = _desc;
-                    dtaTXContext.descWaitingMbufAddr.erase(dtaTXContext.n_mbuf_addr_received);
+                if (zeroCopy) {
+                    assert(!tempTXMbufAddrList.empty());
+                    mbufAddrList temp_mbuf_addr_list = tempTXMbufAddrList.front();
+                    tempTXMbufAddrList.pop_front();
+                    // Check the mbuf_addr is all valid until nb_pkts
+                    for (uint32_t i = 0; i < dtaTXContextList[tx_context_id].nb_pkts; i++) {
+                        if (temp_mbuf_addr_list.mbuf_addr[i] == 0) {
+                            assert(0 && "The mbuf address is not valid");
+                        }
+                        dtaTXContextList[tx_context_id].mbuf_addr[i] = temp_mbuf_addr_list.mbuf_addr[i];
+                        dtaTXContextList[tx_context_id].TXCompleteMap[temp_mbuf_addr_list.mbuf_addr[i]] = false;
+                        dtaTXContextList[tx_context_id].n_mbuf_addr_received += 1;
+                    }
+                } else {
+                    n_job_packet_received = std::min(dtaTXContextList[tx_context_id].nb_pkts, txFirstJobPacketNumMbufAddr);
+                    for (uint32_t i = 0; i < n_job_packet_received; i++) {
+                        Addr temp_mbuf_addr = *(Addr*)data;
+                        dtaTXContextList[tx_context_id].mbuf_addr[i] = temp_mbuf_addr;
+                        dtaTXContextList[tx_context_id].TXCompleteMap[temp_mbuf_addr] = false;
+                        data += sizeof(Addr);
+                        dtaTXContextList[tx_context_id].n_mbuf_addr_received += 1;
+                    }
+                    #if LOG_LEVEL == 4
+                    if (global_tx_job_id <= 18) { // global_tx_job_id >= 7 && 
+                        // Print the job info
+                        printf("DTA TX Job ID: %llu\n", dtaTXContextList[tx_context_id].tx_job_id);
+                        printf("DTA TX Descriptor Addr: %#lx\n", dtaTXContextList[tx_context_id].desc_addr);
+                        printf("DTA TX Completion Addr: %#lx\n", dtaTXContextList[tx_context_id].completion_addr);
+                        printf("DTA TX Number of Packets: %d\n", dtaTXContextList[tx_context_id].nb_pkts);
+                        printf("DTA TX mbuf addresses:\n");
+                        for (uint32_t i = 0; i < dtaTXContextList[tx_context_id].n_mbuf_addr_received; i++) {
+                            printf("%#lx, ", dtaTXContextList[tx_context_id].mbuf_addr[i]);
+                        }
+                        printf("\n");
+                    }
+                    #endif
                 }
-                dtaTXContext.n_mbuf_addr_received += 1;
-                #if LOG_LEVEL == 3
-                if (dtaTXContext.tx_job_id <= 7)
-                    printf("%lx, ", dtaTXContext.mbuf_addr[dtaTXContext.n_mbuf_addr_received - 1]);
+                DPRINTF(DDIO, "Parsed TX job request from CPU\n");
+            } else {
+                // printf("DTA Subsequent Parsing of TX Job ID: %llu\n", dtaTXContextList[tx_context_id].tx_job_id);
+                // If zeroCopy is true, the TX job request will only send once with descriptor address, completion address, and number of packets.
+                // Zerocopy will reuse the mbuf address that is used in RX job request
+                assert(!zeroCopy);
+                // This job request packet is the next part of the previous job request packet
+                // This packet only contains the mbuf address
+                // Have to use the nb_pkts that is received from the first packet
+                uint32_t n_job_packet_received = 0;
+                uint32_t packet_index = 0;
+                // Calculate the index of the job request packet
+                // Can calculate the index of the job request packet using the number of packets that are received (n_mbuf_addr_received)
+                packet_index = 1 + int((dtaTXContextList[tx_context_id].n_mbuf_addr_received - txFirstJobPacketNumMbufAddr) / restJobPacketNumMbufAddr);
+                DPRINTF(DDIO, "Parsing TX job request %dth packet from CPU\n", packet_index);
+
+                #if LOG_LEVEL == 4
+                if (global_tx_job_id <= 18) { //global_tx_job_id >= 7 && global_tx_job_id <= 9
+                    // Print the job info
+                    printf("DTA TX Job ID: %llu\n", dtaTXContextList[tx_context_id].tx_job_id);
+                    printf("DTA TX mbuf addresses:\n");
+                }
                 #endif
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                // Parse the job request from CPU
+                n_job_packet_received = std::min(restJobPacketNumMbufAddr, dtaTXContextList[tx_context_id].nb_pkts - dtaTXContextList[tx_context_id].n_mbuf_addr_received);
+                for (uint32_t i = 0; i < n_job_packet_received; i++) {
+                    Addr mbuf_addr = *(Addr*)data;
+                    dtaTXContextList[tx_context_id].mbuf_addr[dtaTXContextList[tx_context_id].n_mbuf_addr_received] = mbuf_addr;
+                    dtaTXContextList[tx_context_id].TXCompleteMap[mbuf_addr] = false;
+                    data += sizeof(Addr);
+                    // Check dtaTXContextList[tx_context_id].descWaitingMbufAddr with n_mbuf_addr_received to move the TXDesc to the dtaTXContextList[tx_context_id].descPayloadDMAWaiting
+                    if (dtaTXContextList[tx_context_id].descWaitingMbufAddr.find(dtaTXContextList[tx_context_id].n_mbuf_addr_received) != dtaTXContextList[tx_context_id].descWaitingMbufAddr.end()) {
+                        assert(dtaTXContextList[tx_context_id].descPayloadDMAWaiting.find(mbuf_addr) == dtaTXContextList[tx_context_id].descPayloadDMAWaiting.end());
+                        TXDescriptor _desc = dtaTXContextList[tx_context_id].descWaitingMbufAddr[dtaTXContextList[tx_context_id].n_mbuf_addr_received];
+                        dtaTXContextList[tx_context_id].descPayloadDMAWaiting[mbuf_addr] = _desc;
+                        dtaTXContextList[tx_context_id].descWaitingMbufAddr.erase(dtaTXContextList[tx_context_id].n_mbuf_addr_received);
+                    }
+                    dtaTXContextList[tx_context_id].n_mbuf_addr_received += 1;
+                    #if LOG_LEVEL == 4
+                    if (global_tx_job_id <= 18) // global_tx_job_id >= 7 && global_tx_job_id <= 9
+                        printf("%#lx, ", dtaTXContextList[tx_context_id].mbuf_addr[dtaTXContextList[tx_context_id].n_mbuf_addr_received - 1]);
+                    #endif
+                }
+                #if LOG_LEVEL == 4
+                if (global_tx_job_id <= 18) // global_tx_job_id >= 7 && global_tx_job_id <= 9
+                    printf("\n");
+                #endif
+                assert(dtaTXContextList[tx_context_id].n_mbuf_addr_received <= dtaTXContextList[tx_context_id].nb_pkts);
+                DPRINTF(DDIO, "Parsed TX job request %dth packet from CPU, %ld/%ld mbuf addresses are received\n", packet_index, dtaTXContextList[tx_context_id].n_mbuf_addr_received, dtaTXContextList[tx_context_id].nb_pkts);
             }
-            #if LOG_LEVEL == 3
-            if (dtaTXContext.tx_job_id <= 7)
-                printf("\n");
-            #endif
-            assert(dtaTXContext.n_mbuf_addr_received <= dtaTXContext.nb_pkts);
-            DPRINTF(DDIO, "Parsed TX job request %dth packet from CPU, %ld/%ld mbuf addresses are received\n", packet_index, dtaTXContext.n_mbuf_addr_received, dtaTXContext.nb_pkts);
+            return true;
         }
     }
 }
@@ -3932,22 +4787,24 @@ DTA::sendAtomicReqToNIC(PacketPtr pkt)
 }
 
 bool 
-DTA::checkThreshold()
+DTA::checkThreshold(uint64_t rx_context_ptr)
 {
     // Check the threshold for the number of requests that is sent to NIC, but the response is not received yet - If true, have to send new request
-    if (dtaRXContext.valid) {
-        // num_free_request_in_NIC should be smaller and equal to the (dtaRXContext.n_mbuf_addr_received - dtaRXContext.n_recv)
-        // Also, have to consider the extra CXL requests that are needed to receive the remaining part of the ethernet packet (dtaRXContext.n_extra_cxl_req_needed - dtaRXContext.n_extra_cxl_req_received)
+    if (dtaRXContextList[rx_context_ptr].valid) {
+        // num_free_request_in_NIC should be smaller and equal to the (dtaRXContextList[rx_context_ptr].n_mbuf_addr_received - dtaRXContextList[rx_context_ptr].n_recv)
+        // Also, have to consider the extra CXL requests that are needed to receive the remaining part of the ethernet packet (dtaRXContextList[rx_context_ptr].n_extra_cxl_req_needed - dtaRXContextList[rx_context_ptr].n_extra_cxl_req_received)
         // Because, if the number of requests is greater, then even though the response is coming, the mbuf address is not yet received from the host!
-        assert(dtaRXContext.n_extra_cxl_req_needed >= dtaRXContext.n_extra_cxl_req_received);
-        uint32_t num_extra_cxl_req_needed = dtaRXContext.n_extra_cxl_req_needed - dtaRXContext.n_extra_cxl_req_received;
-        assert(dtaRXContext.n_mbuf_addr_received >= dtaRXContext.n_recv);
-        uint32_t num_cxl_req_needed = dtaRXContext.n_mbuf_addr_received - dtaRXContext.n_recv;
-        if (dtaRXContext.num_free_request_in_NIC < (num_cxl_req_needed + num_extra_cxl_req_needed)) {
+        assert(dtaRXContextList[rx_context_ptr].n_extra_cxl_req_needed >= dtaRXContextList[rx_context_ptr].n_extra_cxl_req_received);
+        uint32_t num_extra_cxl_req_needed = dtaRXContextList[rx_context_ptr].n_extra_cxl_req_needed - dtaRXContextList[rx_context_ptr].n_extra_cxl_req_received;
+        assert(dtaRXContextList[rx_context_ptr].n_mbuf_addr_received >= dtaRXContextList[rx_context_ptr].n_recv);
+        uint32_t num_cxl_req_needed = dtaRXContextList[rx_context_ptr].n_mbuf_addr_received - dtaRXContextList[rx_context_ptr].n_recv;
+        if (dtaRXContextList[rx_context_ptr].num_free_request_in_NIC < (num_cxl_req_needed + num_extra_cxl_req_needed)) {
             return true; // Send new request
         } else {
             return false; // Do not send new request
         }
+    } else {
+        return false; // Do not send new request
     }
 }
 
@@ -3957,6 +4814,8 @@ DTA::sendRequestToNIC()
     // Send the request to NIC - internally call sendTimingReqToNIC
     assert(isDTAEnabled());
     assert(ioCache != nullptr);
+    bool hasRXContext = hasRXContextIDQueue();
+    bool hasTXContext = hasTXContextIDQueue();
     
     // Check the CXL.mem RD/WR request queue
     if (ioCache->isIOPortWaitingOnRetry()) {
@@ -3976,7 +4835,12 @@ DTA::sendRequestToNIC()
                         // CXL WR request to write the TX data to the NIC
                         numSentM2funcTXReq++;
                         if (pkt->isDdioHeader()) {
-                            dtaTXContext.n_sent++;
+                            if (hasTXContext) {
+                                uint64_t tx_context_ptr = topTXContextIDQueue();
+                                dtaTXContextList[tx_context_ptr].n_sent++;
+                            } else {
+                                assert(0 && "TX Context is not available");
+                            }
                         }
                     }
                     cxlReqQueue.pop_front();
@@ -3996,7 +4860,12 @@ DTA::sendRequestToNIC()
                         // CXL WR request to write the TX data to the NIC
                         numSentM2funcTXReq++;
                         if (pkt->isDdioHeader()) {
-                            dtaTXContext.n_sent++;
+                            if (hasTXContext) {
+                                uint64_t tx_context_ptr = topTXContextIDQueue();
+                                dtaTXContextList[tx_context_ptr].n_sent++;
+                            } else {
+                                assert(0 && "TX Context is not available");
+                            }
                         }
                     }
                     cxlReqQueue.pop_front();
@@ -4007,51 +4876,54 @@ DTA::sendRequestToNIC()
     }
 
     //Check threshold to determine whether to send the RD request to NIC
-    if (checkThreshold()) {
-        PacketPtr pkt = createDTARequest();
-        if (cxlReqQueue.size() < cxlReqQueueMaxSize) {
-            cxlReqQueue.push_back(pkt);
-            assert(dtaRXContext.valid);
-            dtaRXContext.num_free_request_in_NIC++;
-        } else {
-            // Drop the packet
-            delete pkt;
+    if (hasRXContext) {
+        uint64_t rx_context_ptr = topRXContextIDQueue();
+        if (checkThreshold(rx_context_ptr)) {
+            PacketPtr pkt = createDTARequest(rx_context_ptr);
+            if (cxlReqQueue.size() < cxlReqQueueMaxSize) {
+                cxlReqQueue.push_back(pkt);
+                assert(dtaRXContextList[rx_context_ptr].valid);
+                dtaRXContextList[rx_context_ptr].num_free_request_in_NIC++;
+            } else {
+                // Drop the packet
+                delete pkt;
+            }
         }
     }
 }
 
 bool
-DTA::checkRXJobCompletion()
-{
-    // Check dtaRXContext's RXCompleteMap
-    // Check the dtaRXContext's n_recv and nb_pkts
-    if (dtaRXContext.valid) {
-        if (!dtaRXContext.completion_stage) {
+DTA::checkRXJobCompletion(uint64_t rx_context_ptr)
+{   
+    // Check dtaRXContextList[rx_context_ptr]'s RXCompleteMap
+    // Check the dtaRXContextList[rx_context_ptr]'s n_recv and nb_pkts
+    if (dtaRXContextList[rx_context_ptr].valid) {
+        if (!dtaRXContextList[rx_context_ptr].completion_stage) {
             // First check n_recv == nb_pkts -> All the packets are received from the NIC
             // If above condition met, then Check the RXCompleteMap -> All the packets are DMAed to the memory
-            assert(dtaRXContext.nb_pkts != 0);
-            bool allPacketsReceived = (dtaRXContext.n_recv == dtaRXContext.nb_pkts);
+            assert(dtaRXContextList[rx_context_ptr].nb_pkts != 0);
+            bool allPacketsReceived = (dtaRXContextList[rx_context_ptr].n_recv == dtaRXContextList[rx_context_ptr].nb_pkts);
             bool allPacketsDMAed = true;
             uint32_t numPacketsNotDMAed = 0;
             if (allPacketsReceived) {
-                for (uint32_t i = 0; i < dtaRXContext.nb_pkts; i++) {
-                    if (dtaRXContext.RXCompleteMap[dtaRXContext.mbuf_addr[i]] == false) {
+                for (uint32_t i = 0; i < dtaRXContextList[rx_context_ptr].nb_pkts; i++) {
+                    if (dtaRXContextList[rx_context_ptr].RXCompleteMap[dtaRXContextList[rx_context_ptr].mbuf_addr[i]] == false) {
                         allPacketsDMAed = false;
                         numPacketsNotDMAed++;
                     }
                 }
-                DPRINTF(DDIO, "DTA RX completion checker: All packets received from the NIC, %d/%d packets are DMAed to the memory\n", (dtaRXContext.nb_pkts - numPacketsNotDMAed), dtaRXContext.nb_pkts);
+                DPRINTF(DDIO, "DTA RX completion checker: All packets received from the NIC, %d/%d packets are DMAed to the memory\n", (dtaRXContextList[rx_context_ptr].nb_pkts - numPacketsNotDMAed), dtaRXContextList[rx_context_ptr].nb_pkts);
                 
             }
 
             if (allPacketsReceived && allPacketsDMAed) {
-                dtaRXContext.completion_stage = true; // Now, we can start the write completion info to the completion address
+                dtaRXContextList[rx_context_ptr].completion_stage = true; // Now, we can start the write completion info to the completion address
                 DPRINTF(DDIO, "DTA RX completion checker: All packets received from the NIC and DMAed to the memory. Now, start the completion stage\n");
             }
 
         }
         
-        if (dtaRXContext.completion_stage) {
+        if (dtaRXContextList[rx_context_ptr].completion_stage) {
             // All the packets are received from the NIC and DMAed to the memory
             // Send the completion id to the completion address
             DPRINTF(DDIO, "DTA RX completion checker: All packets received from the NIC and DMAed to the memory. So write completion status to the completion address\n");
@@ -4062,25 +4934,25 @@ DTA::checkRXJobCompletion()
             // Therefore, this have to check the all descriptors are written to the memory
             // If all descriptors are written to the memory, then write the completion id to the completion address
 
-            if (dtaRXContext.n_desc_write_completed < dtaRXContext.nb_pkts) {
+            if (dtaRXContextList[rx_context_ptr].n_desc_write_completed < dtaRXContextList[rx_context_ptr].nb_pkts) {
                 // 1. Write the descriptors to the memory
                 // Packing the descriptors
                 uint32_t num_desc_to_write_in_one_cache_line = cacheLineSize / sizeof(RXDescriptor);
-                uint32_t num_desc_to_write = std::min(num_desc_to_write_in_one_cache_line, dtaRXContext.nb_pkts - dtaRXContext.n_desc_write_completed);
+                uint32_t num_desc_to_write = std::min(num_desc_to_write_in_one_cache_line, dtaRXContextList[rx_context_ptr].nb_pkts - dtaRXContextList[rx_context_ptr].n_desc_write_completed);
 
                 // Make the data
                 uint8_t *data = new uint8_t[cacheLineSize];
                 memset(data, 0, cacheLineSize);
-                for (uint32_t i = dtaRXContext.n_desc_write_completed; i < dtaRXContext.n_desc_write_completed + num_desc_to_write; i++) {
-                    assert(dtaRXContext.RXDescMap.find(dtaRXContext.mbuf_addr[i]) != dtaRXContext.RXDescMap.end());
-                    assert(dtaRXContext.RXDescMap[dtaRXContext.mbuf_addr[i]] != nullptr);
-                    RXDescriptor *desc = dtaRXContext.RXDescMap[dtaRXContext.mbuf_addr[i]];
-                    uint32_t data_offset = (i - dtaRXContext.n_desc_write_completed) * sizeof(RXDescriptor);
+                for (uint32_t i = dtaRXContextList[rx_context_ptr].n_desc_write_completed; i < dtaRXContextList[rx_context_ptr].n_desc_write_completed + num_desc_to_write; i++) {
+                    assert(dtaRXContextList[rx_context_ptr].RXDescMap.find(dtaRXContextList[rx_context_ptr].mbuf_addr[i]) != dtaRXContextList[rx_context_ptr].RXDescMap.end());
+                    assert(dtaRXContextList[rx_context_ptr].RXDescMap[dtaRXContextList[rx_context_ptr].mbuf_addr[i]] != nullptr);
+                    RXDescriptor *desc = dtaRXContextList[rx_context_ptr].RXDescMap[dtaRXContextList[rx_context_ptr].mbuf_addr[i]];
+                    uint32_t data_offset = (i - dtaRXContextList[rx_context_ptr].n_desc_write_completed) * sizeof(RXDescriptor);
                     memcpy(data + data_offset, desc, sizeof(RXDescriptor));
                 }
                 
                 // Make the Request
-                Addr writeAddress = dtaRXContext.desc_addr + (dtaRXContext.n_cacheline_idx_write_completed * cacheLineSize);
+                Addr writeAddress = dtaRXContextList[rx_context_ptr].desc_addr + (dtaRXContextList[rx_context_ptr].n_cacheline_idx_write_completed * cacheLineSize);
                 RequestPtr req = std::make_shared<Request>(writeAddress, cacheLineSize, 0, requestorId);
                 req->taskId(context_switch_task_id::DMA);
                 PacketPtr pkt = new Packet(req, MemCmd::WriteReq);
@@ -4092,42 +4964,38 @@ DTA::checkRXJobCompletion()
 
                 // Send the packet through iocache (The name may be confused, because of the term "recv", but in the point of view of iocache, it receives the packet from DTA)
                 assert(ioCache != nullptr);
-                bool success = ioCache->recvTimingReqfromDTA(pkt);
-                if (success) {
-                    dtaRXContext.n_desc_write_completed += num_desc_to_write;
-                    assert(dtaRXContext.n_desc_write_completed <= dtaRXContext.nb_pkts);
-                    dtaRXContext.n_cacheline_idx_write_completed += 1;
-                    DPRINTF(DDIO, "DTA RX completion stage: Write the %d/%d descriptors to the memory at the %dth cache line (addr: %x)\n", 
-                            dtaRXContext.n_desc_write_completed, dtaRXContext.nb_pkts, dtaRXContext.n_cacheline_idx_write_completed, writeAddress);
-                    if (dtaRXContext.n_desc_write_completed == dtaRXContext.nb_pkts) {
-                        // All the descriptors are written to the memory
-                        DPRINTF(DDIO, "DTA RX completion checker: All the descriptors are written to the memory\n");
-                    }
-                    // printf("DTA RX Completion Checker: Write the %d/%d descriptors to the memory with the RX Job ID: %llu\n", dtaRXContext.n_desc_write_completed, dtaRXContext.nb_pkts, dtaRXContext.rx_job_id);
+                pushIOCacheRequestQueue(pkt);
 
-                    return true; // Need tick - Maybe need to write the next cache line
-                } else {
-                    // Delete the packet
-                    delete pkt;
-                    return true; // Need tick
+                dtaRXContextList[rx_context_ptr].n_desc_write_completed += num_desc_to_write;
+                assert(dtaRXContextList[rx_context_ptr].n_desc_write_completed <= dtaRXContextList[rx_context_ptr].nb_pkts);
+                dtaRXContextList[rx_context_ptr].n_cacheline_idx_write_completed += 1;
+                DPRINTF(DDIO, "DTA RX completion stage: Write the %d/%d descriptors to the memory at the %dth cache line (addr: %x)\n", 
+                        dtaRXContextList[rx_context_ptr].n_desc_write_completed, dtaRXContextList[rx_context_ptr].nb_pkts, dtaRXContextList[rx_context_ptr].n_cacheline_idx_write_completed, writeAddress);
+                if (dtaRXContextList[rx_context_ptr].n_desc_write_completed == dtaRXContextList[rx_context_ptr].nb_pkts) {
+                    // All the descriptors are written to the memory
+                    DPRINTF(DDIO, "DTA RX completion checker: All the descriptors are written to the memory\n");
                 }
+                // printf("DTA RX Completion Checker: Write the %d/%d descriptors to the memory with the RX Job ID: %llu\n", dtaRXContextList[rx_context_ptr].n_desc_write_completed, dtaRXContextList[rx_context_ptr].nb_pkts, dtaRXContextList[rx_context_ptr].rx_job_id);
+
+                return true; // Need tick - Maybe need to write the next cache line
 
             } else {
                 // 2. Write the completion id to the completion address
                 // All the descriptors are written to the memory
                 // Write the completion id to the completion address
                 DPRINTF(DDIO, "DTA RX completion checker: All the descriptors are written to the memory. Now, write the completion id to the completion address\n");
-                assert(dtaRXContext.n_desc_write_completed == dtaRXContext.nb_pkts);
-                assert(dtaRXContext.n_cacheline_idx_write_completed == uint32_t((dtaRXContext.nb_pkts + (cacheLineSize/sizeof(RXDescriptor) - 1)) / (cacheLineSize/sizeof(RXDescriptor))));
-                
+                assert(dtaRXContextList[rx_context_ptr].n_desc_write_completed == dtaRXContextList[rx_context_ptr].nb_pkts);
+                assert(dtaRXContextList[rx_context_ptr].n_cacheline_idx_write_completed == uint32_t((dtaRXContextList[rx_context_ptr].nb_pkts + (cacheLineSize/sizeof(RXDescriptor) - 1)) / (cacheLineSize/sizeof(RXDescriptor))));
+                // printf("DTA RX Completion Checker: Write the completion id to the completion address with the RX Job ID: %llu completion addr: %lx\n", dtaRXContextList[rx_context_ptr].rx_job_id, dtaRXContextList[rx_context_ptr].completion_addr);
+
                 // Make the Request
-                RequestPtr req = std::make_shared<Request>(dtaRXContext.completion_addr, cacheLineSize, 0, requestorId);
+                RequestPtr req = std::make_shared<Request>(dtaRXContextList[rx_context_ptr].completion_addr, cacheLineSize, 0, requestorId);
                 req->taskId(context_switch_task_id::DMA);
                 PacketPtr pkt = new Packet(req, MemCmd::WriteReq);
                 // Make the data
                 uint8_t *data = new uint8_t[cacheLineSize];
                 memset(data, 0, cacheLineSize);
-                int64_t completion_id = dtaRXContext.n_recv;
+                int64_t completion_id = dtaRXContextList[rx_context_ptr].n_recv;
                 memcpy(data, &completion_id, sizeof(int64_t));
                 pkt->allocate();
                 pkt->setData(data);
@@ -4136,21 +5004,19 @@ DTA::checkRXJobCompletion()
                 delete[] data;
 
                 assert(ioCache != nullptr);
-                bool success = ioCache->recvTimingReqfromDTA(pkt);
-                if (success) {
-                    if (zeroCopy) {
-                        // Before reset, move the mbuf_addr to the dtaTXContext.mbuf_addr
-                        // printf("DTA RX completion checker: Write Completion packets to completion addr: %lx with the RX Job ID: %llu. Move the mbuf addresses to the TX context\n", dtaRXContext.completion_addr, dtaRXContext.rx_job_id);
-                        copyMbufAddrFromRXContextToTXContext();
-                    }
-                    // Reset the RX context
-                    clearDTARXContext();
-                    return false; // No need tick
-                } else {
-                    // Delete the packet
-                    delete pkt;
-                    return true; // Need tick
+                pushIOCacheRequestQueue(pkt);
+
+                if (zeroCopy) {
+                    // Before reset, move the mbuf_addr to the tempTXMbufAddrList
+                    // printf("DTA RX completion checker: Write Completion packets to completion addr: %lx with the RX Job ID: %llu. Move the mbuf addresses to the TX context\n", dtaRXContextList[rx_context_ptr].completion_addr, dtaRXContextList[rx_context_ptr].rx_job_id);
+                    copyMbufAddrFromRXContextToTXContext(rx_context_ptr);
                 }
+                // Reset the RX context
+                clearDTARXContext(rx_context_ptr);
+
+                // Pop the RX context ID queue
+                popRXContextIDQueue();
+                return false; // No need tick
 
             }
         } else {
@@ -4163,39 +5029,39 @@ DTA::checkRXJobCompletion()
 }
 
 bool
-DTA::checkTXJobCompletion()
+DTA::checkTXJobCompletion(uint64_t tx_context_ptr)
 {   
-    // Check the dtaTXContext's n_sent and nb_pkts
+    // Check the dtaTXContextList[tx_context_ptr]'s n_sent and nb_pkts
     // write the completion id to the completion address
-    if (dtaTXContext.valid) {
-        assert(dtaTXContext.nb_pkts != 0);
-        bool allPacketsSenttoNIC = (dtaTXContext.n_sent == dtaTXContext.nb_pkts);
+    if (dtaTXContextList[tx_context_ptr].valid) {
+        assert(dtaTXContextList[tx_context_ptr].nb_pkts != 0);
+        bool allPacketsSenttoNIC = (dtaTXContextList[tx_context_ptr].n_sent == dtaTXContextList[tx_context_ptr].nb_pkts);
         
         if (allPacketsSenttoNIC) {
             // For the TX, if the n_sent == nb_pkts, then all packets should be DMAed from the memory
             bool allPacketsDMAed = true;
             uint32_t numPacketsNotDMAed = 0;
-            for (uint32_t i = 0; i < dtaTXContext.nb_pkts; i++) {
-                assert(dtaTXContext.mbuf_addr[i] != 0);
-                assert(dtaTXContext.TXCompleteMap.find(dtaTXContext.mbuf_addr[i]) != dtaTXContext.TXCompleteMap.end());
-                if (dtaTXContext.TXCompleteMap[dtaTXContext.mbuf_addr[i]] == false) {
+            for (uint32_t i = 0; i < dtaTXContextList[tx_context_ptr].nb_pkts; i++) {
+                assert(dtaTXContextList[tx_context_ptr].mbuf_addr[i] != 0);
+                assert(dtaTXContextList[tx_context_ptr].TXCompleteMap.find(dtaTXContextList[tx_context_ptr].mbuf_addr[i]) != dtaTXContextList[tx_context_ptr].TXCompleteMap.end());
+                if (dtaTXContextList[tx_context_ptr].TXCompleteMap[dtaTXContextList[tx_context_ptr].mbuf_addr[i]] == false) {
                     allPacketsDMAed = false;
                     numPacketsNotDMAed++;
                 }
             }
-            DPRINTF(DDIO, "DTA TX completion checker: All packets sent to the NIC? %d, %d/%d packets are DMAed from the memory\n", allPacketsSenttoNIC, (dtaTXContext.nb_pkts - numPacketsNotDMAed), dtaTXContext.nb_pkts);
+            DPRINTF(DDIO, "DTA TX completion checker: All packets sent to the NIC? %d, %d/%d packets are DMAed from the memory\n", allPacketsSenttoNIC, (dtaTXContextList[tx_context_ptr].nb_pkts - numPacketsNotDMAed), dtaTXContextList[tx_context_ptr].nb_pkts);
 
             assert(allPacketsDMAed);
 
             // Write the last completion id to the completion address
             // Make the Request
-            RequestPtr req = std::make_shared<Request>(dtaTXContext.completion_addr, cacheLineSize, 0, requestorId);
+            RequestPtr req = std::make_shared<Request>(dtaTXContextList[tx_context_ptr].completion_addr, cacheLineSize, 0, requestorId);
             req->taskId(context_switch_task_id::DMA);
             PacketPtr pkt = new Packet(req, MemCmd::WriteReq);
             // Make the data
             uint8_t *data = new uint8_t[cacheLineSize];
             memset(data, 0, cacheLineSize);
-            int64_t completion_id = dtaTXContext.n_sent;
+            int64_t completion_id = dtaTXContextList[tx_context_ptr].n_sent;
             memcpy(data, &completion_id, sizeof(int64_t));
             pkt->allocate();
             pkt->setData(data);
@@ -4205,17 +5071,13 @@ DTA::checkTXJobCompletion()
 
             // Send the packet through iocache
             assert(ioCache != nullptr);
-            bool success = ioCache->recvTimingReqfromDTA(pkt);
-            if (success) {               
-                // Reset the TX context
-                // printf("DTA TX Completion Checker: Write the completion id to the completion address with the TX Job ID: %llu\n", dtaTXContext.tx_job_id);
-                clearDTATXContext();
-                return false; // No need tick
-            } else {
-                // Delete the packet
-                delete pkt;
-                return true; // Need tick
-            }
+            pushIOCacheRequestQueue(pkt);               
+            // Reset the TX context
+            clearDTATXContext(tx_context_ptr);
+
+            // Pop the TX context ID queue
+            popTXContextIDQueue();
+            return false; // No need tick
         } else {
             return true; // Need tick
         }
@@ -4225,7 +5087,7 @@ DTA::checkTXJobCompletion()
 }
 
 PacketPtr
-DTA::createDTARequest()
+DTA::createDTARequest(uint64_t rx_context_ptr)
 {
     // Create M2func RD/WR request to NIC
     assert(isDTAEnabled());
@@ -4233,7 +5095,7 @@ DTA::createDTARequest()
     RequestPtr req = std::make_shared<Request>(M2funcRXAddr, flitSize, 0, requestorId);
     PacketPtr pkt = new Packet(req, MemCmd::ReadReq);
     pkt->allocate(); // Allocate the data buffer
-    pkt->setJobID(dtaRXContext.rx_job_id);
+    pkt->setJobID(dtaRXContextList[rx_context_ptr].rx_job_id);
     
     return pkt;
 }
@@ -4261,28 +5123,55 @@ DTA::findDTARequest(PacketPtr pkt)
 }
 
 void 
-DTA::freeDTARequest(RequestPtr req) 
+DTA::freeDTARequest(PacketPtr pkt) 
 {
     // Free the DTA request tracker entry 
     assert(isDTAEnabled());
+    RequestPtr req = pkt->req;
     assert(dtaRequestTracker.find(req) != dtaRequestTracker.end());
     dtaRequestTracker.erase(req);
 
-    if (dtaRXContext.valid) {
-        dtaRXContext.num_free_request_in_NIC--;
+    if (hasRXContextIDQueue()) {
+        uint64_t rx_context_ptr = topRXContextIDQueue();
+
+        if (dtaRXContextList[rx_context_ptr].valid) {
+            if (dtaRXContextList[rx_context_ptr].rx_job_id == pkt->getJobID()) {
+                // The request is the response for the RX job
+                // Increase the number of free request in NIC
+                dtaRXContextList[rx_context_ptr].num_free_request_in_NIC--;
+            }
+        }
+    }
+}
+
+void 
+DTA::sendIOCacheRequest()
+{
+    // check the iocache request queue
+    // try send request to iocache
+    // Have to check iocache is blocked or not
+    // If full, have to wait for the retry
+    if (!ioCache->isBlocked()) {
+        if (hasIOCacheRequestQueue()) {
+            PacketPtr pkt = ioCacheRequestQueue.front();
+            bool success = ioCache->recvTimingReqfromDTA(pkt);
+            if (success) {
+                ioCacheRequestQueue.pop_front();
+            }
+        }
     }
 }
 
 
 DTA::DTARXWorker *
-DTA::findDTARXWorker(PacketPtr pkt)
+DTA::findDTARXWorker(PacketPtr pkt, uint64_t rx_context_ptr)
 {
     if (pkt->isDdioHeader()) {
         // New Ethernet packet -> find an idle worker
         for (uint32_t i = 0; i < numDTARXWorker; i++) {
             if (dtaRXWorkerList[i]->isFree()) {
                 // Assign this free worker for the new packet
-                dtaRXContext.lastDTARXWorker = i;
+                dtaRXContextList[rx_context_ptr].lastDTARXWorker = i;
                 return dtaRXWorkerList[i];
             }
         }
@@ -4290,7 +5179,7 @@ DTA::findDTARXWorker(PacketPtr pkt)
         return nullptr;
     } else {
         // Continuation of the previous packet -> find the worker that is processing the packet
-        uint32_t lastWorker = dtaRXContext.lastDTARXWorker;
+        uint32_t lastWorker = dtaRXContextList[rx_context_ptr].lastDTARXWorker;
         if (lastWorker >= 0 && lastWorker < numDTARXWorker) {
             DTA::DTARXWorker* worker = dtaRXWorkerList[lastWorker];
             if (!worker->isFree()) {
@@ -4310,10 +5199,10 @@ DTA::recvTimingRespfromNIC(PacketPtr pkt)
     // Receive M2func RD/WR response from NIC - it can be RD/WR response
     assert(isDTAEnabled());
     assert(pkt->isResponse());
-
-    if (dtaRXContext.valid && dtaRXContext.rx_job_id == pkt->getJobID()) {
+    if (hasRXContextIDQueue() && dtaRXContextList[topRXContextIDQueue()].valid && dtaRXContextList[topRXContextIDQueue()].rx_job_id == pkt->getJobID()) {
+        uint64_t rx_context_ptr = topRXContextIDQueue();
         if (findDTARequest(pkt)) {
-            freeDTARequest(pkt->req);
+            freeDTARequest(pkt);
             assert(pkt->isRead());
             // Push to the worker waiting queue
             // Check the packet data - contain only 0s
@@ -4331,7 +5220,7 @@ DTA::recvTimingRespfromNIC(PacketPtr pkt)
                 delete pkt;
                 // Have to write -1 to the completion address to notify the host that the packet is not received
                 // Make the Request
-                RequestPtr req = std::make_shared<Request>(dtaRXContext.completion_addr, cacheLineSize, 0, requestorId);
+                RequestPtr req = std::make_shared<Request>(dtaRXContextList[rx_context_ptr].completion_addr, cacheLineSize, 0, requestorId);
                 req->taskId(context_switch_task_id::DMA);
                 PacketPtr wr_pkt = new Packet(req, MemCmd::WriteReq);
                 // Make the data
@@ -4346,23 +5235,27 @@ DTA::recvTimingRespfromNIC(PacketPtr pkt)
                 delete[] data;
 
                 assert(ioCache != nullptr);
-                bool success = ioCache->recvTimingReqfromDTA(wr_pkt);
-                assert(success);
+                pushIOCacheRequestQueue(wr_pkt);
                 
-                clearDTARXContext();
+                // Reset the RX context
+                clearDTARXContext(rx_context_ptr);
 
+                // Pop the RX context ID queue
+                popRXContextIDQueue();
+
+                return;
                 
             } else {
                 // TODO - maybe have to check the queue size
-                workerWaitingQueue.push_back(std::pair<PacketPtr, uint32_t>(pkt, dtaRXContext.n_recv)); 
+                workerWaitingQueue.push_back(std::pair<PacketPtr, uint32_t>(pkt, dtaRXContextList[rx_context_ptr].n_recv)); 
 
                 if (pkt->isDdioHeader()) {
                     // Only increase the n_recv when the packet is the header of the ethernet packet
                     // If not, it means one ethernet packet is not fully received from NIC (partially received in CXL flit size unit)
-                    dtaRXContext.n_recv++; 
+                    dtaRXContextList[rx_context_ptr].n_recv++; 
                 } else {
                     // This is the continuation of the previous packet
-                    dtaRXContext.n_extra_cxl_req_received++;
+                    dtaRXContextList[rx_context_ptr].n_extra_cxl_req_received++;
                 }     
 
                 // If tickEvent is not running, start the clock
@@ -4375,7 +5268,10 @@ DTA::recvTimingRespfromNIC(PacketPtr pkt)
             // printf("Error: DTA receive response. But cannot find the DTA request, pkt addr: %lx\n", pkt->req->getPaddr());
             panic("Error: DTA receive response. But cannot find the DTA request\n");
         }
-    } else if (dtaTXContext.valid && pkt->isWrite()) {
+         
+    } else if (hasTXContextIDQueue() && pkt->isWrite()) {
+        uint64_t tx_context_ptr = topTXContextIDQueue();
+        assert(dtaTXContextList[tx_context_ptr].valid);
         // Nothing to do now. But we can add some stats here.
         // This is the response for the TX packet write request, which is sent to the NIC
         delete pkt;
@@ -4383,13 +5279,13 @@ DTA::recvTimingRespfromNIC(PacketPtr pkt)
         // This can happen when the DTA TX response is received, but the DTA TX context is cleared (not checking the response of NIC)
         // Also, for the RX, this can happen when there are no ethernet packets to receive from the NIC. DTARXContext is already cleared from the previous CXL resp with all 0s
         // Check the findDTARequest function
-        if (dtaRXContext.valid && dtaRXContext.rx_job_id != pkt->getJobID()) {
-            // printf("DTA receive response from NIC. But the DTA context's job id (%llu) is different from the packet's job id (%llu)\n", dtaRXContext.rx_job_id, pkt->getJobID());
+        if (hasRXContextIDQueue() && dtaRXContextList[topRXContextIDQueue()].valid && dtaRXContextList[topRXContextIDQueue()].rx_job_id != pkt->getJobID()) {
+            // printf("DTA receive response from NIC. But the DTA context's job id (%llu) is different from the packet's job id (%llu)\n", dtaRXContextList[topRXContextIDQueue()].rx_job_id, pkt->getJobID());
         } else {
             // printf("DTA receive response from NIC. But the DTA context is not valid. pkt's job id: %llu\n", pkt->getJobID());
         }
         if (findDTARequest(pkt)) {
-            freeDTARequest(pkt->req);
+            freeDTARequest(pkt);
         }
         delete pkt;
     }
@@ -4470,19 +5366,19 @@ DTA::handleDMACompletion()
 }
 
 bool 
-DTA::allocateWorkerFromQueue()
+DTA::allocateWorkerFromQueue(uint64_t rx_context_ptr)
 {
     // Allocate worker from the queue
     if (workerWaitingQueue.size() > 0) {
         PacketPtr respPkt = workerWaitingQueue.front().first;
         uint32_t n_recv = workerWaitingQueue.front().second;
         // Find free DTARXWorker or DTARXWorker waiting new CXL.mem response
-        DTARXWorker* worker = findDTARXWorker(respPkt);
+        DTARXWorker* worker = findDTARXWorker(respPkt, rx_context_ptr);
         if (worker != nullptr) {
             if (worker->isFree()) {
                 // If free, set new RX packet setting 
-                assert(dtaRXContext.mbuf_addr[n_recv] != 0);
-                worker->allocateWorker(dtaRXContext.mbuf_addr[n_recv]);
+                assert(dtaRXContextList[rx_context_ptr].mbuf_addr[n_recv] != 0);
+                worker->allocateWorker(dtaRXContextList[rx_context_ptr].mbuf_addr[n_recv], rx_context_ptr);
                 //Process the response ASAP, to set the payload size !!! Must do that at this point
             } 
             worker->processDTAResponse(respPkt);
@@ -4527,14 +5423,16 @@ DTA::DTARXWorker::processDTAResponse(PacketPtr currPkt)
 
         // Calculate the extra needed CXL.req to receive the full ethernet packet
         uint32_t extraCxlReq = ((payloadSize - receivedPayloadSize) + dta->flitSize - 1) / dta->flitSize;
-        dta->dtaRXContext.n_extra_cxl_req_needed += extraCxlReq;
+        assert(rxContextID != -1);
+        assert(rxContextID < dta->dtaRXContextList.size());
+        dta->dtaRXContextList[rxContextID].n_extra_cxl_req_needed += extraCxlReq;
 
         // Copy payload part to payloadWCBuffer
         assert(currentPayloadWCBufferSize == 0);
         memcpy(payloadWCBuffer + currentPayloadWCBufferSize, data + sizeof(RXDescriptor), payloadInCurrentPkt);
         currentPayloadWCBufferSize += payloadInCurrentPkt;
         
-        // Set descriptor to the RXDescMap of the dtaRXContext
+        // Set descriptor to the RXDescMap of the dtaRXContextList[rxContextID]
         assert(mbuf_addr != 0);
         setDescriptor(descriptor, mbuf_addr);
         
@@ -4642,7 +5540,8 @@ DTA::DTARXWorker::sendDMA(PacketPtr pkt)
 {
     // Send DMA request - exploit existing iocache's DMA functions
     assert(dta->ioCache != nullptr);
-    return dta->ioCache->recvTimingReqfromDTA(pkt);
+    dta->pushIOCacheRequestQueue(pkt);
+    return true;
 }
 
 void
@@ -4654,10 +5553,12 @@ DTA::DTARXWorker::handleDMACompletion(PacketPtr pkt)
     if (dmaTransferredSize >= payloadSize) {
         // Done DMA transfer
         dmaComplete = true;
-        // notify DTA that the DMA is complete by updating the dtaRXContext's data
+        // notify DTA that the DMA is complete by updating the dtaRXContextList[rxContextID]'s data
         assert(mbuf_addr != 0);
-        assert(dta->dtaRXContext.RXCompleteMap.find(mbuf_addr) != dta->dtaRXContext.RXCompleteMap.end());
-        dta->dtaRXContext.RXCompleteMap[mbuf_addr] = true;
+        assert(rxContextID != -1);
+        assert(rxContextID < dta->dtaRXContextList.size());
+        assert(dta->dtaRXContextList[rxContextID].RXCompleteMap.find(mbuf_addr) != dta->dtaRXContextList[rxContextID].RXCompleteMap.end());
+        dta->dtaRXContextList[rxContextID].RXCompleteMap[mbuf_addr] = true;
 
         DPRINTF(DDIO, "DTA RX Worker: DMA Complete!\n");
     }
@@ -4727,7 +5628,7 @@ DTA::DTARXWorker::DTAWork()
 }
 
 void 
-DTA::allocateDescriptorWorker()
+DTA::allocateDescriptorWorker(uint64_t tx_context_ptr)
 {   
     // For TX, have to allocate workers for descriptor DMA
     // Allocate workers for descriptor DMA
@@ -4736,26 +5637,26 @@ DTA::allocateDescriptorWorker()
     // Worker will be allocated with cache line size (maybe 64B)
     // If no worker is available, have to wait until the worker is free
 
-    if (dtaTXContext.valid) {
-        if (dtaTXContext.n_desc_ready >= dtaTXContext.nb_pkts) {
+    if (dtaTXContextList[tx_context_ptr].valid) {
+        if (dtaTXContextList[tx_context_ptr].n_desc_ready >= dtaTXContextList[tx_context_ptr].nb_pkts) {
             // All the descriptor is ready
             return;
         }
 
         for (auto& worker: dtaTXWorkerList) {
-            if (worker->isFree() && dtaTXContext.n_desc_ready < dtaTXContext.nb_pkts) {
+            if (worker->isFree() && dtaTXContextList[tx_context_ptr].n_desc_ready < dtaTXContextList[tx_context_ptr].nb_pkts) {
                 uint64_t dmaSize = cacheLineSize;
-                if ((dtaTXContext.nb_pkts - dtaTXContext.n_desc_ready) * sizeof(TXDescriptor) < cacheLineSize) {
-                    dmaSize = (dtaTXContext.nb_pkts - dtaTXContext.n_desc_ready) * sizeof(TXDescriptor);
+                if ((dtaTXContextList[tx_context_ptr].nb_pkts - dtaTXContextList[tx_context_ptr].n_desc_ready) * sizeof(TXDescriptor) < cacheLineSize) {
+                    dmaSize = (dtaTXContextList[tx_context_ptr].nb_pkts - dtaTXContextList[tx_context_ptr].n_desc_ready) * sizeof(TXDescriptor);
                 }
-                Addr dmaAddr = dtaTXContext.desc_addr + dtaTXContext.n_desc_ready * sizeof(TXDescriptor);
-                worker->allocateWorker(dmaAddr, dmaSize, DTATXWorker::workerState::DESC_PROCESSING);
-                worker->setOffset(dtaTXContext.n_desc_ready);
+                Addr dmaAddr = dtaTXContextList[tx_context_ptr].desc_addr + dtaTXContextList[tx_context_ptr].n_desc_ready * sizeof(TXDescriptor);
+                worker->allocateWorker(dmaAddr, dmaSize, tx_context_ptr, DTATXWorker::workerState::DESC_PROCESSING);
+                worker->setOffset(dtaTXContextList[tx_context_ptr].n_desc_ready);
 
                 // Increase the number of descriptor ready
                 uint32_t numDescSent = dmaSize / sizeof(TXDescriptor);
                 assert(numDescSent * sizeof(TXDescriptor) == dmaSize);
-                dtaTXContext.n_desc_ready += numDescSent;
+                dtaTXContextList[tx_context_ptr].n_desc_ready += numDescSent;
             }
         }
     }
@@ -4763,14 +5664,14 @@ DTA::allocateDescriptorWorker()
 }
 
 void 
-DTA::allocatePayloadWorker()
+DTA::allocatePayloadWorker(uint64_t tx_context_ptr)
 {   
     // For TX, have to allocate workers for payload DMA
     // Allocate workers for payload DMA
     // If descPayloadDMAWaiting has the descriptor, have to allocate the worker for the payload DMA
     // And delete that pair from descPayloadDMAWaiting and add to descPayloadDMAAssigned
     // If no worker is available, have to wait until the worker is free
-    for (auto& waiter: dtaTXContext.descPayloadDMAWaiting) {
+    for (auto& waiter: dtaTXContextList[tx_context_ptr].descPayloadDMAWaiting) {
         // Check if the worker is free
         for (auto& worker: dtaTXWorkerList) {
             if (worker->isFree()) {
@@ -4779,15 +5680,15 @@ DTA::allocatePayloadWorker()
                 uint64_t dmaSize = dtaTXDesc.dtalen;
 
                 // Add to descPayloadDMAAssigned
-                assert(dtaTXContext.descPayloadDMAAssigned.find(dmaAddr) == dtaTXContext.descPayloadDMAAssigned.end());
-                dtaTXContext.descPayloadDMAAssigned[dmaAddr] = dtaTXDesc;
+                assert(dtaTXContextList[tx_context_ptr].descPayloadDMAAssigned.find(dmaAddr) == dtaTXContextList[tx_context_ptr].descPayloadDMAAssigned.end());
+                dtaTXContextList[tx_context_ptr].descPayloadDMAAssigned[dmaAddr] = dtaTXDesc;
 
                 // Allocate the worker
-                worker->allocateWorker(dmaAddr, dmaSize, 
-                            DTATXWorker::workerState::PAYLOAD_PROCESSING, &(dtaTXContext.descPayloadDMAAssigned[dmaAddr]));
+                worker->allocateWorker(dmaAddr, dmaSize, tx_context_ptr,
+                            DTATXWorker::workerState::PAYLOAD_PROCESSING, &(dtaTXContextList[tx_context_ptr].descPayloadDMAAssigned[dmaAddr]));
                 
                 // Delete from descPayloadDMAWaiting
-                dtaTXContext.descPayloadDMAWaiting.erase(dmaAddr);
+                dtaTXContextList[tx_context_ptr].descPayloadDMAWaiting.erase(dmaAddr);
 
                 break;
             }
@@ -4813,7 +5714,9 @@ DTA::DTATXWorker::makePacket()
         pkt->setTXDMA();
         pkt->setWorkerID(workerID);
         pkt->setFromDTA();
-        pkt->setJobID(dta->dtaTXContext.tx_job_id);
+        assert(txContextID != -1);
+        assert(txContextID < dta->dtaTXContextList.size());
+        pkt->setJobID(dta->dtaTXContextList[txContextID].tx_job_id);
 
         assert(dmaReqState != nullptr);
         pkt->senderState = dmaReqState;
@@ -4833,7 +5736,8 @@ DTA::DTATXWorker::sendDMA(PacketPtr pkt)
 {   
     // Send DMA request - exploit existing iocache's DMA functions
     assert(dta->ioCache != nullptr);
-    return dta->ioCache->recvTimingReqfromDTA(pkt);
+    dta->pushIOCacheRequestQueue(pkt);
+    return true;
 }
 
 void  
@@ -4855,17 +5759,17 @@ DTA::DTATXWorker::handleDMACompletion(PacketPtr pkt)
             memcpy(&dtaTXDesc, data + i * sizeof(TXDescriptor), sizeof(TXDescriptor));
             uint64_t mbufListOffset = startOffset + i;
             assert(mbufListOffset < DTA_MAX_MBUF_NUM);
-            if (dta->dtaTXContext.mbuf_addr[mbufListOffset] == 0) {
+            if (dta->dtaTXContextList[txContextID].mbuf_addr[mbufListOffset] == 0) {
                 assert(!dta->zeroCopy);
                 // This can happen, when the mbuf_addr is not received yet. (Not enough job request to NIC).
                 // So, temporarily store the descriptor to the descWaitingMbufAddr with it's mbufListOffset. 
                 // When the job request is received, descWaitingMbufAddr will be checked and the descriptor will be moved to the descPayloadDMAWaiting
-                assert(dta->dtaTXContext.descWaitingMbufAddr.find(mbufListOffset) == dta->dtaTXContext.descWaitingMbufAddr.end());
-                dta->dtaTXContext.descWaitingMbufAddr[mbufListOffset] = dtaTXDesc;
+                assert(dta->dtaTXContextList[txContextID].descWaitingMbufAddr.find(mbufListOffset) == dta->dtaTXContextList[txContextID].descWaitingMbufAddr.end());
+                dta->dtaTXContextList[txContextID].descWaitingMbufAddr[mbufListOffset] = dtaTXDesc;
             } else {
-                Addr mbufAddr = dta->dtaTXContext.mbuf_addr[mbufListOffset];
-                assert(dta->dtaTXContext.descPayloadDMAWaiting.find(mbufAddr) == dta->dtaTXContext.descPayloadDMAWaiting.end());
-                dta->dtaTXContext.descPayloadDMAWaiting[mbufAddr] = dtaTXDesc;
+                Addr mbufAddr = dta->dtaTXContextList[txContextID].mbuf_addr[mbufListOffset];
+                assert(dta->dtaTXContextList[txContextID].descPayloadDMAWaiting.find(mbufAddr) == dta->dtaTXContextList[txContextID].descPayloadDMAWaiting.end());
+                dta->dtaTXContextList[txContextID].descPayloadDMAWaiting[mbufAddr] = dtaTXDesc;
             }
         }
 
@@ -4912,14 +5816,14 @@ DTA::DTATXWorker::notifyWorkerCompletion()
             return false; // Cannot send the request
         }
         
-        // Set dtaTXContext's TXCompleteMap to notify the completion
-        assert(dta->dtaTXContext.TXCompleteMap.find(baseAddr) != dta->dtaTXContext.TXCompleteMap.end());
-        if (dta->dtaTXContext.TXCompleteMap[baseAddr] == true) {
+        // Set dtaTXContextList[txContextID]'s TXCompleteMap to notify the completion
+        assert(dta->dtaTXContextList[txContextID].TXCompleteMap.find(baseAddr) != dta->dtaTXContextList[txContextID].TXCompleteMap.end());
+        if (dta->dtaTXContextList[txContextID].TXCompleteMap[baseAddr] == true) {
             printf("Error: TXCompleteMap[%lx] is already true\n", baseAddr);
             fflush(stdout);
         }
-        assert(dta->dtaTXContext.TXCompleteMap[baseAddr] == false);
-        dta->dtaTXContext.TXCompleteMap[baseAddr] = true;
+        assert(dta->dtaTXContextList[txContextID].TXCompleteMap[baseAddr] == false);
+        dta->dtaTXContextList[txContextID].TXCompleteMap[baseAddr] = true;
 
         // Push to the cxlWRReqQueue
         // Have to make the multipe CXL flit size packets using the descriptor and payload
@@ -4933,8 +5837,8 @@ DTA::DTATXWorker::notifyWorkerCompletion()
         memcpy(ethernetPkt + sizeof(TXDescriptor), payloadBuffer, dmaSize);
 
         // Erase finished descPayloadDMAAssigned 
-        assert(dta->dtaTXContext.descPayloadDMAAssigned.find(baseAddr) != dta->dtaTXContext.descPayloadDMAAssigned.end());
-        dta->dtaTXContext.descPayloadDMAAssigned.erase(baseAddr);
+        assert(dta->dtaTXContextList[txContextID].descPayloadDMAAssigned.find(baseAddr) != dta->dtaTXContextList[txContextID].descPayloadDMAAssigned.end());
+        dta->dtaTXContextList[txContextID].descPayloadDMAAssigned.erase(baseAddr);
 
         // Make multiple packets
         for (uint64_t i = 0; i < dmaSize + sizeof(TXDescriptor); i += dta->flitSize) {
@@ -5022,18 +5926,21 @@ DTA::DTARXStateMachine()
 {
     bool needTicking = false;
 
-    // Check the RX job completion
-    needTicking = checkRXJobCompletion() | needTicking;
+    if (hasRXContextIDQueue()) {
+        // Check the RX job completion
+        uint64_t rx_context_ptr = topRXContextIDQueue();
+        needTicking = checkRXJobCompletion(rx_context_ptr) | needTicking;
 
-    // Iterate through all the workers
-    for (auto& worker: dtaRXWorkerList) {
-        if (worker->DTAWork()) {
-            needTicking = true | needTicking;
+        // Iterate through all the workers
+        for (auto& worker: dtaRXWorkerList) {
+            if (worker->DTAWork()) {
+                needTicking = true | needTicking;
+            }
         }
-    }
 
-    // Allocate Worker
-    needTicking = allocateWorkerFromQueue() | needTicking;
+        // Allocate Worker
+        needTicking = allocateWorkerFromQueue(rx_context_ptr) | needTicking;
+    }
 
     return needTicking;
 
@@ -5044,21 +5951,24 @@ DTA::DTATXStateMachine()
 {
     bool needTicking = false;
 
-    // Check the TX job completion
-    needTicking = checkTXJobCompletion() | needTicking;
+    if (hasTXContextIDQueue()) {
+        uint64_t tx_context_ptr = topTXContextIDQueue();
+        // Check the TX job completion
+        needTicking = checkTXJobCompletion(tx_context_ptr) | needTicking;
 
-    // Iterate through all the workers
-    for (auto& worker: dtaTXWorkerList) {
-        if (worker->DTAWork()) {
-            needTicking = true | needTicking;
+        // Iterate through all the workers
+        for (auto& worker: dtaTXWorkerList) {
+            if (worker->DTAWork()) {
+                needTicking = true | needTicking;
+            }
         }
+
+        // Allocate Worker for Payload DMA
+        allocatePayloadWorker(tx_context_ptr);
+
+        // Allocate Worker for Descriptor DMA
+        allocateDescriptorWorker(tx_context_ptr);
     }
-
-    // Allocate Worker for Payload DMA
-    allocatePayloadWorker();
-
-    // Allocate Worker for Descriptor DMA
-    allocateDescriptorWorker();
 
     return needTicking;
 
@@ -5071,6 +5981,7 @@ DTA::tick()
         DPRINTF(DDIO, "DTA tick\n");
 
         sendRequestToNIC();
+        sendIOCacheRequest();
 
         if (rxTick) {
             rxTick |= DTARXStateMachine();
@@ -5081,7 +5992,7 @@ DTA::tick()
         
         checkSubmissionQueue();
 
-        if (rxTick || txTick) {
+        if (rxTick || txTick || (hasIOCacheRequestQueue()) || (cxlReqQueue.size() > 0)) {
             schedule(tickEvent, curTick() + clockPeriod());
         }   
     }

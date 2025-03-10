@@ -474,18 +474,18 @@ enum {
 struct rte_mbuf {
 	RTE_MARKER cacheline0;
 
-	void *buf_addr;           /**< Virtual address of segment buffer. */
+	void *buf_addr;  //0         /**< Virtual address of segment buffer. */
 	/**
 	 * Physical address of segment buffer.
 	 * Force alignment to 8-bytes, so as to ensure we have the exact
 	 * same mbuf cacheline0 layout for 32-bit and 64-bit. This makes
 	 * working on vector drivers easier.
 	 */
-	rte_iova_t buf_iova __rte_aligned(sizeof(rte_iova_t));
+	rte_iova_t buf_iova __rte_aligned(sizeof(rte_iova_t)); //8
 
 	/* next 8 bytes are initialised on RX descriptor rearm */
-	RTE_MARKER64 rearm_data;
-	uint16_t data_off;
+	RTE_MARKER64 rearm_data; 
+	uint16_t data_off; //16
 
 	/**
 	 * Reference counter. Its size should at least equal to the size
@@ -495,18 +495,18 @@ struct rte_mbuf {
 	 * rte_mbuf_refcnt_set(). The functionality of these functions (atomic,
 	 * or non-atomic) is controlled by the RTE_MBUF_REFCNT_ATOMIC flag.
 	 */
-	uint16_t refcnt;
-	uint16_t nb_segs;         /**< Number of segments. */
+	uint16_t refcnt; //18
+	uint16_t nb_segs; //20        /**< Number of segments. */
 
 	/** Input port (16 bits to support more than 256 virtual ports).
 	 * The event eth Tx adapter uses this field to specify the output port.
 	 */
-	uint16_t port;
+	uint16_t port; //22
 
-	uint64_t ol_flags;        /**< Offload features. */
+	uint64_t ol_flags; //24       /**< Offload features. */
 
 	/* remaining bytes are set on RX when pulling packet from descriptor */
-	RTE_MARKER rx_descriptor_fields1;
+	RTE_MARKER rx_descriptor_fields1; 
 
 	/*
 	 * The packet type, which is the combination of outer/inner L2, L3, L4
@@ -516,7 +516,7 @@ struct rte_mbuf {
 	 * vlan is stripped from the data.
 	 */
 	RTE_STD_C11
-	union {
+	union { //32
 		uint32_t packet_type; /**< L2/L3/L4 and tunnel information. */
 		__extension__
 		struct {
@@ -543,13 +543,13 @@ struct rte_mbuf {
 		};
 	};
 
-	uint32_t pkt_len;         /**< Total pkt len: sum of all segments. */
-	uint16_t data_len;        /**< Amount of data in segment buffer. */
+	uint32_t pkt_len;   //36      /**< Total pkt len: sum of all segments. */
+	uint16_t data_len;  //40      /**< Amount of data in segment buffer. */
 	/** VLAN TCI (CPU order), valid if PKT_RX_VLAN is set. */
-	uint16_t vlan_tci;
+	uint16_t vlan_tci; //42
 
 	RTE_STD_C11
-	union {
+	union { //44
 		union {
 			uint32_t rss;     /**< RSS hash result if RSS enabled */
 			struct {
@@ -583,20 +583,20 @@ struct rte_mbuf {
 	};
 
 	/** Outer VLAN TCI (CPU order), valid if PKT_RX_QINQ is set. */
-	uint16_t vlan_tci_outer;
+	uint16_t vlan_tci_outer; //52
 
-	uint16_t buf_len;         /**< Length of segment buffer. */
+	uint16_t buf_len; //54        /**< Length of segment buffer. */
 
-	struct rte_mempool *pool; /**< Pool from which mbuf was allocated. */
+	struct rte_mempool *pool; //56 /**< Pool from which mbuf was allocated. */
 
 	/* second cache line - fields only used in slow path or on TX */
 	RTE_MARKER cacheline1 __rte_cache_min_aligned;
 
-	struct rte_mbuf *next;    /**< Next segment of scattered packet. */
+	struct rte_mbuf *next; //0    /**< Next segment of scattered packet. */
 
 	/* fields to support TX offloads */
 	RTE_STD_C11
-	union {
+	union { //8
 		uint64_t tx_offload;       /**< combined for easy fetch */
 		__extension__
 		struct {
@@ -635,17 +635,17 @@ struct rte_mbuf {
 	/** Shared data for external buffer attached to mbuf. See
 	 * rte_pktmbuf_attach_extbuf().
 	 */
-	struct rte_mbuf_ext_shared_info *shinfo;
+	struct rte_mbuf_ext_shared_info *shinfo; //16
 
 	/** Size of the application private data. In case of an indirect
 	 * mbuf, it stores the direct mbuf private data size.
 	 */
-	uint16_t priv_size;
+	uint16_t priv_size; //24
 
 	/** Timesync flags for use with IEEE1588. */
-	uint16_t timesync;
+	uint16_t timesync; //26
 
-	uint32_t dynfield1[9]; /**< Reserved for dynamic fields. */
+	uint32_t dynfield1[9]; //28 /**< Reserved for dynamic fields. */
 } __rte_cache_aligned;
 
 /**

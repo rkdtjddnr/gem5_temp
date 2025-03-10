@@ -11,6 +11,8 @@
 #include <rte_time.h>
 #include <rte_pci.h>
 
+#define EM_SVE_512
+
 #define E1000_INTEL_VENDOR_ID 0x8086
 
 /* need update link, bit flag */
@@ -511,11 +513,20 @@ void eth_em_tx_init(struct rte_eth_dev *dev);
 uint16_t eth_em_xmit_pkts(void *tx_queue, struct rte_mbuf **tx_pkts,
 		uint16_t nb_pkts);
 
+uint16_t eth_em_xmit_pkts_vec_sve512(void *tx_queue, struct rte_mbuf **tx_pkts,
+		uint16_t nb_pkts);
+
 uint16_t eth_em_xmit_pkts_m2func(void *tx_queue, struct rte_mbuf **tx_pkts,
 		uint16_t nb_pkts);
 
 uint16_t eth_em_xmit_pkts_m2func_dta(void *tx_queue, struct rte_mbuf **tx_pkts,
 		uint16_t nb_pkts);
+
+uint16_t eth_em_xmit_pkts_m2func_dta_double_comp(void *tx_queue, struct rte_mbuf **tx_pkts,
+		uint16_t nb_pkts);	
+
+uint16_t eth_em_xmit_pkts_m2func_dta_double_comp_sve512(void *tx_queue, struct rte_mbuf **tx_pkts,
+		uint16_t nb_pkts);		
 
 uint16_t eth_em_prep_pkts(void *txq, struct rte_mbuf **tx_pkts,
 		uint16_t nb_pkts);
@@ -523,10 +534,16 @@ uint16_t eth_em_prep_pkts(void *txq, struct rte_mbuf **tx_pkts,
 uint16_t eth_em_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 		uint16_t nb_pkts);
 
+uint16_t eth_em_recv_pkts_sve512(void *rx_queue, struct rte_mbuf **rx_pkts,
+		uint16_t nb_pkts);
+
 uint16_t eth_em_recv_pkts_m2func(void *rx_queue, struct rte_mbuf **rx_pkts,
 		uint16_t nb_pkts);
 
 uint16_t eth_em_recv_pkts_m2func_dta(void *rx_queue, struct rte_mbuf **rx_pkts,
+		uint16_t nb_pkts);
+
+uint16_t eth_em_recv_pkts_m2func_dta_double_comp(void *rx_queue, struct rte_mbuf **rx_pkts,
 		uint16_t nb_pkts);
 
 uint16_t eth_em_recv_pkts_m2func_poll_test(void *rx_queue,

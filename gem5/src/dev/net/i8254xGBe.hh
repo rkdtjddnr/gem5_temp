@@ -101,6 +101,8 @@ class IGbE : public EtherDevice
     bool txTick;
     bool txFifoTick;
 
+    bool startLoadGen;
+
     enum class CommunicationType : uint8_t {
       RING = 0,
       M2FUNC = 1

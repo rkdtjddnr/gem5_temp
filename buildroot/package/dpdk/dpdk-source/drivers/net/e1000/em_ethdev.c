@@ -269,15 +269,30 @@ eth_em_dev_init(struct rte_eth_dev *eth_dev) //eth_igb_dev_init
 	eth_dev->rx_descriptor_done   = eth_em_rx_descriptor_done;
 	eth_dev->rx_descriptor_status = eth_em_rx_descriptor_status;
 	eth_dev->tx_descriptor_status = eth_em_tx_descriptor_status;
-	// eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts;
-	// eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts;
+
+	// Ring Buffer
+	#ifdef EM_SVE_512
+	printf("EM_SVE_512 defined\n");
+	eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts_sve512;
+	eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts_vec_sve512;
+	#else
+	printf("EM_SVE_512 not defined\n");
+	eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts;
+	eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts;
+	#endif
+
 	// JM - m2func only
 	// eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts_m2func;
 	// eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts_m2func;
+
 	// JM - m2func + DTA
-	eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts_m2func_dta;
-	// eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts_m2func_poll_test;
-	eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts_m2func_dta;
+	// eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts_m2func_dta;
+	// eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts_m2func_dta;
+
+	// JM - m2func + DTA (double comp)
+	// eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts_m2func_dta_double_comp;
+	// eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts_m2func_dta_double_comp;
+
 	eth_dev->tx_pkt_prepare = (eth_tx_prep_t)&eth_em_prep_pkts;
 
 	/* for secondary processes, we don't initialise any further as primary
