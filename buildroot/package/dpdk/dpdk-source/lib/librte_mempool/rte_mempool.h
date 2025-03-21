@@ -221,7 +221,7 @@ struct rte_mempool {
 	unsigned int flags;              /**< Flags of the mempool. */
 	int socket_id;                   /**< Socket id passed at create. */
 	uint32_t size;                   /**< Max size of the mempool. */
-	uint32_t cache_size;
+	uint32_t cache_size; // offset 68 (0x44)
 	/**< Size of per-lcore default local cache. */
 
 	uint32_t elt_size;               /**< Size of an element. */

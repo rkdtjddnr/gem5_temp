@@ -1534,6 +1534,43 @@ class BaseCache : public ClockedObject
     // JM - for multi-port
     bool isMultiPort;
 
+
+    // For RXD, TXD parsing
+    #define E1000_RXD_STAT_DD	0x01    /* Descriptor Done */
+    #define E1000_TXD_STAT_DD	0x00000001 /* Descriptor Done */
+    struct E1000RXDescriptor {
+        uint16_t rss_type:4;
+        uint16_t pkt_type:12;
+        uint16_t __reserved1:5;
+        uint16_t header_len:10;
+        uint16_t sph:1;
+        union
+        {
+            struct
+            {
+                uint16_t id;
+                uint16_t csum;
+            };
+            uint32_t rss_hash;
+        };
+        uint32_t status_error;
+        uint16_t pkt_len;
+        uint16_t vlan_tag;
+        // total 128 bits (16 bytes)                    
+    };
+    union E1000TXDescriptor {
+        struct {
+            uint64_t buffer_addr;    /* Address of descriptor's data buf */
+            uint32_t cmd_type_len;
+            uint32_t olinfo_status;
+        } read;
+        struct {
+            uint64_t rsvd;       /* Reserved */
+            uint32_t nxtseq_seed;
+            uint32_t status;
+        } wb;
+    };
+
     
 };
 

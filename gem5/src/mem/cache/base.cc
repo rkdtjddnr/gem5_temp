@@ -595,274 +595,643 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             printf("[LOG], %llu, %s, %s, %d, TX_TAIL_WR\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0);
         }
 
-        // vector macswap
+        uint64_t rx_sw_ring_base = 0x20209bc80;
+        uint64_t tx_sw_ring_base = 0x2020b4c80;
+        uint64_t max_desc = 1024;
+        uint64_t mbuf_ptr_size = 8;
+
+        uint64_t rx_sw_ring_end = rx_sw_ring_base + max_desc * mbuf_ptr_size;
+        uint64_t tx_sw_ring_end = tx_sw_ring_base + max_desc * mbuf_ptr_size;
+
+        // RX Software Ring
+        if (pkt->getAddr() >= rx_sw_ring_base && pkt->getAddr() < rx_sw_ring_end) {
+            int offset = (pkt->getAddr() - rx_sw_ring_base) / mbuf_ptr_size;
+            printf("[LOG], %llu, %s, %s, %d, RX_SW_RING[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+        }
+        // TX Software Ring
+        if (pkt->getAddr() >= tx_sw_ring_base && pkt->getAddr() < tx_sw_ring_end) {
+            int offset = (pkt->getAddr() - tx_sw_ring_base) / mbuf_ptr_size;
+            printf("[LOG], %llu, %s, %s, %d, TX_SW_RING[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+        }
+
+        // normal version
         // uint64_t rx_desc_base = 8624155648;
         // uint64_t tx_desc_base = 8624238080;
 
-        // scalar macswap
-        uint64_t rx_desc_base = 8624127488;
+        // sve version
+        uint64_t rx_desc_base = 8624135424;
         uint64_t tx_desc_base = 8624237824;
+
+        // RX Descriptor (0-31)
+        uint64_t rx_desc_0 = rx_desc_base + 16 * 0;
+        if (pkt->getAddr() >= rx_desc_0 && pkt->getAddr() < rx_desc_0 + 512) {
+            int offset = (pkt->getAddr() - rx_desc_0) / 16;
+            int num_desc = (pkt->getSize() / 16);
+            int last_offset = offset + num_desc - 1;
+            if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+                // Get the last descriptor's DD bit
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
+                bool dd = false;
+                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
+                    dd = desc->status_error & E1000_RXD_STAT_DD;
+                }
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_31[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            }
+            else {
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_31[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            }
+        }
+
+        // RX Descriptor (32-63)
+        uint64_t rx_desc_32 = rx_desc_base + 16 * 32;
+        if (pkt->getAddr() >= rx_desc_32 && pkt->getAddr() < rx_desc_32 + 512) {
+            int offset = (pkt->getAddr() - rx_desc_32) / 16;
+            int num_desc = (pkt->getSize() / 16);
+            int last_offset = offset + num_desc - 1;
+            if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+                // Get the last descriptor's DD bit
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
+                bool dd = false;
+                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
+                    dd = desc->status_error & E1000_RXD_STAT_DD;
+                }
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_32_63[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            }
+            else {
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_32_63[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            }
+        }
 
         // RX Descriptor (63-95)
         uint64_t rx_desc_63 = rx_desc_base + 16 * 63;
         if (pkt->getAddr() >= rx_desc_63 && pkt->getAddr() < rx_desc_63 + 512) {
             int offset = (pkt->getAddr() - rx_desc_63) / 16;
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            int num_desc = (pkt->getSize() / 16);
+            int last_offset = offset + num_desc - 1;
+            if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+                // Get the last descriptor's DD bit
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
+                bool dd = false;
+                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
+                    dd = desc->status_error & E1000_RXD_STAT_DD;
+                }
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            }
+            else {
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            }
         }
 
-        // RX Descriptor (95-127)
-        uint64_t rx_desc_95 = rx_desc_base + 16 * 95;
-        if (pkt->getAddr() >= rx_desc_95 && pkt->getAddr() < rx_desc_95 + 512) {
-            int offset = (pkt->getAddr() - rx_desc_95) / 16;
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_95_127[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+        // RX Descriptor (96-127)
+        uint64_t rx_desc_96 = rx_desc_base + 16 * 96;
+        if (pkt->getAddr() >= rx_desc_96 && pkt->getAddr() < rx_desc_96 + 512) {
+            int offset = (pkt->getAddr() - rx_desc_96) / 16;
+            int num_desc = (pkt->getSize() / 16);
+            int last_offset = offset + num_desc - 1;
+            if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+                // Get the last descriptor's DD bit
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
+                bool dd = false;
+                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
+                    dd = desc->status_error & E1000_RXD_STAT_DD;
+                }
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_96_127[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            }
+            else {
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_96_127[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            }
+        }
+
+        // RX Descriptor (127-159)
+        uint64_t rx_desc_127 = rx_desc_base + 16 * 127;
+        if (pkt->getAddr() >= rx_desc_127 && pkt->getAddr() < rx_desc_127 + 512) {
+            int offset = (pkt->getAddr() - rx_desc_127) / 16;
+            int num_desc = (pkt->getSize() / 16);
+            int last_offset = offset + num_desc - 1;
+            if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+                // Get the last descriptor's DD bit
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
+                bool dd = false;
+                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
+                    dd = desc->status_error & E1000_RXD_STAT_DD;
+                }
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_127_159[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            }
+            else {
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_127_159[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            }
+        }
+
+        // TX Descriptor (64-95)
+        uint64_t tx_desc_64 = tx_desc_base + 16 * 64;
+        if (pkt->getAddr() >= tx_desc_64 && pkt->getAddr() < tx_desc_64 + 512) {
+            int offset = (pkt->getAddr() - tx_desc_64) / 16;
+            int num_desc = (pkt->getSize() / 16);
+            int last_offset = offset + num_desc - 1;
+            if ((last_offset == 31) && pkt->canGetDataPtr()) {
+                // Get the last descriptor's DD bit
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
+                bool dd = false;
+                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
+                    dd = desc->wb.status & E1000_TXD_STAT_DD;
+                }
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_64_95[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            }
+            else {
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_64_95[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            }
         }
 
         // TX Descriptor (96-128)
         uint64_t tx_desc_96 = tx_desc_base + 16 * 96;
         if (pkt->getAddr() >= tx_desc_96 && pkt->getAddr() < tx_desc_96 + 512) {
             int offset = (pkt->getAddr() - tx_desc_96) / 16;
-            printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            int num_desc = (pkt->getSize() / 16);
+            int last_offset = offset + num_desc - 1;
+            if ((last_offset == 31) && pkt->canGetDataPtr()) {
+                // Get the last descriptor's DD bit
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
+                bool dd = false;
+                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
+                    dd = desc->wb.status & E1000_TXD_STAT_DD;
+                }
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            }
+            else {
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            }
         }
 
+        // TX Descriptor (128-160)
+        uint64_t tx_desc_128 = tx_desc_base + 16 * 128;
+        if (pkt->getAddr() >= tx_desc_128 && pkt->getAddr() < tx_desc_128 + 512) {
+            int offset = (pkt->getAddr() - tx_desc_128) / 16;
+            int num_desc = (pkt->getSize() / 16);
+            int last_offset = offset + num_desc - 1;
+            if ((last_offset == 31) && pkt->canGetDataPtr()) {
+                // Get the last descriptor's DD bit
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
+                bool dd = false;
+                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
+                    dd = desc->wb.status & E1000_TXD_STAT_DD;
+                }
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_160[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            }
+            else {
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_160[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            }
+        }
+
+        // TX Descriptor (160-192)
+        uint64_t tx_desc_160 = tx_desc_base + 16 * 160;
+        if (pkt->getAddr() >= tx_desc_160 && pkt->getAddr() < tx_desc_160 + 512) {
+            int offset = (pkt->getAddr() - tx_desc_160) / 16;
+            int num_desc = (pkt->getSize() / 16);
+            int last_offset = offset + num_desc - 1;
+            if ((last_offset == 31) && pkt->canGetDataPtr()) {
+                // Get the last descriptor's DD bit
+                uint8_t *data = pkt->getPtr<uint8_t>();
+                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
+                bool dd = false;
+                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
+                    dd = desc->wb.status & E1000_TXD_STAT_DD;
+                }
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_160_192[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            }
+            else {
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_160_192[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+            }
+        }
+
+        // normal version
         // mbuf for RX Descriptor (63-95 pre-prev) - for tx mbuf free
-        // uint64_t mbuf_addr_set_95_preprev[] = {
-        //     0x201650D80, 0x201651700, 0x201652080, 0x201652A00,
-        //     0x201653380, 0x201653D00, 0x201654680, 0x201655000,
-        //     0x201655980, 0x201656300, 0x201656C80, 0x201657600,
-        //     0x201657F80, 0x201658900, 0x201659280, 0x201659C00,
-        //     0x20165A580, 0x20165AF00, 0x20165B880, 0x20165C200,
-        //     0x20165CB80, 0x20165D500, 0x20165DE80, 0x20165E800,
-        //     0x20165F180, 0x20165FB00, 0x201660480, 0x201660E00,
-        //     0x201661780, 0x201662100, 0x201662A80, 0x201663400
-        // };
+        /*
+        uint64_t mbuf_addr_set_95_preprev[] = {
+            0x201650D80, 0x201651700, 0x201652080, 0x201652A00,
+            0x201653380, 0x201653D00, 0x201654680, 0x201655000,
+            0x201655980, 0x201656300, 0x201656C80, 0x201657600,
+            0x201657F80, 0x201658900, 0x201659280, 0x201659C00,
+            0x20165A580, 0x20165AF00, 0x20165B880, 0x20165C200,
+            0x20165CB80, 0x20165D500, 0x20165DE80, 0x20165E800,
+            0x20165F180, 0x20165FB00, 0x201660480, 0x201660E00,
+            0x201661780, 0x201662100, 0x201662A80, 0x201663400
+        };
 
-        // uint64_t mbuf_first_cacheline_set_95_preprev[] = {
-        //     0x201650C80, 0x201651600, 0x201651F80, 0x201652900,
-        //     0x201653280, 0x201653C00, 0x201654580, 0x201654F00,
-        //     0x201655880, 0x201656200, 0x201656B80, 0x201657500,
-        //     0x201657E80, 0x201658800, 0x201659180, 0x201659B00,
-        //     0x20165A480, 0x20165AE00, 0x20165B780, 0x20165C100,
-        //     0x20165CA80, 0x20165D400, 0x20165DD80, 0x20165E700,
-        //     0x20165F080, 0x20165FA00, 0x201660380, 0x201660D00,
-        //     0x201661680, 0x201662000, 0x201662980, 0x201663300
-        // };
+        uint64_t mbuf_first_cacheline_set_95_preprev[] = {
+            0x201650C80, 0x201651600, 0x201651F80, 0x201652900,
+            0x201653280, 0x201653C00, 0x201654580, 0x201654F00,
+            0x201655880, 0x201656200, 0x201656B80, 0x201657500,
+            0x201657E80, 0x201658800, 0x201659180, 0x201659B00,
+            0x20165A480, 0x20165AE00, 0x20165B780, 0x20165C100,
+            0x20165CA80, 0x20165D400, 0x20165DD80, 0x20165E700,
+            0x20165F080, 0x20165FA00, 0x201660380, 0x201660D00,
+            0x201661680, 0x201662000, 0x201662980, 0x201663300
+        };
 
-        // uint64_t mbuf_second_cacheline_set_95_preprev[] = {
-        //     0x201650CC0, 0x201651640, 0x201651FC0, 0x201652940,
-        //     0x2016532C0, 0x201653C40, 0x2016545C0, 0x201654F40,
-        //     0x2016558C0, 0x201656240, 0x201656BC0, 0x201657540,
-        //     0x201657EC0, 0x201658840, 0x2016591C0, 0x201659B40,
-        //     0x20165A4C0, 0x20165AE40, 0x20165B7C0, 0x20165C140,
-        //     0x20165CAC0, 0x20165D440, 0x20165DDC0, 0x20165E740,
-        //     0x20165F0C0, 0x20165FA40, 0x2016603C0, 0x201660D40,
-        //     0x2016616C0, 0x201662040, 0x2016629C0, 0x201663340
-        // };
+        uint64_t mbuf_second_cacheline_set_95_preprev[] = {
+            0x201650CC0, 0x201651640, 0x201651FC0, 0x201652940,
+            0x2016532C0, 0x201653C40, 0x2016545C0, 0x201654F40,
+            0x2016558C0, 0x201656240, 0x201656BC0, 0x201657540,
+            0x201657EC0, 0x201658840, 0x2016591C0, 0x201659B40,
+            0x20165A4C0, 0x20165AE40, 0x20165B7C0, 0x20165C140,
+            0x20165CAC0, 0x20165D440, 0x20165DDC0, 0x20165E740,
+            0x20165F0C0, 0x20165FA40, 0x2016603C0, 0x201660D40,
+            0x2016616C0, 0x201662040, 0x2016629C0, 0x201663340
+        };
 
-        // // mbuf for RX Descriptor (63-95 prev)
-        // uint64_t mbuf_addr_set_95_prev[] = {
-        //     0x20154c000, 0x20154c980, 0x20154d300, 0x20154dc80, 
-        //     0x20154e600, 0x20154ef80, 0x20154f900, 0x201550280, 
-        //     0x201550c00, 0x201551580, 0x201551f00, 0x201552880, 
-        //     0x201553200, 0x201553b80, 0x201554500, 0x201554e80, 
-        //     0x201555800, 0x201556180, 0x201556b00, 0x201557480,
-        //     0x201557e00, 0x201558780, 0x201559100, 0x201559a80, 
-        //     0x20155a400, 0x20155ad80, 0x20155b700, 0x20155c080, 
-        //     0x20155ca00, 0x20155d380, 0x20155dd00, 0x20155e680
-        // };
-
-        // // mbuf's first cacheline for RX Descriptor (63-95 prev)
-        // uint64_t mbuf_first_cacheline_set_95_prev[] = {
-        //     0x20154bf00, 0x20154c880, 0x20154d200, 0x20154db80, 
-        //     0x20154e500, 0x20154ee80, 0x20154f800, 0x201550180, 
-        //     0x201550b00, 0x201551480, 0x201551e00, 0x201552780, 
-        //     0x201553100, 0x201553a80, 0x201554400, 0x201554d80, 
-        //     0x201555700, 0x201556080, 0x201556a00, 0x201557380, 
-        //     0x201557d00, 0x201558680, 0x201559000, 0x201559980, 
-        //     0x20155a300, 0x20155ac80, 0x20155b600, 0x20155bf80, 
-        //     0x20155c900, 0x20155d280, 0x20155dc00, 0x20155e580
-        // };
-
-        // // mbuf's second cacheline for RX Descriptor (63-95 prev)
-        // uint64_t mbuf_second_cacheline_set_95_prev[] = {
-        //     0x20154bf40, 0x20154c8c0, 0x20154d240, 0x20154dbc0,
-        //     0x20154e540, 0x20154eec0, 0x20154f840, 0x2015501c0,
-        //     0x201550b40, 0x2015514c0, 0x201551e40, 0x2015527c0,
-        //     0x201553140, 0x201553ac0, 0x201554440, 0x201554dc0,
-        //     0x201555740, 0x2015560c0, 0x201556a40, 0x2015573c0,
-        //     0x201557d40, 0x2015586c0, 0x201559040, 0x2015599c0,
-        //     0x20155a340, 0x20155acc0, 0x20155b640, 0x20155bfc0,
-        //     0x20155c940, 0x20155d2c0, 0x20155dc40, 0x20155e5c0
-        // };
-
-        // // mbuf for RX Descriptor (63-95 new)
-        // uint64_t mbuf_addr_set_95_new[] = {
-        //     0x201676d80, 0x201676400, 0x201675a80, 0x201675100,
-        //     0x201674780, 0x201673e00, 0x201673480, 0x201672b00,
-        //     0x201672180, 0x201671800, 0x201670e80, 0x201670500,
-        //     0x20166fb80, 0x20166f200, 0x20166e880, 0x20166df00,
-        //     0x20166d580, 0x20166cc00, 0x20166c280, 0x20166b900,
-        //     0x20166af80, 0x20166a600, 0x201669c80, 0x201669300,
-        //     0x201668980, 0x201668000, 0x201667680, 0x201666d00,
-        //     0x201666380, 0x201665a00, 0x201665080, 0x201664700
-        // };
-
-        // // mbuf's first cacheline for RX Descriptor (63-95 new) - minus 256 from the mbuf_addr_set_95_new
-        // uint64_t mbuf_first_cacheline_set_95_new[] = {
-        //     0x201676c80, 0x201676300, 0x201675980, 0x201675000,
-        //     0x201674680, 0x201673d00, 0x201673380, 0x201672a00,
-        //     0x201672080, 0x201671700, 0x201670d80, 0x201670400,
-        //     0x20166fa80, 0x20166f100, 0x20166e780, 0x20166de00,
-        //     0x20166d480, 0x20166cb00, 0x20166c180, 0x20166b800,
-        //     0x20166ae80, 0x20166a500, 0x201669b80, 0x201669200,
-        //     0x201668880, 0x201667f00, 0x201667580, 0x201666c00,
-        //     0x201666280, 0x201665900, 0x201664f80, 0x201664600
-        // };
-
-        // // mbuf's second cacheline for RX Descriptor (63-95 new) + 64 from the mbuf_first_cacheline_set_95_new
-        // uint64_t mbuf_second_cacheline_set_95_new[] = {
-        //     0x201676cc0, 0x201676340, 0x2016759c0, 0x201675040,
-        //     0x2016746c0, 0x201673d40, 0x2016733c0, 0x201672a40,
-        //     0x2016720c0, 0x201671740, 0x201670dc0, 0x201670440,
-        //     0x20166fac0, 0x20166f140, 0x20166e7c0, 0x20166de40,
-        //     0x20166d4c0, 0x20166cb40, 0x20166c1c0, 0x20166b840,
-        //     0x20166aec0, 0x20166a540, 0x201669bc0, 0x201669240,
-        //     0x2016688c0, 0x201667f40, 0x2016675c0, 0x201666c40,
-        //     0x2016662c0, 0x201665940, 0x201664fc0, 0x201664640
-        // };
-
-        // // mbuf for RX Descriptor (95-127 prev) -> TX Descriptor (128-160)
-        // uint64_t mbuf_addr_set_127_prev[] = {
-        //     0x201539000, 0x201539980, 0x20153A300, 0x20153AC80,
-        //     0x20153B600, 0x20153BF80, 0x20153C900, 0x20153D280,
-        //     0x20153DC00, 0x20153E580, 0x20153EF00, 0x20153F880,
-        //     0x201540200, 0x201540B80, 0x201541500, 0x201541E80,
-        //     0x201542800, 0x201543180, 0x201543B00, 0x201544480,
-        //     0x201544E00, 0x201545780, 0x201546100, 0x201546A80,
-        //     0x201547400, 0x201547D80, 0x201548700, 0x201549080,
-        //     0x201549A00, 0x20154A380, 0x20154AD00, 0x20154B680
-        // };
-
-        // uint64_t mbuf_first_cacheline_set_127_prev[] = {
-        //     0x201538F00, 0x201539880, 0x20153A200, 0x20153AB80,
-        //     0x20153B500, 0x20153BE80, 0x20153C800, 0x20153D180,
-        //     0x20153DB00, 0x20153E480, 0x20153EE00, 0x20153F780,
-        //     0x201540100, 0x201540A80, 0x201541400, 0x201541D80,
-        //     0x201542700, 0x201543080, 0x201543A00, 0x201544380,
-        //     0x201544D00, 0x201545680, 0x201546000, 0x201546980,
-        //     0x201547300, 0x201547C80, 0x201548600, 0x201548F80,
-        //     0x201549900, 0x20154A280, 0x20154AC00, 0x20154B580
-        // };
-
-        // uint64_t mbuf_second_cacheline_set_127_prev[] = {
-        //     0x201538F40, 0x2015398C0, 0x20153A240, 0x20153ABC0,
-        //     0x20153B540, 0x20153BEC0, 0x20153C840, 0x20153D1C0,
-        //     0x20153DB40, 0x20153E4C0, 0x20153EE40, 0x20153F7C0,
-        //     0x201540140, 0x201540AC0, 0x201541440, 0x201541DC0,
-        //     0x201542740, 0x2015430C0, 0x201543A40, 0x2015443C0,
-        //     0x201544D40, 0x2015456C0, 0x201546040, 0x2015469C0,
-        //     0x201547340, 0x201547CC0, 0x201548640, 0x201548FC0,
-        //     0x201549940, 0x20154A2C0, 0x20154AC40, 0x20154B5C0
-        // };
-
+        // mbuf for RX Descriptor (63-95 prev)
         uint64_t mbuf_addr_set_95_prev[] = {
-            0x2014DEC00, 0x2014DE280, 0x2014DD900, 0x2014DCF80,
-            0x2014DC600, 0x2014DBC80, 0x2014DB300, 0x2014DA980,
-            0x2014DA000, 0x2014D9680, 0x2014D8D00, 0x2014D8380,
-            0x2014D7A00, 0x2014D7080, 0x2014D6700, 0x2014D5D80,
-            0x2014D5400, 0x2014D4A80, 0x2014D4100, 0x2014D3780,
-            0x2014D2E00, 0x2014D2480, 0x2014D1B00, 0x2014D1180,
-            0x2014D0800, 0x2014CFE80, 0x2014CF500, 0x2014CEB80,
-            0x2014CE200, 0x2015F7980, 0x2015F7000, 0x2015F6680
+            0x20154c000, 0x20154c980, 0x20154d300, 0x20154dc80, 
+            0x20154e600, 0x20154ef80, 0x20154f900, 0x201550280, 
+            0x201550c00, 0x201551580, 0x201551f00, 0x201552880, 
+            0x201553200, 0x201553b80, 0x201554500, 0x201554e80, 
+            0x201555800, 0x201556180, 0x201556b00, 0x201557480,
+            0x201557e00, 0x201558780, 0x201559100, 0x201559a80, 
+            0x20155a400, 0x20155ad80, 0x20155b700, 0x20155c080, 
+            0x20155ca00, 0x20155d380, 0x20155dd00, 0x20155e680
         };
 
+        // mbuf's first cacheline for RX Descriptor (63-95 prev)
         uint64_t mbuf_first_cacheline_set_95_prev[] = {
-            0x2014DEB00, 0x2014DE180, 0x2014DD800, 0x2014DCE80,
-            0x2014DC500, 0x2014DBB80, 0x2014DB200, 0x2014DA880,
-            0x2014D9F00, 0x2014D9580, 0x2014D8C00, 0x2014D8280,
-            0x2014D7900, 0x2014D6F80, 0x2014D6600, 0x2014D5C80,
-            0x2014D5300, 0x2014D4980, 0x2014D4000, 0x2014D3680,
-            0x2014D2D00, 0x2014D2380, 0x2014D1A00, 0x2014D1080,
-            0x2014D0700, 0x2014CFD80, 0x2014CF400, 0x2014CEA80,
-            0x2014CE100, 0x2015F7880, 0x2015F6F00, 0x2015F6580
+            0x20154bf00, 0x20154c880, 0x20154d200, 0x20154db80, 
+            0x20154e500, 0x20154ee80, 0x20154f800, 0x201550180, 
+            0x201550b00, 0x201551480, 0x201551e00, 0x201552780, 
+            0x201553100, 0x201553a80, 0x201554400, 0x201554d80, 
+            0x201555700, 0x201556080, 0x201556a00, 0x201557380, 
+            0x201557d00, 0x201558680, 0x201559000, 0x201559980, 
+            0x20155a300, 0x20155ac80, 0x20155b600, 0x20155bf80, 
+            0x20155c900, 0x20155d280, 0x20155dc00, 0x20155e580
         };
 
+        // mbuf's second cacheline for RX Descriptor (63-95 prev)
         uint64_t mbuf_second_cacheline_set_95_prev[] = {
-            0x2014DEB40, 0x2014DE1C0, 0x2014DD840, 0x2014DCEC0,
-            0x2014DC540, 0x2014DBBC0, 0x2014DB240, 0x2014DA8C0,
-            0x2014D9F40, 0x2014D95C0, 0x2014D8C40, 0x2014D82C0,
-            0x2014D7940, 0x2014D6FC0, 0x2014D6640, 0x2014D5CC0,
-            0x2014D5340, 0x2014D49C0, 0x2014D4040, 0x2014D36C0,
-            0x2014D2D40, 0x2014D23C0, 0x2014D1A40, 0x2014D10C0,
-            0x2014D0740, 0x2014CFDC0, 0x2014CF440, 0x2014CEAC0,
-            0x2014CE140, 0x2015F78C0, 0x2015F6F40, 0x2015F65C0
+            0x20154bf40, 0x20154c8c0, 0x20154d240, 0x20154dbc0,
+            0x20154e540, 0x20154eec0, 0x20154f840, 0x2015501c0,
+            0x201550b40, 0x2015514c0, 0x201551e40, 0x2015527c0,
+            0x201553140, 0x201553ac0, 0x201554440, 0x201554dc0,
+            0x201555740, 0x2015560c0, 0x201556a40, 0x2015573c0,
+            0x201557d40, 0x2015586c0, 0x201559040, 0x2015599c0,
+            0x20155a340, 0x20155acc0, 0x20155b640, 0x20155bfc0,
+            0x20155c940, 0x20155d2c0, 0x20155dc40, 0x20155e5c0
         };
 
+        // mbuf for RX Descriptor (63-95 new)
         uint64_t mbuf_addr_set_95_new[] = {
-            0x2013D4900, 0x2013D3F80, 0x2013D3600, 0x2013D2C80,
-            0x2013D2300, 0x2013D1980, 0x2013D1000, 0x2013D0680,
-            0x2013CFD00, 0x2013CF380, 0x2013CEA00, 0x2013CE080,
-            0x2013CD700, 0x2013CCD80, 0x2013CC400, 0x2013CBA80,
-            0x2013CB100, 0x2013CA780, 0x2013C9E00, 0x2013C9480,
-            0x2013C8B00, 0x2013C8180, 0x2013C7800, 0x2013C6E80,
-            0x2013C6500, 0x2013C5B80, 0x2013C5200, 0x2013C4880,
-            0x2013C3F00, 0x2013C3580, 0x2013C2C00, 0x2013C2280
+            0x201676d80, 0x201676400, 0x201675a80, 0x201675100,
+            0x201674780, 0x201673e00, 0x201673480, 0x201672b00,
+            0x201672180, 0x201671800, 0x201670e80, 0x201670500,
+            0x20166fb80, 0x20166f200, 0x20166e880, 0x20166df00,
+            0x20166d580, 0x20166cc00, 0x20166c280, 0x20166b900,
+            0x20166af80, 0x20166a600, 0x201669c80, 0x201669300,
+            0x201668980, 0x201668000, 0x201667680, 0x201666d00,
+            0x201666380, 0x201665a00, 0x201665080, 0x201664700
         };
 
+        // mbuf's first cacheline for RX Descriptor (63-95 new) - minus 256 from the mbuf_addr_set_95_new
         uint64_t mbuf_first_cacheline_set_95_new[] = {
-            0x2013D4800, 0x2013D3E80, 0x2013D3500, 0x2013D2B80,
-            0x2013D2200, 0x2013D1880, 0x2013D0F00, 0x2013D0580,
-            0x2013CFC00, 0x2013CF280, 0x2013CE900, 0x2013CDF80,
-            0x2013CD600, 0x2013CCC80, 0x2013CC300, 0x2013CB980,
-            0x2013CB000, 0x2013CA680, 0x2013C9D00, 0x2013C9380,
-            0x2013C8A00, 0x2013C8080, 0x2013C7700, 0x2013C6D80,
-            0x2013C6400, 0x2013C5A80, 0x2013C5100, 0x2013C4780,
-            0x2013C3E00, 0x2013C3480, 0x2013C2B00, 0x2013C2180
+            0x201676c80, 0x201676300, 0x201675980, 0x201675000,
+            0x201674680, 0x201673d00, 0x201673380, 0x201672a00,
+            0x201672080, 0x201671700, 0x201670d80, 0x201670400,
+            0x20166fa80, 0x20166f100, 0x20166e780, 0x20166de00,
+            0x20166d480, 0x20166cb00, 0x20166c180, 0x20166b800,
+            0x20166ae80, 0x20166a500, 0x201669b80, 0x201669200,
+            0x201668880, 0x201667f00, 0x201667580, 0x201666c00,
+            0x201666280, 0x201665900, 0x201664f80, 0x201664600
         };
 
+        // mbuf's second cacheline for RX Descriptor (63-95 new) + 64 from the mbuf_first_cacheline_set_95_new
         uint64_t mbuf_second_cacheline_set_95_new[] = {
-            0x2013D4840, 0x2013D3EC0, 0x2013D3540, 0x2013D2BC0,
-            0x2013D2240, 0x2013D18C0, 0x2013D0F40, 0x2013D05C0,
-            0x2013CFC40, 0x2013CF2C0, 0x2013CE940, 0x2013CDFC0,
-            0x2013CD640, 0x2013CCCC0, 0x2013CC340, 0x2013CB9C0,
-            0x2013CB040, 0x2013CA6C0, 0x2013C9D40, 0x2013C93C0,
-            0x2013C8A40, 0x2013C80C0, 0x2013C7740, 0x2013C6DC0,
-            0x2013C6440, 0x2013C5AC0, 0x2013C5140, 0x2013C47C0,
-            0x2013C3E40, 0x2013C34C0, 0x2013C2B40, 0x2013C21C0
+            0x201676cc0, 0x201676340, 0x2016759c0, 0x201675040,
+            0x2016746c0, 0x201673d40, 0x2016733c0, 0x201672a40,
+            0x2016720c0, 0x201671740, 0x201670dc0, 0x201670440,
+            0x20166fac0, 0x20166f140, 0x20166e7c0, 0x20166de40,
+            0x20166d4c0, 0x20166cb40, 0x20166c1c0, 0x20166b840,
+            0x20166aec0, 0x20166a540, 0x201669bc0, 0x201669240,
+            0x2016688c0, 0x201667f40, 0x2016675c0, 0x201666c40,
+            0x2016662c0, 0x201665940, 0x201664fc0, 0x201664640
         };
 
+        // mbuf for RX Descriptor (95-127 prev) -> TX Descriptor (128-160)
         uint64_t mbuf_addr_set_127_prev[] = {
-            0x2015F5D00, 0x2015F5380, 0x2015F4A00, 0x2015F4080,
-            0x2015F3700, 0x2015F2D80, 0x2015F2400, 0x2015F1A80,
-            0x2015F1100, 0x2015F0780, 0x2015EFE00, 0x2015EF480,
-            0x2015EEB00, 0x2015EE180, 0x2015ED800, 0x2015ECE80,
-            0x2015EC500, 0x2015EBB80, 0x2015EB200, 0x2015EA880,
-            0x2015E9F00, 0x2015E9580, 0x2015E8C00, 0x2015E8280,
-            0x2015E7900, 0x2015E6F80, 0x2015E6600, 0x2015E5C80,
-            0x2015E5300, 0x2015E4980, 0x2015E4000, 0x2015E3680
+            0x201539000, 0x201539980, 0x20153A300, 0x20153AC80,
+            0x20153B600, 0x20153BF80, 0x20153C900, 0x20153D280,
+            0x20153DC00, 0x20153E580, 0x20153EF00, 0x20153F880,
+            0x201540200, 0x201540B80, 0x201541500, 0x201541E80,
+            0x201542800, 0x201543180, 0x201543B00, 0x201544480,
+            0x201544E00, 0x201545780, 0x201546100, 0x201546A80,
+            0x201547400, 0x201547D80, 0x201548700, 0x201549080,
+            0x201549A00, 0x20154A380, 0x20154AD00, 0x20154B680
         };
 
         uint64_t mbuf_first_cacheline_set_127_prev[] = {
-            0x2015F5C00, 0x2015F5280, 0x2015F4900, 0x2015F3F80,
-            0x2015F3600, 0x2015F2C80, 0x2015F2300, 0x2015F1980,
-            0x2015F1000, 0x2015F0680, 0x2015EFD00, 0x2015EF380,
-            0x2015EEA00, 0x2015EE080, 0x2015ED700, 0x2015ECD80,
-            0x2015EC400, 0x2015EBA80, 0x2015EB100, 0x2015EA780,
-            0x2015E9E00, 0x2015E9480, 0x2015E8B00, 0x2015E8180,
-            0x2015E7800, 0x2015E6E80, 0x2015E6500, 0x2015E5B80,
-            0x2015E5200, 0x2015E4880, 0x2015E3F00, 0x2015E3580
+            0x201538F00, 0x201539880, 0x20153A200, 0x20153AB80,
+            0x20153B500, 0x20153BE80, 0x20153C800, 0x20153D180,
+            0x20153DB00, 0x20153E480, 0x20153EE00, 0x20153F780,
+            0x201540100, 0x201540A80, 0x201541400, 0x201541D80,
+            0x201542700, 0x201543080, 0x201543A00, 0x201544380,
+            0x201544D00, 0x201545680, 0x201546000, 0x201546980,
+            0x201547300, 0x201547C80, 0x201548600, 0x201548F80,
+            0x201549900, 0x20154A280, 0x20154AC00, 0x20154B580
         };
 
         uint64_t mbuf_second_cacheline_set_127_prev[] = {
-            0x2015F5C40, 0x2015F52C0, 0x2015F4940, 0x2015F3FC0,
-            0x2015F3640, 0x2015F2CC0, 0x2015F2340, 0x2015F19C0,
-            0x2015F1040, 0x2015F06C0, 0x2015EFD40, 0x2015EF3C0,
-            0x2015EEA40, 0x2015EE0C0, 0x2015ED740, 0x2015ECDC0,
-            0x2015EC440, 0x2015EBAC0, 0x2015EB140, 0x2015EA7C0,
-            0x2015E9E40, 0x2015E94C0, 0x2015E8B40, 0x2015E81C0,
-            0x2015E7840, 0x2015E6EC0, 0x2015E6540, 0x2015E5BC0,
-            0x2015E5240, 0x2015E48C0, 0x2015E3F40, 0x2015E35C0
+            0x201538F40, 0x2015398C0, 0x20153A240, 0x20153ABC0,
+            0x20153B540, 0x20153BEC0, 0x20153C840, 0x20153D1C0,
+            0x20153DB40, 0x20153E4C0, 0x20153EE40, 0x20153F7C0,
+            0x201540140, 0x201540AC0, 0x201541440, 0x201541DC0,
+            0x201542740, 0x2015430C0, 0x201543A40, 0x2015443C0,
+            0x201544D40, 0x2015456C0, 0x201546040, 0x2015469C0,
+            0x201547340, 0x201547CC0, 0x201548640, 0x201548FC0,
+            0x201549940, 0x20154A2C0, 0x20154AC40, 0x20154B5C0
+        };
+        */
+
+        // sve version
+        // mbuf for TX Descriptor (64-95 current) - throught current phase's tdt 96 wr prefetch
+        // uint64_t mbuf_addr_set_96_cur[] = {
+        //     0x2012D5D80, 0x2012D6700, 0x2012D7080, 0x2012D7A00,
+        //     0x2012D8380, 0x2012D8D00, 0x2012D9680, 0x2012DA000,
+        //     0x2012DA980, 0x2012DB300, 0x2012DBC80, 0x2012DC600,
+        //     0x2012DCF80, 0x2012DD900, 0x2012DE280, 0x2012DEC00,
+        //     0x2012DF580, 0x2012DFF00, 0x2012E0880, 0x2012E1200,
+        //     0x2012E1B80, 0x2012E2500, 0x2012E2E80, 0x2012E3800,
+        //     0x2012E4180, 0x2012E4B00, 0x2012E5480, 0x2012E5E00,
+        //     0x2012E6780, 0x2012E7100, 0x2012E7A80, 0x2012E8400
+        // };
+
+        // uint64_t mbuf_first_cacheline_set_96_cur[] = {
+        //     0x2012D5C80, 0x2012D6600, 0x2012D6F80, 0x2012D7900,
+        //     0x2012D8280, 0x2012D8C00, 0x2012D9580, 0x2012D9F00,
+        //     0x2012DA880, 0x2012DB200, 0x2012DBB80, 0x2012DC500,
+        //     0x2012DCE80, 0x2012DD800, 0x2012DE180, 0x2012DEB00,
+        //     0x2012DF480, 0x2012DFE00, 0x2012E0780, 0x2012E1100,
+        //     0x2012E1A80, 0x2012E2400, 0x2012E2D80, 0x2012E3700,
+        //     0x2012E4080, 0x2012E4A00, 0x2012E5380, 0x2012E5D00,
+        //     0x2012E6680, 0x2012E7000, 0x2012E7980, 0x2012E8300
+        // };
+
+        // uint64_t mbuf_second_cacheline_set_96_cur[] = {
+        //     0x2012D5CC0, 0x2012D6640, 0x2012D6FC0, 0x2012D7940,
+        //     0x2012D82C0, 0x2012D8C40, 0x2012D95C0, 0x2012D9F40,
+        //     0x2012DA8C0, 0x2012DB240, 0x2012DBBC0, 0x2012DC540,
+        //     0x2012DCEC0, 0x2012DD840, 0x2012DE1C0, 0x2012DEB40,
+        //     0x2012DF4C0, 0x2012DFE40, 0x2012E07C0, 0x2012E1140,
+        //     0x2012E1AC0, 0x2012E2440, 0x2012E2DC0, 0x2012E3740,
+        //     0x2012E40C0, 0x2012E4A40, 0x2012E53C0, 0x2012E5D40,
+        //     0x2012E66C0, 0x2012E7040, 0x2012E79C0, 0x2012E8340
+        // };
+
+        uint64_t mbuf_addr_set_96_cur[] = {
+            0x201498B00, 0x201498180, 0x201497800, 0x201496E80,
+            0x201496500, 0x201495B80, 0x201495200, 0x201494880,
+            0x201493F00, 0x201493580, 0x201492C00, 0x201492280,
+            0x201491900, 0x201490F80, 0x201490600, 0x20148FC80,
+            0x20148F300, 0x20148E980, 0x20148E000, 0x20148D680,
+            0x20148CD00, 0x20148C380, 0x20148BA00, 0x20148B080,
+            0x20148A700, 0x201489D80, 0x201489400, 0x201488A80,
+            0x201488100, 0x201487780, 0x201486E00, 0x201486480
         };
 
+        uint64_t mbuf_first_cacheline_set_96_cur[] = {
+            0x201498A00, 0x201498080, 0x201497700, 0x201496D80,
+            0x201496400, 0x201495A80, 0x201495100, 0x201494780,
+            0x201493E00, 0x201493480, 0x201492B00, 0x201492180,
+            0x201491800, 0x201490E80, 0x201490500, 0x20148FB80,
+            0x20148F200, 0x20148E880, 0x20148DF00, 0x20148D580,
+            0x20148CC00, 0x20148C280, 0x20148B900, 0x20148AF80,
+            0x20148A600, 0x201489C80, 0x201489300, 0x201488980,
+            0x201488000, 0x201487680, 0x201486D00, 0x201486380
+        };
+
+        uint64_t mbuf_second_cacheline_set_96_cur[] = {
+            0x201498A40, 0x2014980C0, 0x201497740, 0x201496DC0,
+            0x201496440, 0x201495AC0, 0x201495140, 0x2014947C0,
+            0x201493E40, 0x2014934C0, 0x201492B40, 0x2014921C0,
+            0x201491840, 0x201490EC0, 0x201490540, 0x20148FBC0,
+            0x20148F240, 0x20148E8C0, 0x20148DF40, 0x20148D5C0,
+            0x20148CC40, 0x20148C2C0, 0x20148B940, 0x20148AFC0,
+            0x20148A640, 0x201489CC0, 0x201489340, 0x2014889C0,
+            0x201488040, 0x2014876C0, 0x201486D40, 0x2014863C0
+        };
+
+        // mbuf for RX Descriptor (32-63 new) - through next phase's tdt 64 wr prefetch
+        // uint64_t mbuf_addr_set_64_new[] = {
+        //     0x2017CD700, 0x2017CCD80, 0x2017CC400, 0x2017CBA80,
+        //     0x2017CB100, 0x2017CA780, 0x2017C9E00, 0x2017C9480,
+        //     0x2017C8B00, 0x2017C8180, 0x2017C7800, 0x2017C6E80,
+        //     0x2017C6500, 0x2017C5B80, 0x2017C5200, 0x2017C4880,
+        //     0x2017C3F00, 0x2017C3580, 0x2017C2C00, 0x2017C2280,
+        //     0x2017C1900, 0x2017C0F80, 0x2017C0600, 0x2017BFC80,
+        //     0x2017BF300, 0x2017BE980, 0x2017BE000, 0x2017BD680,
+        //     0x2017BCD00, 0x2017BC380, 0x2017BBA00, 0x2017BB080
+        // };
+
+        // uint64_t mbuf_first_cacheline_set_64_new[] = {
+        //     0x2017CD600, 0x2017CCC80, 0x2017CC300, 0x2017CB980,
+        //     0x2017CB000, 0x2017CA680, 0x2017C9D00, 0x2017C9380,
+        //     0x2017C8A00, 0x2017C8080, 0x2017C7700, 0x2017C6D80,
+        //     0x2017C6400, 0x2017C5A80, 0x2017C5100, 0x2017C4780,
+        //     0x2017C3E00, 0x2017C3480, 0x2017C2B00, 0x2017C2180,
+        //     0x2017C1800, 0x2017C0E80, 0x2017C0500, 0x2017BFB80,
+        //     0x2017BF200, 0x2017BE880, 0x2017BDF00, 0x2017BD580,
+        //     0x2017BCC00, 0x2017BC280, 0x2017BB900, 0x2017BAF80
+        // };
+
+        // uint64_t mbuf_second_cacheline_set_64_new[] = {
+        //     0x2017CD640, 0x2017CCCC0, 0x2017CC340, 0x2017CB9C0,
+        //     0x2017CB040, 0x2017CA6C0, 0x2017C9D40, 0x2017C93C0,
+        //     0x2017C8A40, 0x2017C80C0, 0x2017C7740, 0x2017C6DC0,
+        //     0x2017C6440, 0x2017C5AC0, 0x2017C5140, 0x2017C47C0,
+        //     0x2017C3E40, 0x2017C34C0, 0x2017C2B40, 0x2017C21C0,
+        //     0x2017C1840, 0x2017C0EC0, 0x2017C0540, 0x2017BFBC0,
+        //     0x2017BF240, 0x2017BE8C0, 0x2017BDF40, 0x2017BD5C0,
+        //     0x2017BCC40, 0x2017BC2C0, 0x2017BB940, 0x2017BAFC0
+        // };
+
+        uint64_t mbuf_addr_set_64_new[] = {
+            0x2013B5180, 0x2013B5B00, 0x2013B6480, 0x2013B6E00,
+            0x2013B7780, 0x2013B8100, 0x2013B8A80, 0x2013B9400,
+            0x2013B0580, 0x2013B0F00, 0x2013B1880, 0x2013B2200,
+            0x2013B2B80, 0x2013B3500, 0x2013B3E80, 0x2013B4800,
+            0x2013AB980, 0x2013AC300, 0x2013ACC80, 0x2013AD600,
+            0x2013ADF80, 0x2013AE900, 0x2013AF280, 0x2013AFC00,
+            0x2013A6D80, 0x2013A7700, 0x2013A8080, 0x2013A8A00,
+            0x2013A9380, 0x2013A9D00, 0x2013AA680, 0x2013AB000
+        };
+
+        uint64_t mbuf_first_cacheline_set_64_new[] = {
+            0x2013B5080, 0x2013B5A00, 0x2013B6380, 0x2013B6D00,
+            0x2013B7680, 0x2013B8000, 0x2013B8980, 0x2013B9300,
+            0x2013B0480, 0x2013B0E00, 0x2013B1780, 0x2013B2100,
+            0x2013B2A80, 0x2013B3400, 0x2013B3D80, 0x2013B4700,
+            0x2013AB880, 0x2013AC200, 0x2013ACB80, 0x2013AD500,
+            0x2013ADE80, 0x2013AE800, 0x2013AF180, 0x2013AFB00,
+            0x2013A6C80, 0x2013A7600, 0x2013A7F80, 0x2013A8900,
+            0x2013A9280, 0x2013A9C00, 0x2013AA580, 0x2013AAF00
+        };
+
+        uint64_t mbuf_second_cacheline_set_64_new[] = {
+            0x2013B50C0, 0x2013B5A40, 0x2013B63C0, 0x2013B6D40,
+            0x2013B76C0, 0x2013B8040, 0x2013B89C0, 0x2013B9340,
+            0x2013B04C0, 0x2013B0E40, 0x2013B17C0, 0x2013B2140,
+            0x2013B2AC0, 0x2013B3440, 0x2013B3DC0, 0x2013B4740,
+            0x2013AB8C0, 0x2013AC240, 0x2013ACBC0, 0x2013AD540,
+            0x2013ADEC0, 0x2013AE840, 0x2013AF1C0, 0x2013AFB40,
+            0x2013A6CC0, 0x2013A7640, 0x2013A7FC0, 0x2013A8940,
+            0x2013A92C0, 0x2013A9C40, 0x2013AA5C0, 0x2013AAF40
+        };
+
+        // mbuf for RX Descriptor (96-127 current) - through current phase's tdt 128 wr prefetch
+        // uint64_t mbuf_addr_set_128_cur[] = {
+        //     0x2012C2D80, 0x2012C3700, 0x2012C4080, 0x2012C4A00,
+        //     0x2012C5380, 0x2012C5D00, 0x2012C6680, 0x2012C7000,
+        //     0x2012C7980, 0x2012C8300, 0x2012C8C80, 0x2012C9600,
+        //     0x2012C9F80, 0x2012CA900, 0x2012CB280, 0x2012CBC00,
+        //     0x2012CC580, 0x2012CCF00, 0x2012CD880, 0x2012CE200,
+        //     0x2012CEB80, 0x2012CF500, 0x2012CFE80, 0x2012D0800,
+        //     0x2012D1180, 0x2012D1B00, 0x2012D2480, 0x2012D2E00,
+        //     0x2012D3780, 0x2012D4100, 0x2012D4A80, 0x2012D5400
+        // };
+
+        // uint64_t mbuf_first_cacheline_set_128_cur[] = {
+        //     0x2012C2C80, 0x2012C3600, 0x2012C3F80, 0x2012C4900,
+        //     0x2012C5280, 0x2012C5C00, 0x2012C6580, 0x2012C6F00,
+        //     0x2012C7880, 0x2012C8200, 0x2012C8B80, 0x2012C9500,
+        //     0x2012C9E80, 0x2012CA800, 0x2012CB180, 0x2012CBB00,
+        //     0x2012CC480, 0x2012CCE00, 0x2012CD780, 0x2012CE100,
+        //     0x2012CEA80, 0x2012CF400, 0x2012CFD80, 0x2012D0700,
+        //     0x2012D1080, 0x2012D1A00, 0x2012D2380, 0x2012D2D00,
+        //     0x2012D3680, 0x2012D4000, 0x2012D4980, 0x2012D5300
+        // };
+
+        // uint64_t mbuf_second_cacheline_set_128_cur[] = {
+        //     0x2012C2CC0, 0x2012C3640, 0x2012C3FC0, 0x2012C4940,
+        //     0x2012C52C0, 0x2012C5C40, 0x2012C65C0, 0x2012C6F40,
+        //     0x2012C78C0, 0x2012C8240, 0x2012C8BC0, 0x2012C9540,
+        //     0x2012C9EC0, 0x2012CA840, 0x2012CB1C0, 0x2012CBB40,
+        //     0x2012CC4C0, 0x2012CCE40, 0x2012CD7C0, 0x2012CE140,
+        //     0x2012CEAC0, 0x2012CF440, 0x2012CFDC0, 0x2012D0740,
+        //     0x2012D10C0, 0x2012D1A40, 0x2012D23C0, 0x2012D2D40,
+        //     0x2012D36C0, 0x2012D4040, 0x2012D49C0, 0x2012D5340
+        // };
+
+        uint64_t mbuf_addr_set_128_cur[] = {
+            0x201485B00, 0x201485180, 0x201484800, 0x201483E80,
+            0x201483500, 0x201482B80, 0x201482200, 0x201481880,
+            0x201480F00, 0x201480580, 0x20147FC00, 0x20147F280,
+            0x20147E900, 0x20147DF80, 0x20147D600, 0x20147CC80,
+            0x20147C300, 0x20147B980, 0x20147B000, 0x20147A680,
+            0x201479D00, 0x201479380, 0x201478A00, 0x201478080,
+            0x201477700, 0x201476D80, 0x201476400, 0x201475A80,
+            0x201475100, 0x201474780, 0x201473E00, 0x201473480
+        };
+
+        uint64_t mbuf_first_cacheline_set_128_cur[] = {
+            0x201485A00, 0x201485080, 0x201484700, 0x201483D80,
+            0x201483400, 0x201482A80, 0x201482100, 0x201481780,
+            0x201480E00, 0x201480480, 0x20147FB00, 0x20147F180,
+            0x20147E800, 0x20147DE80, 0x20147D500, 0x20147CB80,
+            0x20147C200, 0x20147B880, 0x20147AF00, 0x20147A580,
+            0x201479C00, 0x201479280, 0x201478900, 0x201477F80,
+            0x201477600, 0x201476C80, 0x201476300, 0x201475980,
+            0x201475000, 0x201474680, 0x201473D00, 0x201473380
+        };
+
+        uint64_t mbuf_second_cacheline_set_128_cur[] = {
+            0x201485A40, 0x2014850C0, 0x201484740, 0x201483DC0,
+            0x201483440, 0x201482AC0, 0x201482140, 0x2014817C0,
+            0x201480E40, 0x2014804C0, 0x20147FB40, 0x20147F1C0,
+            0x20147E840, 0x20147DEC0, 0x20147D540, 0x20147CBC0,
+            0x20147C240, 0x20147B8C0, 0x20147AF40, 0x20147A5C0,
+            0x201479C40, 0x2014792C0, 0x201478940, 0x201477FC0,
+            0x201477640, 0x201476CC0, 0x201476340, 0x2014759C0,
+            0x201475040, 0x2014746C0, 0x201473D40, 0x2014733C0
+        };
+
+        // mbuf for TX Descriptor (128-159 prev) - through previous phase's tdt 160 wr prefetch
+        // uint64_t mbuf_addr_set_160_prev[] = {
+        //     0x2017AC300, 0x2017AB980, 0x2017AB000, 0x2017AA680,
+        //     0x2017A9D00, 0x2017A9380, 0x2017A8A00, 0x2017A8080,
+        //     0x2017B0F00, 0x2017B0580, 0x2017AFC00, 0x2017AF280,
+        //     0x2017AE900, 0x2017ADF80, 0x2017AD600, 0x2017ACC80,
+        //     0x2017B5B00, 0x2017B5180, 0x2017B4800, 0x2017B3E80,
+        //     0x2017B3500, 0x2017B2B80, 0x2017B2200, 0x2017B1880,
+        //     0x2017BA700, 0x2017B9D80, 0x2017B9400, 0x2017B8A80,
+        //     0x2017B8100, 0x2017B7780, 0x2017B6E00, 0x2017B6480
+        // };
+
+        // uint64_t mbuf_first_cacheline_set_160_prev[] = {
+        //     0x2017AC200, 0x2017AB880, 0x2017AAF00, 0x2017AA580,
+        //     0x2017A9C00, 0x2017A9280, 0x2017A8900, 0x2017A7F80,
+        //     0x2017B0E00, 0x2017B0480, 0x2017AFB00, 0x2017AF180,
+        //     0x2017AE800, 0x2017ADE80, 0x2017AD500, 0x2017ACB80,
+        //     0x2017B5A00, 0x2017B5080, 0x2017B4700, 0x2017B3D80,
+        //     0x2017B3400, 0x2017B2A80, 0x2017B2100, 0x2017B1780,
+        //     0x2017BA600, 0x2017B9C80, 0x2017B9300, 0x2017B8980,
+        //     0x2017B8000, 0x2017B7680, 0x2017B6D00, 0x2017B6380
+        // };
+
+        // uint64_t mbuf_second_cacheline_set_160_prev[] = {
+        //     0x2017AC240, 0x2017AB8C0, 0x2017AAF40, 0x2017AA5C0,
+        //     0x2017A9C40, 0x2017A92C0, 0x2017A8940, 0x2017A7FC0,
+        //     0x2017B0E40, 0x2017B04C0, 0x2017AFB40, 0x2017AF1C0,
+        //     0x2017AE840, 0x2017ADEC0, 0x2017AD540, 0x2017ACBC0,
+        //     0x2017B5A40, 0x2017B50C0, 0x2017B4740, 0x2017B3DC0,
+        //     0x2017B3440, 0x2017B2AC0, 0x2017B2140, 0x2017B17C0,
+        //     0x2017BA640, 0x2017B9CC0, 0x2017B9340, 0x2017B89C0,
+        //     0x2017B8040, 0x2017B76C0, 0x2017B6D40, 0x2017B63C0
+        // };
+
+        uint64_t mbuf_addr_set_160_prev[] = {
+            0x201393D80, 0x201394700, 0x201395080, 0x201395A00,
+            0x201396380, 0x201396D00, 0x201397680, 0x201398000,
+            0x201398980, 0x201399300, 0x201399C80, 0x20139A600,
+            0x20139AF80, 0x20139B900, 0x20139C280, 0x20139CC00,
+            0x20139D580, 0x20139DF00, 0x20139E880, 0x20139F200,
+            0x20139FB80, 0x2013A0500, 0x2013A0E80, 0x2013A1800,
+            0x2013A2180, 0x2013A2B00, 0x2013A3480, 0x2013A3E00,
+            0x2013A4780, 0x2013A5100, 0x2013A5A80, 0x2013A6400
+        };
+
+        uint64_t mbuf_first_cacheline_set_160_prev[] = {
+            0x201393C80, 0x201394600, 0x201394F80, 0x201395900,
+            0x201396280, 0x201396C00, 0x201397580, 0x201397F00,
+            0x201398880, 0x201399200, 0x201399B80, 0x20139A500,
+            0x20139AE80, 0x20139B800, 0x20139C180, 0x20139CB00,
+            0x20139D480, 0x20139DE00, 0x20139E780, 0x20139F100,
+            0x20139FA80, 0x2013A0400, 0x2013A0D80, 0x2013A1700,
+            0x2013A2080, 0x2013A2A00, 0x2013A3380, 0x2013A3D00,
+            0x2013A4680, 0x2013A5000, 0x2013A5980, 0x2013A6300
+        };
+
+        uint64_t mbuf_second_cacheline_set_160_prev[] = {
+            0x201393CC0, 0x201394640, 0x201394FC0, 0x201395940,
+            0x2013962C0, 0x201396C40, 0x2013975C0, 0x201397F40,
+            0x2013988C0, 0x201399240, 0x201399BC0, 0x20139A540,
+            0x20139AEC0, 0x20139B840, 0x20139C1C0, 0x20139CB40,
+            0x20139D4C0, 0x20139DE40, 0x20139E7C0, 0x20139F140,
+            0x20139FAC0, 0x2013A0440, 0x2013A0DC0, 0x2013A1740,
+            0x2013A20C0, 0x2013A2A40, 0x2013A33C0, 0x2013A3D40,
+            0x2013A46C0, 0x2013A5040, 0x2013A59C0, 0x2013A6340
+        };
+        
 
 
         // mbuf's structure part
@@ -870,12 +1239,13 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             uint64_t pkt_addr = pkt->getAddr();
             uint64_t pkt_addr_end = pkt_addr + pkt->getSize();
             // Check if the packet address is in the mbuf's structure part
-            // if (pkt_addr >= mbuf_first_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_preprev[i] + 64) {
-            //     printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95PREPREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
-            // }
-            // if (pkt_addr >= mbuf_second_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_second_cacheline_set_95_preprev[i] + 64) {
-            //     printf("[LOG], %llu, %s, %s, %d, MBUF_$1_95PREPREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
-            // }
+            /*
+            if (pkt_addr >= mbuf_first_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_preprev[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95PREPREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt_addr >= mbuf_second_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_second_cacheline_set_95_preprev[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_95PREPREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
             if (pkt_addr >= mbuf_first_cacheline_set_95_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_prev[i] + 64) {
                 printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
@@ -894,6 +1264,94 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             if (pkt_addr >= mbuf_second_cacheline_set_127_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_127_prev[i] + 64) {
                 printf("[LOG], %llu, %s, %s, %d, MBUF_$1_127PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
+            */
+
+            // SVE
+            if (pkt_addr >= mbuf_first_cacheline_set_96_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_96_cur[i] + 64) {
+                uint64_t pktdata = 111111111;
+                if (pkt_addr - mbuf_first_cacheline_set_96_cur[i] == 0x38) {
+                    // This is the access to the mbuf's pool addr
+                    if (pkt->isRead() && satisfied) {
+                        // Get value from pkt's data
+                        int64_t* data = pkt->getPtr<int64_t>();
+                        pktdata = data[0];
+                    } else if (pkt->isWrite()) {
+                        // Get value from pkt's data
+                        int64_t* data = pkt->getPtr<int64_t>();
+                        pktdata = data[0];
+                    }
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_96CUR[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                } else {
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_96CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                }
+            }
+            if (pkt_addr >= mbuf_second_cacheline_set_96_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_96_cur[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_96CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt_addr >= mbuf_first_cacheline_set_64_new[i] && pkt_addr_end <= mbuf_first_cacheline_set_64_new[i] + 64) {
+                uint64_t pktdata = 111111111;
+                if (pkt_addr - mbuf_first_cacheline_set_64_new[i] == 0x38) {
+                    // This is the access to the mbuf's pool addr
+                    if (pkt->isRead() && satisfied) {
+                        // Get value from pkt's data
+                        int64_t* data = pkt->getPtr<int64_t>();
+                        pktdata = data[0];
+                    } else if (pkt->isWrite()) {
+                        // Get value from pkt's data
+                        int64_t* data = pkt->getPtr<int64_t>();
+                        pktdata = data[0];
+                    }
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_64NEW[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                } else {
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_64NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                }
+            }
+            if (pkt_addr >= mbuf_second_cacheline_set_64_new[i] && pkt_addr_end <= mbuf_second_cacheline_set_64_new[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_64NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt_addr >= mbuf_first_cacheline_set_128_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_128_cur[i] + 64) {
+                uint64_t pktdata = 111111111;
+                if (pkt_addr - mbuf_first_cacheline_set_128_cur[i] == 0x38) {
+                    // This is the access to the mbuf's pool addr
+                    if (pkt->isRead() && satisfied) {
+                        // Get value from pkt's data
+                        int64_t* data = pkt->getPtr<int64_t>();
+                        pktdata = data[0];
+                    } else if (pkt->isWrite()) {
+                        // Get value from pkt's data
+                        int64_t* data = pkt->getPtr<int64_t>();
+                        pktdata = data[0];
+                    }
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_128CUR[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                } else {
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_128CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                }
+            }
+            if (pkt_addr >= mbuf_second_cacheline_set_128_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_128_cur[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_128CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            if (pkt_addr >= mbuf_first_cacheline_set_160_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_160_prev[i] + 64) {
+                uint64_t pktdata = 111111111;
+                if (pkt_addr - mbuf_first_cacheline_set_160_prev[i] == 0x38) {
+                    // This is the access to the mbuf's pool addr
+                    if (pkt->isRead() && satisfied) {
+                        // Get value from pkt's data
+                        int64_t* data = pkt->getPtr<int64_t>();
+                        pktdata = data[0];
+                    } else if (pkt->isWrite()) {
+                        // Get value from pkt's data
+                        int64_t* data = pkt->getPtr<int64_t>();
+                        pktdata = data[0];
+                    }
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_160PREV[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                } else {
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_160PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                }
+            }
+            if (pkt_addr >= mbuf_second_cacheline_set_160_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_160_prev[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_160PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            
         }
 
         // mbuf's data part
@@ -901,15 +1359,30 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             // if (pkt->getAddr() == mbuf_addr_set_95_preprev[i]) {
             //     printf("[LOG], %llu, %s, %s, %d, MBUF95PREPREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             // }
-            if (pkt->getAddr() == mbuf_addr_set_95_prev[i]) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF95PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            // if (pkt->getAddr() == mbuf_addr_set_95_prev[i]) {
+            //     printf("[LOG], %llu, %s, %s, %d, MBUF95PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            // }
+            // if (pkt->getAddr() == mbuf_addr_set_95_new[i]) {
+            //     printf("[LOG], %llu, %s, %s, %d, MBUF95NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            // }
+            // if (pkt->getAddr() == mbuf_addr_set_127_prev[i]) {
+            //     printf("[LOG], %llu, %s, %s, %d, MBUF127PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            // }
+
+            // SVE
+            if (pkt->getAddr() == mbuf_addr_set_96_cur[i]) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF96CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
-            if (pkt->getAddr() == mbuf_addr_set_95_new[i]) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF95NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            if (pkt->getAddr() == mbuf_addr_set_64_new[i]) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF64NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
-            if (pkt->getAddr() == mbuf_addr_set_127_prev[i]) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF127PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            if (pkt->getAddr() == mbuf_addr_set_128_cur[i]) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF128CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
+            if (pkt->getAddr() == mbuf_addr_set_160_prev[i]) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF160PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            }
+            
         }
 
     #endif
@@ -1015,13 +1488,13 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     #endif
 
     #if LOG_LEVEL == 3
-    uint64_t comp_rx = 0x202099900;
-    uint64_t comp_rx2 = 0x202099480;
-    uint64_t comp_tx = 0x2020b2b80;
-    uint64_t comp_tx2 = 0x2020b2600;
+    uint64_t comp_rx = 0x20209b800;
+    uint64_t comp_rx2 = 0x20209b380;
+    uint64_t comp_tx = 0x2020b4b80;
+    uint64_t comp_tx2 = 0x2020b4600;
     
-    uint64_t mbuf_arr_rx = 0x202097400;
-    uint64_t mbuf_arr_rx2 = 0x202095380;
+    uint64_t mbuf_arr_rx = 0x202099300;
+    uint64_t mbuf_arr_rx2 = 0x202097280;
 
     // COMP_RX
     if (pkt->getAddr() == comp_rx) {
@@ -1116,47 +1589,198 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         printf("[LOG], %llu, %s, %s, %d, TX_JOB_SUBMIT\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
     }
 
-    uint64_t mbuf_addr1[] = { // RX_JOB_ID 12
-        0x2010e1200, 0x2010e0880, 0x2010dff00, 0x2010df580, 0x2010dec00, 0x2010de280, 0x2010dd900, 0x2010dcf80, 
-        0x2010dc600, 0x2010dbc80, 0x2010db300, 0x2010da980, 0x2010da000, 0x2010d9680, 0x2010d8d00, 0x2010d8380, 
-        0x2010d7a00, 0x2010d7080, 0x2010d6700, 0x2010d5d80, 0x2010d5400, 0x2010d4a80, 0x2010d4100, 0x2010d3780, 
-        0x2010d2e00, 0x2010d2480, 0x2010d1b00, 0x2010d1180, 0x2010d0800, 0x2010cfe80, 0x2010cf500, 0x2010ceb80
+    // RX_JOB_ID 12
+    uint64_t mbuf_addr_set_RXJ_12[] = {
+        0x201321D80, 0x201322700, 0x201323080, 0x201323A00,
+        0x201324380, 0x201324D00, 0x201325680, 0x201326000,
+        0x201326980, 0x201327300, 0x201327C80, 0x201328600,
+        0x201328F80, 0x201329900, 0x20132A280, 0x20132AC00,
+        0x20132B580, 0x20132BF00, 0x20132C880, 0x20132D200,
+        0x20132DB80, 0x20132E500, 0x20132EE80, 0x20132F800,
+        0x201330180, 0x201330B00, 0x201331480, 0x201331E00,
+        0x201332780, 0x201333100, 0x201333A80, 0x201334400
     };
 
-    uint64_t mbuf_addr2[] = { // TX_JOB_ID 9 (RX_JOB_ID 11)
-        0x2010bb200, 0x2010ba880, 0x2010b9f00, 0x2010b9580, 0x2010b8c00, 0x2010b8280, 0x2010b7900, 0x2010b6f80, 
-        0x2010b6600, 0x2010b5c80, 0x2010b5300, 0x2010b4980, 0x2010b4000, 0x2010b3680, 0x2010b2d00, 0x2010b2380, 
-        0x2010b1a00, 0x2010b1080, 0x2010b0700, 0x2010afd80, 0x2010af400, 0x2010aea80, 0x2010ae100, 0x2010ad780, 
-        0x2010ace00, 0x2010ac480, 0x2010abb00, 0x2010ab180, 0x2010aa800, 0x2010a9e80, 0x2010a9500, 0x2010a8b80
+    uint64_t mbuf_first_cacheline_set_RXJ_12[] = {
+        0x201321C80, 0x201322600, 0x201322F80, 0x201323900,
+        0x201324280, 0x201324C00, 0x201325580, 0x201325F00,
+        0x201326880, 0x201327200, 0x201327B80, 0x201328500,
+        0x201328E80, 0x201329800, 0x20132A180, 0x20132AB00,
+        0x20132B480, 0x20132BE00, 0x20132C780, 0x20132D100,
+        0x20132DA80, 0x20132E400, 0x20132ED80, 0x20132F700,
+        0x201330080, 0x201330A00, 0x201331380, 0x201331D00,
+        0x201332680, 0x201333000, 0x201333980, 0x201334300
     };
+
+    uint64_t mbuf_second_cacheline_set_RXJ_12[] = {
+        0x201321CC0, 0x201322640, 0x201322FC0, 0x201323940,
+        0x2013242C0, 0x201324C40, 0x2013255C0, 0x201325F40,
+        0x2013268C0, 0x201327240, 0x201327BC0, 0x201328540,
+        0x201328EC0, 0x201329840, 0x20132A1C0, 0x20132AB40,
+        0x20132B4C0, 0x20132BE40, 0x20132C7C0, 0x20132D140,
+        0x20132DAC0, 0x20132E440, 0x20132EDC0, 0x20132F740,
+        0x2013300C0, 0x201330A40, 0x2013313C0, 0x201331D40,
+        0x2013326C0, 0x201333040, 0x2013339C0, 0x201334340
+    };
+
+    uint64_t mbuf_addr_set_RXJ_10[] = {
+        0x20131D180, 0x20131DB00, 0x20131E480, 0x20131EE00,
+        0x20131F780, 0x201320100, 0x201320A80, 0x201321400,
+        0x201318580, 0x201318F00, 0x201319880, 0x20131A200,
+        0x20131AB80, 0x20131B500, 0x20131BE80, 0x20131C800,
+        0x201313980, 0x201314300, 0x201314C80, 0x201315600,
+        0x201315F80, 0x201316900, 0x201317280, 0x201317C00,
+        0x20130ED80, 0x20130F700, 0x201310080, 0x201310A00,
+        0x201311380, 0x201311D00, 0x201312680, 0x201313000
+    };
+
+    uint64_t mbuf_first_cacheline_set_RXJ_10[] = {
+        0x20131D080, 0x20131DA00, 0x20131E380, 0x20131ED00,
+        0x20131F680, 0x201320000, 0x201320980, 0x201321300,
+        0x201318480, 0x201318E00, 0x201319780, 0x20131A100,
+        0x20131AA80, 0x20131B400, 0x20131BD80, 0x20131C700,
+        0x201313880, 0x201314200, 0x201314B80, 0x201315500,
+        0x201315E80, 0x201316800, 0x201317180, 0x201317B00,
+        0x20130EC80, 0x20130F600, 0x20130FF80, 0x201310900,
+        0x201311280, 0x201311C00, 0x201312580, 0x201312F00
+    };
+
+    uint64_t mbuf_second_cacheline_set_RXJ_10[] = {
+        0x20131D0C0, 0x20131DA40, 0x20131E3C0, 0x20131ED40,
+        0x20131F6C0, 0x201320040, 0x2013209C0, 0x201321340,
+        0x2013184C0, 0x201318E40, 0x2013197C0, 0x20131A140,
+        0x20131AAC0, 0x20131B440, 0x20131BDC0, 0x20131C740,
+        0x2013138C0, 0x201314240, 0x201314BC0, 0x201315540,
+        0x201315EC0, 0x201316840, 0x2013171C0, 0x201317B40,
+        0x20130ECC0, 0x20130F640, 0x20130FFC0, 0x201310940,
+        0x2013112C0, 0x201311C40, 0x2013125C0, 0x201312F40
+    };
+
+    uint64_t mbuf_addr_set_RXJ_11[] = {
+        0x20130A180, 0x20130AB00, 0x20130B480, 0x20130BE00,
+        0x20130C780, 0x20130D100, 0x20130DA80, 0x20130E400,
+        0x201305580, 0x201305F00, 0x201306880, 0x201307200,
+        0x201307B80, 0x201308500, 0x201308E80, 0x201309800,
+        0x201300980, 0x201301300, 0x201301C80, 0x201302600,
+        0x201302F80, 0x201303900, 0x201304280, 0x201304C00,
+        0x2012FBD80, 0x2012FC700, 0x2012FD080, 0x2012FDA00,
+        0x2012FE380, 0x2012FED00, 0x2012FF680, 0x201300000
+    };
+
+    uint64_t mbuf_first_cacheline_set_RXJ_11[] = {
+        0x20130A080, 0x20130AA00, 0x20130B380, 0x20130BD00,
+        0x20130C680, 0x20130D000, 0x20130D980, 0x20130E300,
+        0x201305480, 0x201305E00, 0x201306780, 0x201307100,
+        0x201307A80, 0x201308400, 0x201308D80, 0x201309700,
+        0x201300880, 0x201301200, 0x201301B80, 0x201302500,
+        0x201302E80, 0x201303800, 0x201304180, 0x201304B00,
+        0x2012FBC80, 0x2012FC600, 0x2012FCF80, 0x2012FD900,
+        0x2012FE280, 0x2012FEC00, 0x2012FF580, 0x2012FFF00
+    };
+
+    uint64_t mbuf_second_cacheline_set_RXJ_11[] = {
+        0x20130A0C0, 0x20130AA40, 0x20130B3C0, 0x20130BD40,
+        0x20130C6C0, 0x20130D040, 0x20130D9C0, 0x20130E340,
+        0x2013054C0, 0x201305E40, 0x2013067C0, 0x201307140,
+        0x201307AC0, 0x201308440, 0x201308DC0, 0x201309740,
+        0x2013008C0, 0x201301240, 0x201301BC0, 0x201302540,
+        0x201302EC0, 0x201303840, 0x2013041C0, 0x201304B40,
+        0x2012FBCC0, 0x2012FC640, 0x2012FCFC0, 0x2012FD940,
+        0x2012FE2C0, 0x2012FEC40, 0x2012FF5C0, 0x2012FFF40
+    };
+
+    uint64_t mbuf_addr_set_RXJ_13[] = {
+        0x20130ED80, 0x20130F700, 0x201310080, 0x201310A00,
+        0x201311380, 0x201311D00, 0x201312680, 0x201313000,
+        0x201313980, 0x201314300, 0x201314C80, 0x201315600,
+        0x201315F80, 0x201316900, 0x201317280, 0x201317C00,
+        0x201318580, 0x201318F00, 0x201319880, 0x20131A200,
+        0x20131AB80, 0x20131B500, 0x20131BE80, 0x20131C800,
+        0x20131D180, 0x20131DB00, 0x20131E480, 0x20131EE00,
+        0x20131F780, 0x201320100, 0x201320A80, 0x201321400
+    };
+
+    uint64_t mbuf_first_cacheline_set_RXJ_13[] = {
+        0x20130EC80, 0x20130F600, 0x20130FF80, 0x201310900,
+        0x201311280, 0x201311C00, 0x201312580, 0x201312F00,
+        0x201313880, 0x201314200, 0x201314B80, 0x201315500,
+        0x201315E80, 0x201316800, 0x201317180, 0x201317B00,
+        0x201318480, 0x201318E00, 0x201319780, 0x20131A100,
+        0x20131AA80, 0x20131B400, 0x20131BD80, 0x20131C700,
+        0x20131D080, 0x20131DA00, 0x20131E380, 0x20131ED00,
+        0x20131F680, 0x201320000, 0x201320980, 0x201321300
+    };
+
+    uint64_t mbuf_second_cacheline_set_RXJ_13[] = {
+        0x20130ECC0, 0x20130F640, 0x20130FFC0, 0x201310940,
+        0x2013112C0, 0x201311C40, 0x2013125C0, 0x201312F40,
+        0x2013138C0, 0x201314240, 0x201314BC0, 0x201315540,
+        0x201315EC0, 0x201316840, 0x2013171C0, 0x201317B40,
+        0x2013184C0, 0x201318E40, 0x2013197C0, 0x20131A140,
+        0x20131AAC0, 0x20131B440, 0x20131BDC0, 0x20131C740,
+        0x20131D0C0, 0x20131DA40, 0x20131E3C0, 0x20131ED40,
+        0x20131F6C0, 0x201320040, 0x2013209C0, 0x201321340
+    };
+
+
 
     uint64_t desc_rx1[] = {
-        0x202099940, 0x202099980, 0x2020999c0, 0x202099a00, 0x202099a40, 0x202099a80, 0x202099ac0, 0x202099b00
+        0x20209B840, 0x20209B880, 0x20209B8C0, 0x20209B900, 0x20209B940, 0x20209B980, 0x20209B9C0, 0x20209BA00
     };
 
     uint64_t desc_rx2[] = {
-        0x2020994c0, 0x202099500, 0x202099540, 0x202099580, 0x2020995c0, 0x202099600, 0x202099640, 0x202099680
+        0x20209B3C0, 0x20209B400, 0x20209B440, 0x20209B480, 0x20209B4C0, 0x20209B500, 0x20209B540, 0x20209B580
     };
 
     uint64_t desc_tx1[] = {
-        0x2020b2700, 0x2020b2740, 0x2020b2780, 0x2020b27c0
+        0x2020b4700, 0x2020b4740, 0x2020b4780, 0x2020b47c0
     };
 
     uint64_t desc_tx2[] = {
-        0x2020b2180, 0x2020b21c0, 0x2020b2200, 0x2020b2240
+        0x2020b4180, 0x2020b41c0, 0x2020b4200, 0x2020b4240
     };
 
-    // MBUF_1
-    for (int i = 0; i < 32; i++) {
-        if (pkt->getAddr() == mbuf_addr1[i]) {
-            printf("[LOG], %llu, %s, %s, %d, BATCH_9_REQ[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+    for (int i = 0; i < 32; i ++) {
+        uint64_t pkt_addr = pkt->getAddr();
+        uint64_t pkt_addr_end = pkt_addr + pkt->getSize();
+        if (pkt_addr >= mbuf_first_cacheline_set_RXJ_12[i] && pkt_addr_end <= mbuf_first_cacheline_set_RXJ_12[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_RXJ12[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_RXJ_12[i] && pkt_addr_end <= mbuf_second_cacheline_set_RXJ_12[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_RXJ12[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_RXJ_10[i] && pkt_addr_end <= mbuf_first_cacheline_set_RXJ_10[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_RXJ10[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_RXJ_10[i] && pkt_addr_end <= mbuf_second_cacheline_set_RXJ_10[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_RXJ10[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_RXJ_11[i] && pkt_addr_end <= mbuf_first_cacheline_set_RXJ_11[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_RXJ11[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_RXJ_11[i] && pkt_addr_end <= mbuf_second_cacheline_set_RXJ_11[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_RXJ11[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_RXJ_13[i] && pkt_addr_end <= mbuf_first_cacheline_set_RXJ_13[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_RXJ13[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_RXJ_13[i] && pkt_addr_end <= mbuf_second_cacheline_set_RXJ_13[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_RXJ13[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
         }
     }
 
-    // MBUF_2
     for (int i = 0; i < 32; i++) {
-        if (pkt->getAddr() == mbuf_addr2[i]) {
-            printf("[LOG], %llu, %s, %s, %d, BATCH_8_REQ[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        if (pkt->getAddr() == mbuf_addr_set_RXJ_12[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_RXJ12[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+        if (pkt->getAddr() == mbuf_addr_set_RXJ_10[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_RXJ10[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+        if (pkt->getAddr() == mbuf_addr_set_RXJ_11[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_RXJ11[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+        }
+        if (pkt->getAddr() == mbuf_addr_set_RXJ_13[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_RXJ13[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
         }
     }
 
@@ -1294,272 +1918,631 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         printf("[LOG], %llu, %s, %s, %d, TX_TAIL_WR_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
     }
 
-    // vector macswap
+    uint64_t rx_sw_ring_base = 0x20209bc80;
+    uint64_t tx_sw_ring_base = 0x2020b4c80;
+    uint64_t max_desc = 1024;
+    uint64_t mbuf_ptr_size = 8;
+
+    uint64_t rx_sw_ring_end = rx_sw_ring_base + max_desc * mbuf_ptr_size;
+    uint64_t tx_sw_ring_end = tx_sw_ring_base + max_desc * mbuf_ptr_size;
+
+    // RX SW Ring
+    if (pkt->getAddr() >= rx_sw_ring_base && pkt->getAddr() < rx_sw_ring_end) {
+        int offset = (pkt->getAddr() - rx_sw_ring_base) / mbuf_ptr_size;
+        printf("[LOG], %llu, %s, %s, %d, RX_SW_RING[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+    }
+    // TX SW Ring
+    if (pkt->getAddr() >= tx_sw_ring_base && pkt->getAddr() < tx_sw_ring_end) {
+        int offset = (pkt->getAddr() - tx_sw_ring_base) / mbuf_ptr_size;
+        printf("[LOG], %llu, %s, %s, %d, TX_SW_RING[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+    }
+
+    // normal version
     // uint64_t rx_desc_base = 8624155648;
     // uint64_t tx_desc_base = 8624238080;
 
-    // scalar macswap
-    uint64_t rx_desc_base = 8624127488;
+    // sve version
+    uint64_t rx_desc_base = 8624135424;
     uint64_t tx_desc_base = 8624237824;
+
+    // RX Descriptor (0-31)
+    uint64_t rx_desc_0 = rx_desc_base + 16 * 0;
+    if (pkt->getAddr() >= rx_desc_0 && pkt->getAddr() < rx_desc_0 + 512) {
+        int offset = (pkt->getAddr() - rx_desc_0) / 16;
+        int num_desc = (pkt->getSize() / 16);
+        int last_offset = offset + num_desc - 1;
+        if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+            // Get the last descriptor's DD bit
+            uint8_t *data = pkt->getPtr<uint8_t>();
+            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
+            bool dd = false;
+            if (pkt->isRead()) {
+                dd = desc->status_error & E1000_RXD_STAT_DD;
+            }
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_31[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+        } else {
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_31[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        }
+    }
+
+    // RX Descriptor (32-63)
+    uint64_t rx_desc_32 = rx_desc_base + 16 * 32;
+    if (pkt->getAddr() >= rx_desc_32 && pkt->getAddr() < rx_desc_32 + 512) {
+        int offset = (pkt->getAddr() - rx_desc_32) / 16;
+        int num_desc = (pkt->getSize() / 16);  
+        int last_offset = offset + num_desc - 1;
+        if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+            // Get the last descriptor's DD bit
+            uint8_t *data = pkt->getPtr<uint8_t>();
+            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
+            bool dd = false;
+            if (pkt->isRead()) {
+                dd = desc->status_error & E1000_RXD_STAT_DD;
+            }
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_32_63[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+        } else {
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_32_63[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        }
+    }
 
     // RX Descriptor (63-95)
     uint64_t rx_desc_63 = rx_desc_base + 16 * 63;
     if (pkt->getAddr() >= rx_desc_63 && pkt->getAddr() < rx_desc_63 + 512) {
         int offset = (pkt->getAddr() - rx_desc_63) / 16;
-        printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        int num_desc = (pkt->getSize() / 16);
+        int last_offset = offset + num_desc - 1;
+        if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+            // Get the last descriptor's DD bit
+            uint8_t *data = pkt->getPtr<uint8_t>();
+            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
+            bool dd = false;
+            if (pkt->isRead()) {
+                dd = desc->status_error & E1000_RXD_STAT_DD;
+            }
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+        } else {
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        }
     }
 
-    // RX Descriptor (95-127)
-    uint64_t rx_desc_95 = rx_desc_base + 16 * 95;
-    if (pkt->getAddr() >= rx_desc_95 && pkt->getAddr() < rx_desc_95 + 512) {
-        int offset = (pkt->getAddr() - rx_desc_95) / 16;
-        printf("[LOG], %llu, %s, %s, %d, RX_DESC_95_127[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+    // RX Descriptor (96-127)
+    uint64_t rx_desc_96 = rx_desc_base + 16 * 96;
+    if (pkt->getAddr() >= rx_desc_96 && pkt->getAddr() < rx_desc_96 + 512) {
+        int offset = (pkt->getAddr() - rx_desc_96) / 16;
+        int num_desc = (pkt->getSize() / 16);
+        int last_offset = offset + num_desc - 1;
+        if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+            // Get the last descriptor's DD bit
+            uint8_t *data = pkt->getPtr<uint8_t>();
+            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
+            bool dd = false;
+            if (pkt->isRead()) {
+                dd = desc->status_error & E1000_RXD_STAT_DD;
+            }
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_96_127[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+        } else {
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_96_127[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        }
+    }
+
+    // RX Descriptor (127-159)
+    uint64_t rx_desc_127 = rx_desc_base + 16 * 127;
+    if (pkt->getAddr() >= rx_desc_127 && pkt->getAddr() < rx_desc_127 + 512) {
+        int offset = (pkt->getAddr() - rx_desc_127) / 16;
+        int num_desc = (pkt->getSize() / 16);
+        int last_offset = offset + num_desc - 1;
+        if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+            // Get the last descriptor's DD bit
+            uint8_t *data = pkt->getPtr<uint8_t>();
+            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
+            bool dd = false;
+            if (pkt->isRead()) {
+                dd = desc->status_error & E1000_RXD_STAT_DD;
+            }
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_127_159[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+        } else {
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_127_159[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        }
+    }
+
+    // TX Descriptor (64-95)
+    uint64_t tx_desc_64 = tx_desc_base + 16 * 64;
+    if (pkt->getAddr() >= tx_desc_64 && pkt->getAddr() < tx_desc_64 + 512) {
+        int offset = (pkt->getAddr() - tx_desc_64) / 16;
+        int num_desc = (pkt->getSize() / 16);
+        int last_offset = offset + num_desc - 1;
+        if ((last_offset == 31) && pkt->canGetDataPtr()) {
+            // Get the last descriptor's DD bit
+            uint8_t *data = pkt->getPtr<uint8_t>();
+            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
+            bool dd = false;
+            if (pkt->isRead()) {
+                dd = desc->wb.status & E1000_TXD_STAT_DD;
+            }
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_64_95[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+        } else {
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_64_95[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        }
     }
     
     // TX Descriptor (96-128)
     uint64_t tx_desc_96 = tx_desc_base + 16 * 96;
     if (pkt->getAddr() >= tx_desc_96 && pkt->getAddr() < tx_desc_96 + 512) {
         int offset = (pkt->getAddr() - tx_desc_96) / 16;
-        printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        int num_desc = (pkt->getSize() / 16);
+        int last_offset = offset + num_desc - 1;
+        if ((last_offset == 31) && pkt->canGetDataPtr()) {
+            // Get the last descriptor's DD bit
+            uint8_t *data = pkt->getPtr<uint8_t>();
+            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
+            bool dd = false;
+            if (pkt->isRead()) {
+                dd = desc->wb.status & E1000_TXD_STAT_DD;
+            }
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+        } else {
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        }
     }    
 
+    // TX Descriptor (128-160)
+    uint64_t tx_desc_128 = tx_desc_base + 16 * 128;
+    if (pkt->getAddr() >= tx_desc_128 && pkt->getAddr() < tx_desc_128 + 512) {
+        int offset = (pkt->getAddr() - tx_desc_128) / 16;
+        int num_desc = (pkt->getSize() / 16);
+        int last_offset = offset + num_desc - 1;
+        if ((last_offset == 31) && pkt->canGetDataPtr()) {
+            // Get the last descriptor's DD bit
+            uint8_t *data = pkt->getPtr<uint8_t>();
+            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
+            bool dd = false;
+            if (pkt->isRead()) {
+                dd = desc->wb.status & E1000_TXD_STAT_DD;
+            }
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_160[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+        } else {
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_160[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        }
+    }
+
+    // TX Descriptor (160-192)
+    uint64_t tx_desc_160 = tx_desc_base + 16 * 160;
+    if (pkt->getAddr() >= tx_desc_160 && pkt->getAddr() < tx_desc_160 + 512) {
+        int offset = (pkt->getAddr() - tx_desc_160) / 16;
+        int num_desc = (pkt->getSize() / 16);
+        int last_offset = offset + num_desc - 1;
+        if ((last_offset == 31) && pkt->canGetDataPtr()) {
+            // Get the last descriptor's DD bit
+            uint8_t *data = pkt->getPtr<uint8_t>();
+            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
+            bool dd = false;
+            if (pkt->isRead()) {
+                dd = desc->wb.status & E1000_TXD_STAT_DD;
+            }
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_160_192[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+        } else {
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_160_192[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        }
+    }
+
+    /*
     // mbuf for RX Descriptor (63-95 pre-prev) - for tx mbuf free
-    // uint64_t mbuf_addr_set_95_preprev[] = {
-    //     0x201650D80, 0x201651700, 0x201652080, 0x201652A00,
-    //     0x201653380, 0x201653D00, 0x201654680, 0x201655000,
-    //     0x201655980, 0x201656300, 0x201656C80, 0x201657600,
-    //     0x201657F80, 0x201658900, 0x201659280, 0x201659C00,
-    //     0x20165A580, 0x20165AF00, 0x20165B880, 0x20165C200,
-    //     0x20165CB80, 0x20165D500, 0x20165DE80, 0x20165E800,
-    //     0x20165F180, 0x20165FB00, 0x201660480, 0x201660E00,
-    //     0x201661780, 0x201662100, 0x201662A80, 0x201663400
-    // };
+    uint64_t mbuf_addr_set_95_preprev[] = {
+        0x201650D80, 0x201651700, 0x201652080, 0x201652A00,
+        0x201653380, 0x201653D00, 0x201654680, 0x201655000,
+        0x201655980, 0x201656300, 0x201656C80, 0x201657600,
+        0x201657F80, 0x201658900, 0x201659280, 0x201659C00,
+        0x20165A580, 0x20165AF00, 0x20165B880, 0x20165C200,
+        0x20165CB80, 0x20165D500, 0x20165DE80, 0x20165E800,
+        0x20165F180, 0x20165FB00, 0x201660480, 0x201660E00,
+        0x201661780, 0x201662100, 0x201662A80, 0x201663400
+    };
 
-    // uint64_t mbuf_first_cacheline_set_95_preprev[] = {
-    //     0x201650C80, 0x201651600, 0x201651F80, 0x201652900,
-    //     0x201653280, 0x201653C00, 0x201654580, 0x201654F00,
-    //     0x201655880, 0x201656200, 0x201656B80, 0x201657500,
-    //     0x201657E80, 0x201658800, 0x201659180, 0x201659B00,
-    //     0x20165A480, 0x20165AE00, 0x20165B780, 0x20165C100,
-    //     0x20165CA80, 0x20165D400, 0x20165DD80, 0x20165E700,
-    //     0x20165F080, 0x20165FA00, 0x201660380, 0x201660D00,
-    //     0x201661680, 0x201662000, 0x201662980, 0x201663300
-    // };
+    uint64_t mbuf_first_cacheline_set_95_preprev[] = {
+        0x201650C80, 0x201651600, 0x201651F80, 0x201652900,
+        0x201653280, 0x201653C00, 0x201654580, 0x201654F00,
+        0x201655880, 0x201656200, 0x201656B80, 0x201657500,
+        0x201657E80, 0x201658800, 0x201659180, 0x201659B00,
+        0x20165A480, 0x20165AE00, 0x20165B780, 0x20165C100,
+        0x20165CA80, 0x20165D400, 0x20165DD80, 0x20165E700,
+        0x20165F080, 0x20165FA00, 0x201660380, 0x201660D00,
+        0x201661680, 0x201662000, 0x201662980, 0x201663300
+    };
 
-    // uint64_t mbuf_second_cacheline_set_95_preprev[] = {
-    //     0x201650CC0, 0x201651640, 0x201651FC0, 0x201652940,
-    //     0x2016532C0, 0x201653C40, 0x2016545C0, 0x201654F40,
-    //     0x2016558C0, 0x201656240, 0x201656BC0, 0x201657540,
-    //     0x201657EC0, 0x201658840, 0x2016591C0, 0x201659B40,
-    //     0x20165A4C0, 0x20165AE40, 0x20165B7C0, 0x20165C140,
-    //     0x20165CAC0, 0x20165D440, 0x20165DDC0, 0x20165E740,
-    //     0x20165F0C0, 0x20165FA40, 0x2016603C0, 0x201660D40,
-    //     0x2016616C0, 0x201662040, 0x2016629C0, 0x201663340
-    // };
+    uint64_t mbuf_second_cacheline_set_95_preprev[] = {
+        0x201650CC0, 0x201651640, 0x201651FC0, 0x201652940,
+        0x2016532C0, 0x201653C40, 0x2016545C0, 0x201654F40,
+        0x2016558C0, 0x201656240, 0x201656BC0, 0x201657540,
+        0x201657EC0, 0x201658840, 0x2016591C0, 0x201659B40,
+        0x20165A4C0, 0x20165AE40, 0x20165B7C0, 0x20165C140,
+        0x20165CAC0, 0x20165D440, 0x20165DDC0, 0x20165E740,
+        0x20165F0C0, 0x20165FA40, 0x2016603C0, 0x201660D40,
+        0x2016616C0, 0x201662040, 0x2016629C0, 0x201663340
+    };
 
-    // // mbuf for RX Descriptor (63-95 prev)
-    // uint64_t mbuf_addr_set_95_prev[] = {
-    //     0x20154c000, 0x20154c980, 0x20154d300, 0x20154dc80, 
-    //     0x20154e600, 0x20154ef80, 0x20154f900, 0x201550280, 
-    //     0x201550c00, 0x201551580, 0x201551f00, 0x201552880, 
-    //     0x201553200, 0x201553b80, 0x201554500, 0x201554e80, 
-    //     0x201555800, 0x201556180, 0x201556b00, 0x201557480,
-    //     0x201557e00, 0x201558780, 0x201559100, 0x201559a80, 
-    //     0x20155a400, 0x20155ad80, 0x20155b700, 0x20155c080, 
-    //     0x20155ca00, 0x20155d380, 0x20155dd00, 0x20155e680
-    // };
-
-    // // mbuf's first cacheline for RX Descriptor (63-95 prev)
-    // uint64_t mbuf_first_cacheline_set_95_prev[] = {
-    //     0x20154bf00, 0x20154c880, 0x20154d200, 0x20154db80, 
-    //     0x20154e500, 0x20154ee80, 0x20154f800, 0x201550180, 
-    //     0x201550b00, 0x201551480, 0x201551e00, 0x201552780, 
-    //     0x201553100, 0x201553a80, 0x201554400, 0x201554d80, 
-    //     0x201555700, 0x201556080, 0x201556a00, 0x201557380, 
-    //     0x201557d00, 0x201558680, 0x201559000, 0x201559980, 
-    //     0x20155a300, 0x20155ac80, 0x20155b600, 0x20155bf80, 
-    //     0x20155c900, 0x20155d280, 0x20155dc00, 0x20155e580
-    // };
-
-    // // mbuf's second cacheline for RX Descriptor (63-95 prev)
-    // uint64_t mbuf_second_cacheline_set_95_prev[] = {
-    //     0x20154bf40, 0x20154c8c0, 0x20154d240, 0x20154dbc0,
-    //     0x20154e540, 0x20154eec0, 0x20154f840, 0x2015501c0,
-    //     0x201550b40, 0x2015514c0, 0x201551e40, 0x2015527c0,
-    //     0x201553140, 0x201553ac0, 0x201554440, 0x201554dc0,
-    //     0x201555740, 0x2015560c0, 0x201556a40, 0x2015573c0,
-    //     0x201557d40, 0x2015586c0, 0x201559040, 0x2015599c0,
-    //     0x20155a340, 0x20155acc0, 0x20155b640, 0x20155bfc0,
-    //     0x20155c940, 0x20155d2c0, 0x20155dc40, 0x20155e5c0
-    // };
-
-    // // mbuf for RX Descriptor (63-95 new)
-    // uint64_t mbuf_addr_set_95_new[] = {
-    //     0x201676d80, 0x201676400, 0x201675a80, 0x201675100,
-    //     0x201674780, 0x201673e00, 0x201673480, 0x201672b00,
-    //     0x201672180, 0x201671800, 0x201670e80, 0x201670500,
-    //     0x20166fb80, 0x20166f200, 0x20166e880, 0x20166df00,
-    //     0x20166d580, 0x20166cc00, 0x20166c280, 0x20166b900,
-    //     0x20166af80, 0x20166a600, 0x201669c80, 0x201669300,
-    //     0x201668980, 0x201668000, 0x201667680, 0x201666d00,
-    //     0x201666380, 0x201665a00, 0x201665080, 0x201664700
-    // };
-
-    // // mbuf's first cacheline for RX Descriptor (63-95 new) - minus 256 from the mbuf_addr_set_95_new
-    // uint64_t mbuf_first_cacheline_set_95_new[] = {
-    //     0x201676c80, 0x201676300, 0x201675980, 0x201675000,
-    //     0x201674680, 0x201673d00, 0x201673380, 0x201672a00,
-    //     0x201672080, 0x201671700, 0x201670d80, 0x201670400,
-    //     0x20166fa80, 0x20166f100, 0x20166e780, 0x20166de00,
-    //     0x20166d480, 0x20166cb00, 0x20166c180, 0x20166b800,
-    //     0x20166ae80, 0x20166a500, 0x201669b80, 0x201669200,
-    //     0x201668880, 0x201667f00, 0x201667580, 0x201666c00,
-    //     0x201666280, 0x201665900, 0x201664f80, 0x201664600
-    // };
-
-    // // mbuf's second cacheline for RX Descriptor (63-95 new) + 64 from the mbuf_first_cacheline_set_95_new
-    // uint64_t mbuf_second_cacheline_set_95_new[] = {
-    //     0x201676cc0, 0x201676340, 0x2016759c0, 0x201675040,
-    //     0x2016746c0, 0x201673d40, 0x2016733c0, 0x201672a40,
-    //     0x2016720c0, 0x201671740, 0x201670dc0, 0x201670440,
-    //     0x20166fac0, 0x20166f140, 0x20166e7c0, 0x20166de40,
-    //     0x20166d4c0, 0x20166cb40, 0x20166c1c0, 0x20166b840,
-    //     0x20166aec0, 0x20166a540, 0x201669bc0, 0x201669240,
-    //     0x2016688c0, 0x201667f40, 0x2016675c0, 0x201666c40,
-    //     0x2016662c0, 0x201665940, 0x201664fc0, 0x201664640
-    // };
-
-    // // mbuf for RX Descriptor (95-127 prev) -> TX Descriptor (128-160)
-    // uint64_t mbuf_addr_set_127_prev[] = {
-    //     0x201539000, 0x201539980, 0x20153A300, 0x20153AC80,
-    //     0x20153B600, 0x20153BF80, 0x20153C900, 0x20153D280,
-    //     0x20153DC00, 0x20153E580, 0x20153EF00, 0x20153F880,
-    //     0x201540200, 0x201540B80, 0x201541500, 0x201541E80,
-    //     0x201542800, 0x201543180, 0x201543B00, 0x201544480,
-    //     0x201544E00, 0x201545780, 0x201546100, 0x201546A80,
-    //     0x201547400, 0x201547D80, 0x201548700, 0x201549080,
-    //     0x201549A00, 0x20154A380, 0x20154AD00, 0x20154B680
-    // };
-
-    // uint64_t mbuf_first_cacheline_set_127_prev[] = {
-    //     0x201538F00, 0x201539880, 0x20153A200, 0x20153AB80,
-    //     0x20153B500, 0x20153BE80, 0x20153C800, 0x20153D180,
-    //     0x20153DB00, 0x20153E480, 0x20153EE00, 0x20153F780,
-    //     0x201540100, 0x201540A80, 0x201541400, 0x201541D80,
-    //     0x201542700, 0x201543080, 0x201543A00, 0x201544380,
-    //     0x201544D00, 0x201545680, 0x201546000, 0x201546980,
-    //     0x201547300, 0x201547C80, 0x201548600, 0x201548F80,
-    //     0x201549900, 0x20154A280, 0x20154AC00, 0x20154B580
-    // };
-
-    // uint64_t mbuf_second_cacheline_set_127_prev[] = {
-    //     0x201538F40, 0x2015398C0, 0x20153A240, 0x20153ABC0,
-    //     0x20153B540, 0x20153BEC0, 0x20153C840, 0x20153D1C0,
-    //     0x20153DB40, 0x20153E4C0, 0x20153EE40, 0x20153F7C0,
-    //     0x201540140, 0x201540AC0, 0x201541440, 0x201541DC0,
-    //     0x201542740, 0x2015430C0, 0x201543A40, 0x2015443C0,
-    //     0x201544D40, 0x2015456C0, 0x201546040, 0x2015469C0,
-    //     0x201547340, 0x201547CC0, 0x201548640, 0x201548FC0,
-    //     0x201549940, 0x20154A2C0, 0x20154AC40, 0x20154B5C0
-    // };
-
+    // mbuf for RX Descriptor (63-95 prev)
     uint64_t mbuf_addr_set_95_prev[] = {
-        0x2014DEC00, 0x2014DE280, 0x2014DD900, 0x2014DCF80,
-        0x2014DC600, 0x2014DBC80, 0x2014DB300, 0x2014DA980,
-        0x2014DA000, 0x2014D9680, 0x2014D8D00, 0x2014D8380,
-        0x2014D7A00, 0x2014D7080, 0x2014D6700, 0x2014D5D80,
-        0x2014D5400, 0x2014D4A80, 0x2014D4100, 0x2014D3780,
-        0x2014D2E00, 0x2014D2480, 0x2014D1B00, 0x2014D1180,
-        0x2014D0800, 0x2014CFE80, 0x2014CF500, 0x2014CEB80,
-        0x2014CE200, 0x2015F7980, 0x2015F7000, 0x2015F6680
+        0x20154c000, 0x20154c980, 0x20154d300, 0x20154dc80, 
+        0x20154e600, 0x20154ef80, 0x20154f900, 0x201550280, 
+        0x201550c00, 0x201551580, 0x201551f00, 0x201552880, 
+        0x201553200, 0x201553b80, 0x201554500, 0x201554e80, 
+        0x201555800, 0x201556180, 0x201556b00, 0x201557480,
+        0x201557e00, 0x201558780, 0x201559100, 0x201559a80, 
+        0x20155a400, 0x20155ad80, 0x20155b700, 0x20155c080, 
+        0x20155ca00, 0x20155d380, 0x20155dd00, 0x20155e680
     };
 
+    // mbuf's first cacheline for RX Descriptor (63-95 prev)
     uint64_t mbuf_first_cacheline_set_95_prev[] = {
-        0x2014DEB00, 0x2014DE180, 0x2014DD800, 0x2014DCE80,
-        0x2014DC500, 0x2014DBB80, 0x2014DB200, 0x2014DA880,
-        0x2014D9F00, 0x2014D9580, 0x2014D8C00, 0x2014D8280,
-        0x2014D7900, 0x2014D6F80, 0x2014D6600, 0x2014D5C80,
-        0x2014D5300, 0x2014D4980, 0x2014D4000, 0x2014D3680,
-        0x2014D2D00, 0x2014D2380, 0x2014D1A00, 0x2014D1080,
-        0x2014D0700, 0x2014CFD80, 0x2014CF400, 0x2014CEA80,
-        0x2014CE100, 0x2015F7880, 0x2015F6F00, 0x2015F6580
+        0x20154bf00, 0x20154c880, 0x20154d200, 0x20154db80, 
+        0x20154e500, 0x20154ee80, 0x20154f800, 0x201550180, 
+        0x201550b00, 0x201551480, 0x201551e00, 0x201552780, 
+        0x201553100, 0x201553a80, 0x201554400, 0x201554d80, 
+        0x201555700, 0x201556080, 0x201556a00, 0x201557380, 
+        0x201557d00, 0x201558680, 0x201559000, 0x201559980, 
+        0x20155a300, 0x20155ac80, 0x20155b600, 0x20155bf80, 
+        0x20155c900, 0x20155d280, 0x20155dc00, 0x20155e580
     };
 
+    // mbuf's second cacheline for RX Descriptor (63-95 prev)
     uint64_t mbuf_second_cacheline_set_95_prev[] = {
-        0x2014DEB40, 0x2014DE1C0, 0x2014DD840, 0x2014DCEC0,
-        0x2014DC540, 0x2014DBBC0, 0x2014DB240, 0x2014DA8C0,
-        0x2014D9F40, 0x2014D95C0, 0x2014D8C40, 0x2014D82C0,
-        0x2014D7940, 0x2014D6FC0, 0x2014D6640, 0x2014D5CC0,
-        0x2014D5340, 0x2014D49C0, 0x2014D4040, 0x2014D36C0,
-        0x2014D2D40, 0x2014D23C0, 0x2014D1A40, 0x2014D10C0,
-        0x2014D0740, 0x2014CFDC0, 0x2014CF440, 0x2014CEAC0,
-        0x2014CE140, 0x2015F78C0, 0x2015F6F40, 0x2015F65C0
+        0x20154bf40, 0x20154c8c0, 0x20154d240, 0x20154dbc0,
+        0x20154e540, 0x20154eec0, 0x20154f840, 0x2015501c0,
+        0x201550b40, 0x2015514c0, 0x201551e40, 0x2015527c0,
+        0x201553140, 0x201553ac0, 0x201554440, 0x201554dc0,
+        0x201555740, 0x2015560c0, 0x201556a40, 0x2015573c0,
+        0x201557d40, 0x2015586c0, 0x201559040, 0x2015599c0,
+        0x20155a340, 0x20155acc0, 0x20155b640, 0x20155bfc0,
+        0x20155c940, 0x20155d2c0, 0x20155dc40, 0x20155e5c0
     };
 
+    // mbuf for RX Descriptor (63-95 new)
     uint64_t mbuf_addr_set_95_new[] = {
-        0x2013D4900, 0x2013D3F80, 0x2013D3600, 0x2013D2C80,
-        0x2013D2300, 0x2013D1980, 0x2013D1000, 0x2013D0680,
-        0x2013CFD00, 0x2013CF380, 0x2013CEA00, 0x2013CE080,
-        0x2013CD700, 0x2013CCD80, 0x2013CC400, 0x2013CBA80,
-        0x2013CB100, 0x2013CA780, 0x2013C9E00, 0x2013C9480,
-        0x2013C8B00, 0x2013C8180, 0x2013C7800, 0x2013C6E80,
-        0x2013C6500, 0x2013C5B80, 0x2013C5200, 0x2013C4880,
-        0x2013C3F00, 0x2013C3580, 0x2013C2C00, 0x2013C2280
+        0x201676d80, 0x201676400, 0x201675a80, 0x201675100,
+        0x201674780, 0x201673e00, 0x201673480, 0x201672b00,
+        0x201672180, 0x201671800, 0x201670e80, 0x201670500,
+        0x20166fb80, 0x20166f200, 0x20166e880, 0x20166df00,
+        0x20166d580, 0x20166cc00, 0x20166c280, 0x20166b900,
+        0x20166af80, 0x20166a600, 0x201669c80, 0x201669300,
+        0x201668980, 0x201668000, 0x201667680, 0x201666d00,
+        0x201666380, 0x201665a00, 0x201665080, 0x201664700
     };
 
+    // mbuf's first cacheline for RX Descriptor (63-95 new) - minus 256 from the mbuf_addr_set_95_new
     uint64_t mbuf_first_cacheline_set_95_new[] = {
-        0x2013D4800, 0x2013D3E80, 0x2013D3500, 0x2013D2B80,
-        0x2013D2200, 0x2013D1880, 0x2013D0F00, 0x2013D0580,
-        0x2013CFC00, 0x2013CF280, 0x2013CE900, 0x2013CDF80,
-        0x2013CD600, 0x2013CCC80, 0x2013CC300, 0x2013CB980,
-        0x2013CB000, 0x2013CA680, 0x2013C9D00, 0x2013C9380,
-        0x2013C8A00, 0x2013C8080, 0x2013C7700, 0x2013C6D80,
-        0x2013C6400, 0x2013C5A80, 0x2013C5100, 0x2013C4780,
-        0x2013C3E00, 0x2013C3480, 0x2013C2B00, 0x2013C2180
+        0x201676c80, 0x201676300, 0x201675980, 0x201675000,
+        0x201674680, 0x201673d00, 0x201673380, 0x201672a00,
+        0x201672080, 0x201671700, 0x201670d80, 0x201670400,
+        0x20166fa80, 0x20166f100, 0x20166e780, 0x20166de00,
+        0x20166d480, 0x20166cb00, 0x20166c180, 0x20166b800,
+        0x20166ae80, 0x20166a500, 0x201669b80, 0x201669200,
+        0x201668880, 0x201667f00, 0x201667580, 0x201666c00,
+        0x201666280, 0x201665900, 0x201664f80, 0x201664600
     };
 
+    // mbuf's second cacheline for RX Descriptor (63-95 new) + 64 from the mbuf_first_cacheline_set_95_new
     uint64_t mbuf_second_cacheline_set_95_new[] = {
-        0x2013D4840, 0x2013D3EC0, 0x2013D3540, 0x2013D2BC0,
-        0x2013D2240, 0x2013D18C0, 0x2013D0F40, 0x2013D05C0,
-        0x2013CFC40, 0x2013CF2C0, 0x2013CE940, 0x2013CDFC0,
-        0x2013CD640, 0x2013CCCC0, 0x2013CC340, 0x2013CB9C0,
-        0x2013CB040, 0x2013CA6C0, 0x2013C9D40, 0x2013C93C0,
-        0x2013C8A40, 0x2013C80C0, 0x2013C7740, 0x2013C6DC0,
-        0x2013C6440, 0x2013C5AC0, 0x2013C5140, 0x2013C47C0,
-        0x2013C3E40, 0x2013C34C0, 0x2013C2B40, 0x2013C21C0
+        0x201676cc0, 0x201676340, 0x2016759c0, 0x201675040,
+        0x2016746c0, 0x201673d40, 0x2016733c0, 0x201672a40,
+        0x2016720c0, 0x201671740, 0x201670dc0, 0x201670440,
+        0x20166fac0, 0x20166f140, 0x20166e7c0, 0x20166de40,
+        0x20166d4c0, 0x20166cb40, 0x20166c1c0, 0x20166b840,
+        0x20166aec0, 0x20166a540, 0x201669bc0, 0x201669240,
+        0x2016688c0, 0x201667f40, 0x2016675c0, 0x201666c40,
+        0x2016662c0, 0x201665940, 0x201664fc0, 0x201664640
     };
 
+    // mbuf for RX Descriptor (95-127 prev) -> TX Descriptor (128-160)
     uint64_t mbuf_addr_set_127_prev[] = {
-        0x2015F5D00, 0x2015F5380, 0x2015F4A00, 0x2015F4080,
-        0x2015F3700, 0x2015F2D80, 0x2015F2400, 0x2015F1A80,
-        0x2015F1100, 0x2015F0780, 0x2015EFE00, 0x2015EF480,
-        0x2015EEB00, 0x2015EE180, 0x2015ED800, 0x2015ECE80,
-        0x2015EC500, 0x2015EBB80, 0x2015EB200, 0x2015EA880,
-        0x2015E9F00, 0x2015E9580, 0x2015E8C00, 0x2015E8280,
-        0x2015E7900, 0x2015E6F80, 0x2015E6600, 0x2015E5C80,
-        0x2015E5300, 0x2015E4980, 0x2015E4000, 0x2015E3680
+        0x201539000, 0x201539980, 0x20153A300, 0x20153AC80,
+        0x20153B600, 0x20153BF80, 0x20153C900, 0x20153D280,
+        0x20153DC00, 0x20153E580, 0x20153EF00, 0x20153F880,
+        0x201540200, 0x201540B80, 0x201541500, 0x201541E80,
+        0x201542800, 0x201543180, 0x201543B00, 0x201544480,
+        0x201544E00, 0x201545780, 0x201546100, 0x201546A80,
+        0x201547400, 0x201547D80, 0x201548700, 0x201549080,
+        0x201549A00, 0x20154A380, 0x20154AD00, 0x20154B680
     };
 
     uint64_t mbuf_first_cacheline_set_127_prev[] = {
-        0x2015F5C00, 0x2015F5280, 0x2015F4900, 0x2015F3F80,
-        0x2015F3600, 0x2015F2C80, 0x2015F2300, 0x2015F1980,
-        0x2015F1000, 0x2015F0680, 0x2015EFD00, 0x2015EF380,
-        0x2015EEA00, 0x2015EE080, 0x2015ED700, 0x2015ECD80,
-        0x2015EC400, 0x2015EBA80, 0x2015EB100, 0x2015EA780,
-        0x2015E9E00, 0x2015E9480, 0x2015E8B00, 0x2015E8180,
-        0x2015E7800, 0x2015E6E80, 0x2015E6500, 0x2015E5B80,
-        0x2015E5200, 0x2015E4880, 0x2015E3F00, 0x2015E3580
+        0x201538F00, 0x201539880, 0x20153A200, 0x20153AB80,
+        0x20153B500, 0x20153BE80, 0x20153C800, 0x20153D180,
+        0x20153DB00, 0x20153E480, 0x20153EE00, 0x20153F780,
+        0x201540100, 0x201540A80, 0x201541400, 0x201541D80,
+        0x201542700, 0x201543080, 0x201543A00, 0x201544380,
+        0x201544D00, 0x201545680, 0x201546000, 0x201546980,
+        0x201547300, 0x201547C80, 0x201548600, 0x201548F80,
+        0x201549900, 0x20154A280, 0x20154AC00, 0x20154B580
     };
 
     uint64_t mbuf_second_cacheline_set_127_prev[] = {
-        0x2015F5C40, 0x2015F52C0, 0x2015F4940, 0x2015F3FC0,
-        0x2015F3640, 0x2015F2CC0, 0x2015F2340, 0x2015F19C0,
-        0x2015F1040, 0x2015F06C0, 0x2015EFD40, 0x2015EF3C0,
-        0x2015EEA40, 0x2015EE0C0, 0x2015ED740, 0x2015ECDC0,
-        0x2015EC440, 0x2015EBAC0, 0x2015EB140, 0x2015EA7C0,
-        0x2015E9E40, 0x2015E94C0, 0x2015E8B40, 0x2015E81C0,
-        0x2015E7840, 0x2015E6EC0, 0x2015E6540, 0x2015E5BC0,
-        0x2015E5240, 0x2015E48C0, 0x2015E3F40, 0x2015E35C0
+        0x201538F40, 0x2015398C0, 0x20153A240, 0x20153ABC0,
+        0x20153B540, 0x20153BEC0, 0x20153C840, 0x20153D1C0,
+        0x20153DB40, 0x20153E4C0, 0x20153EE40, 0x20153F7C0,
+        0x201540140, 0x201540AC0, 0x201541440, 0x201541DC0,
+        0x201542740, 0x2015430C0, 0x201543A40, 0x2015443C0,
+        0x201544D40, 0x2015456C0, 0x201546040, 0x2015469C0,
+        0x201547340, 0x201547CC0, 0x201548640, 0x201548FC0,
+        0x201549940, 0x20154A2C0, 0x20154AC40, 0x20154B5C0
+    };
+    */
+
+    // sve version
+    // mbuf for TX Descriptor (64-95 current) - throught current phase's tdt 96 wr prefetch
+    // uint64_t mbuf_addr_set_96_cur[] = {
+    //     0x2012D5D80, 0x2012D6700, 0x2012D7080, 0x2012D7A00,
+    //     0x2012D8380, 0x2012D8D00, 0x2012D9680, 0x2012DA000,
+    //     0x2012DA980, 0x2012DB300, 0x2012DBC80, 0x2012DC600,
+    //     0x2012DCF80, 0x2012DD900, 0x2012DE280, 0x2012DEC00,
+    //     0x2012DF580, 0x2012DFF00, 0x2012E0880, 0x2012E1200,
+    //     0x2012E1B80, 0x2012E2500, 0x2012E2E80, 0x2012E3800,
+    //     0x2012E4180, 0x2012E4B00, 0x2012E5480, 0x2012E5E00,
+    //     0x2012E6780, 0x2012E7100, 0x2012E7A80, 0x2012E8400
+    // };
+
+    // uint64_t mbuf_first_cacheline_set_96_cur[] = {
+    //     0x2012D5C80, 0x2012D6600, 0x2012D6F80, 0x2012D7900,
+    //     0x2012D8280, 0x2012D8C00, 0x2012D9580, 0x2012D9F00,
+    //     0x2012DA880, 0x2012DB200, 0x2012DBB80, 0x2012DC500,
+    //     0x2012DCE80, 0x2012DD800, 0x2012DE180, 0x2012DEB00,
+    //     0x2012DF480, 0x2012DFE00, 0x2012E0780, 0x2012E1100,
+    //     0x2012E1A80, 0x2012E2400, 0x2012E2D80, 0x2012E3700,
+    //     0x2012E4080, 0x2012E4A00, 0x2012E5380, 0x2012E5D00,
+    //     0x2012E6680, 0x2012E7000, 0x2012E7980, 0x2012E8300
+    // };
+
+    // uint64_t mbuf_second_cacheline_set_96_cur[] = {
+    //     0x2012D5CC0, 0x2012D6640, 0x2012D6FC0, 0x2012D7940,
+    //     0x2012D82C0, 0x2012D8C40, 0x2012D95C0, 0x2012D9F40,
+    //     0x2012DA8C0, 0x2012DB240, 0x2012DBBC0, 0x2012DC540,
+    //     0x2012DCEC0, 0x2012DD840, 0x2012DE1C0, 0x2012DEB40,
+    //     0x2012DF4C0, 0x2012DFE40, 0x2012E07C0, 0x2012E1140,
+    //     0x2012E1AC0, 0x2012E2440, 0x2012E2DC0, 0x2012E3740,
+    //     0x2012E40C0, 0x2012E4A40, 0x2012E53C0, 0x2012E5D40,
+    //     0x2012E66C0, 0x2012E7040, 0x2012E79C0, 0x2012E8340
+    // };
+
+    uint64_t mbuf_addr_set_96_cur[] = {
+        0x201498B00, 0x201498180, 0x201497800, 0x201496E80,
+        0x201496500, 0x201495B80, 0x201495200, 0x201494880,
+        0x201493F00, 0x201493580, 0x201492C00, 0x201492280,
+        0x201491900, 0x201490F80, 0x201490600, 0x20148FC80,
+        0x20148F300, 0x20148E980, 0x20148E000, 0x20148D680,
+        0x20148CD00, 0x20148C380, 0x20148BA00, 0x20148B080,
+        0x20148A700, 0x201489D80, 0x201489400, 0x201488A80,
+        0x201488100, 0x201487780, 0x201486E00, 0x201486480
+    };
+
+    uint64_t mbuf_first_cacheline_set_96_cur[] = {
+        0x201498A00, 0x201498080, 0x201497700, 0x201496D80,
+        0x201496400, 0x201495A80, 0x201495100, 0x201494780,
+        0x201493E00, 0x201493480, 0x201492B00, 0x201492180,
+        0x201491800, 0x201490E80, 0x201490500, 0x20148FB80,
+        0x20148F200, 0x20148E880, 0x20148DF00, 0x20148D580,
+        0x20148CC00, 0x20148C280, 0x20148B900, 0x20148AF80,
+        0x20148A600, 0x201489C80, 0x201489300, 0x201488980,
+        0x201488000, 0x201487680, 0x201486D00, 0x201486380
+    };
+
+    uint64_t mbuf_second_cacheline_set_96_cur[] = {
+        0x201498A40, 0x2014980C0, 0x201497740, 0x201496DC0,
+        0x201496440, 0x201495AC0, 0x201495140, 0x2014947C0,
+        0x201493E40, 0x2014934C0, 0x201492B40, 0x2014921C0,
+        0x201491840, 0x201490EC0, 0x201490540, 0x20148FBC0,
+        0x20148F240, 0x20148E8C0, 0x20148DF40, 0x20148D5C0,
+        0x20148CC40, 0x20148C2C0, 0x20148B940, 0x20148AFC0,
+        0x20148A640, 0x201489CC0, 0x201489340, 0x2014889C0,
+        0x201488040, 0x2014876C0, 0x201486D40, 0x2014863C0
+    };
+
+    // mbuf for RX Descriptor (32-63 new) - through next phase's tdt 64 wr prefetch
+    // uint64_t mbuf_addr_set_64_new[] = {
+    //     0x2017CD700, 0x2017CCD80, 0x2017CC400, 0x2017CBA80,
+    //     0x2017CB100, 0x2017CA780, 0x2017C9E00, 0x2017C9480,
+    //     0x2017C8B00, 0x2017C8180, 0x2017C7800, 0x2017C6E80,
+    //     0x2017C6500, 0x2017C5B80, 0x2017C5200, 0x2017C4880,
+    //     0x2017C3F00, 0x2017C3580, 0x2017C2C00, 0x2017C2280,
+    //     0x2017C1900, 0x2017C0F80, 0x2017C0600, 0x2017BFC80,
+    //     0x2017BF300, 0x2017BE980, 0x2017BE000, 0x2017BD680,
+    //     0x2017BCD00, 0x2017BC380, 0x2017BBA00, 0x2017BB080
+    // };
+
+    // uint64_t mbuf_first_cacheline_set_64_new[] = {
+    //     0x2017CD600, 0x2017CCC80, 0x2017CC300, 0x2017CB980,
+    //     0x2017CB000, 0x2017CA680, 0x2017C9D00, 0x2017C9380,
+    //     0x2017C8A00, 0x2017C8080, 0x2017C7700, 0x2017C6D80,
+    //     0x2017C6400, 0x2017C5A80, 0x2017C5100, 0x2017C4780,
+    //     0x2017C3E00, 0x2017C3480, 0x2017C2B00, 0x2017C2180,
+    //     0x2017C1800, 0x2017C0E80, 0x2017C0500, 0x2017BFB80,
+    //     0x2017BF200, 0x2017BE880, 0x2017BDF00, 0x2017BD580,
+    //     0x2017BCC00, 0x2017BC280, 0x2017BB900, 0x2017BAF80
+    // };
+
+    // uint64_t mbuf_second_cacheline_set_64_new[] = {
+    //     0x2017CD640, 0x2017CCCC0, 0x2017CC340, 0x2017CB9C0,
+    //     0x2017CB040, 0x2017CA6C0, 0x2017C9D40, 0x2017C93C0,
+    //     0x2017C8A40, 0x2017C80C0, 0x2017C7740, 0x2017C6DC0,
+    //     0x2017C6440, 0x2017C5AC0, 0x2017C5140, 0x2017C47C0,
+    //     0x2017C3E40, 0x2017C34C0, 0x2017C2B40, 0x2017C21C0,
+    //     0x2017C1840, 0x2017C0EC0, 0x2017C0540, 0x2017BFBC0,
+    //     0x2017BF240, 0x2017BE8C0, 0x2017BDF40, 0x2017BD5C0,
+    //     0x2017BCC40, 0x2017BC2C0, 0x2017BB940, 0x2017BAFC0
+    // };
+
+    uint64_t mbuf_addr_set_64_new[] = {
+        0x2013B5180, 0x2013B5B00, 0x2013B6480, 0x2013B6E00,
+        0x2013B7780, 0x2013B8100, 0x2013B8A80, 0x2013B9400,
+        0x2013B0580, 0x2013B0F00, 0x2013B1880, 0x2013B2200,
+        0x2013B2B80, 0x2013B3500, 0x2013B3E80, 0x2013B4800,
+        0x2013AB980, 0x2013AC300, 0x2013ACC80, 0x2013AD600,
+        0x2013ADF80, 0x2013AE900, 0x2013AF280, 0x2013AFC00,
+        0x2013A6D80, 0x2013A7700, 0x2013A8080, 0x2013A8A00,
+        0x2013A9380, 0x2013A9D00, 0x2013AA680, 0x2013AB000
+    };
+
+    uint64_t mbuf_first_cacheline_set_64_new[] = {
+        0x2013B5080, 0x2013B5A00, 0x2013B6380, 0x2013B6D00,
+        0x2013B7680, 0x2013B8000, 0x2013B8980, 0x2013B9300,
+        0x2013B0480, 0x2013B0E00, 0x2013B1780, 0x2013B2100,
+        0x2013B2A80, 0x2013B3400, 0x2013B3D80, 0x2013B4700,
+        0x2013AB880, 0x2013AC200, 0x2013ACB80, 0x2013AD500,
+        0x2013ADE80, 0x2013AE800, 0x2013AF180, 0x2013AFB00,
+        0x2013A6C80, 0x2013A7600, 0x2013A7F80, 0x2013A8900,
+        0x2013A9280, 0x2013A9C00, 0x2013AA580, 0x2013AAF00
+    };
+
+    uint64_t mbuf_second_cacheline_set_64_new[] = {
+        0x2013B50C0, 0x2013B5A40, 0x2013B63C0, 0x2013B6D40,
+        0x2013B76C0, 0x2013B8040, 0x2013B89C0, 0x2013B9340,
+        0x2013B04C0, 0x2013B0E40, 0x2013B17C0, 0x2013B2140,
+        0x2013B2AC0, 0x2013B3440, 0x2013B3DC0, 0x2013B4740,
+        0x2013AB8C0, 0x2013AC240, 0x2013ACBC0, 0x2013AD540,
+        0x2013ADEC0, 0x2013AE840, 0x2013AF1C0, 0x2013AFB40,
+        0x2013A6CC0, 0x2013A7640, 0x2013A7FC0, 0x2013A8940,
+        0x2013A92C0, 0x2013A9C40, 0x2013AA5C0, 0x2013AAF40
+    };
+
+    // mbuf for RX Descriptor (96-127 current) - through current phase's tdt 128 wr prefetch
+    // uint64_t mbuf_addr_set_128_cur[] = {
+    //     0x2012C2D80, 0x2012C3700, 0x2012C4080, 0x2012C4A00,
+    //     0x2012C5380, 0x2012C5D00, 0x2012C6680, 0x2012C7000,
+    //     0x2012C7980, 0x2012C8300, 0x2012C8C80, 0x2012C9600,
+    //     0x2012C9F80, 0x2012CA900, 0x2012CB280, 0x2012CBC00,
+    //     0x2012CC580, 0x2012CCF00, 0x2012CD880, 0x2012CE200,
+    //     0x2012CEB80, 0x2012CF500, 0x2012CFE80, 0x2012D0800,
+    //     0x2012D1180, 0x2012D1B00, 0x2012D2480, 0x2012D2E00,
+    //     0x2012D3780, 0x2012D4100, 0x2012D4A80, 0x2012D5400
+    // };
+
+    // uint64_t mbuf_first_cacheline_set_128_cur[] = {
+    //     0x2012C2C80, 0x2012C3600, 0x2012C3F80, 0x2012C4900,
+    //     0x2012C5280, 0x2012C5C00, 0x2012C6580, 0x2012C6F00,
+    //     0x2012C7880, 0x2012C8200, 0x2012C8B80, 0x2012C9500,
+    //     0x2012C9E80, 0x2012CA800, 0x2012CB180, 0x2012CBB00,
+    //     0x2012CC480, 0x2012CCE00, 0x2012CD780, 0x2012CE100,
+    //     0x2012CEA80, 0x2012CF400, 0x2012CFD80, 0x2012D0700,
+    //     0x2012D1080, 0x2012D1A00, 0x2012D2380, 0x2012D2D00,
+    //     0x2012D3680, 0x2012D4000, 0x2012D4980, 0x2012D5300
+    // };
+
+    // uint64_t mbuf_second_cacheline_set_128_cur[] = {
+    //     0x2012C2CC0, 0x2012C3640, 0x2012C3FC0, 0x2012C4940,
+    //     0x2012C52C0, 0x2012C5C40, 0x2012C65C0, 0x2012C6F40,
+    //     0x2012C78C0, 0x2012C8240, 0x2012C8BC0, 0x2012C9540,
+    //     0x2012C9EC0, 0x2012CA840, 0x2012CB1C0, 0x2012CBB40,
+    //     0x2012CC4C0, 0x2012CCE40, 0x2012CD7C0, 0x2012CE140,
+    //     0x2012CEAC0, 0x2012CF440, 0x2012CFDC0, 0x2012D0740,
+    //     0x2012D10C0, 0x2012D1A40, 0x2012D23C0, 0x2012D2D40,
+    //     0x2012D36C0, 0x2012D4040, 0x2012D49C0, 0x2012D5340
+    // };
+
+    uint64_t mbuf_addr_set_128_cur[] = {
+        0x201485B00, 0x201485180, 0x201484800, 0x201483E80,
+        0x201483500, 0x201482B80, 0x201482200, 0x201481880,
+        0x201480F00, 0x201480580, 0x20147FC00, 0x20147F280,
+        0x20147E900, 0x20147DF80, 0x20147D600, 0x20147CC80,
+        0x20147C300, 0x20147B980, 0x20147B000, 0x20147A680,
+        0x201479D00, 0x201479380, 0x201478A00, 0x201478080,
+        0x201477700, 0x201476D80, 0x201476400, 0x201475A80,
+        0x201475100, 0x201474780, 0x201473E00, 0x201473480
+    };
+
+    uint64_t mbuf_first_cacheline_set_128_cur[] = {
+        0x201485A00, 0x201485080, 0x201484700, 0x201483D80,
+        0x201483400, 0x201482A80, 0x201482100, 0x201481780,
+        0x201480E00, 0x201480480, 0x20147FB00, 0x20147F180,
+        0x20147E800, 0x20147DE80, 0x20147D500, 0x20147CB80,
+        0x20147C200, 0x20147B880, 0x20147AF00, 0x20147A580,
+        0x201479C00, 0x201479280, 0x201478900, 0x201477F80,
+        0x201477600, 0x201476C80, 0x201476300, 0x201475980,
+        0x201475000, 0x201474680, 0x201473D00, 0x201473380
+    };
+
+    uint64_t mbuf_second_cacheline_set_128_cur[] = {
+        0x201485A40, 0x2014850C0, 0x201484740, 0x201483DC0,
+        0x201483440, 0x201482AC0, 0x201482140, 0x2014817C0,
+        0x201480E40, 0x2014804C0, 0x20147FB40, 0x20147F1C0,
+        0x20147E840, 0x20147DEC0, 0x20147D540, 0x20147CBC0,
+        0x20147C240, 0x20147B8C0, 0x20147AF40, 0x20147A5C0,
+        0x201479C40, 0x2014792C0, 0x201478940, 0x201477FC0,
+        0x201477640, 0x201476CC0, 0x201476340, 0x2014759C0,
+        0x201475040, 0x2014746C0, 0x201473D40, 0x2014733C0
+    };
+
+    // mbuf for TX Descriptor (128-159 prev) - through previous phase's tdt 160 wr prefetch
+    // uint64_t mbuf_addr_set_160_prev[] = {
+    //     0x2017AC300, 0x2017AB980, 0x2017AB000, 0x2017AA680,
+    //     0x2017A9D00, 0x2017A9380, 0x2017A8A00, 0x2017A8080,
+    //     0x2017B0F00, 0x2017B0580, 0x2017AFC00, 0x2017AF280,
+    //     0x2017AE900, 0x2017ADF80, 0x2017AD600, 0x2017ACC80,
+    //     0x2017B5B00, 0x2017B5180, 0x2017B4800, 0x2017B3E80,
+    //     0x2017B3500, 0x2017B2B80, 0x2017B2200, 0x2017B1880,
+    //     0x2017BA700, 0x2017B9D80, 0x2017B9400, 0x2017B8A80,
+    //     0x2017B8100, 0x2017B7780, 0x2017B6E00, 0x2017B6480
+    // };
+
+    // uint64_t mbuf_first_cacheline_set_160_prev[] = {
+    //     0x2017AC200, 0x2017AB880, 0x2017AAF00, 0x2017AA580,
+    //     0x2017A9C00, 0x2017A9280, 0x2017A8900, 0x2017A7F80,
+    //     0x2017B0E00, 0x2017B0480, 0x2017AFB00, 0x2017AF180,
+    //     0x2017AE800, 0x2017ADE80, 0x2017AD500, 0x2017ACB80,
+    //     0x2017B5A00, 0x2017B5080, 0x2017B4700, 0x2017B3D80,
+    //     0x2017B3400, 0x2017B2A80, 0x2017B2100, 0x2017B1780,
+    //     0x2017BA600, 0x2017B9C80, 0x2017B9300, 0x2017B8980,
+    //     0x2017B8000, 0x2017B7680, 0x2017B6D00, 0x2017B6380
+    // };
+
+    // uint64_t mbuf_second_cacheline_set_160_prev[] = {
+    //     0x2017AC240, 0x2017AB8C0, 0x2017AAF40, 0x2017AA5C0,
+    //     0x2017A9C40, 0x2017A92C0, 0x2017A8940, 0x2017A7FC0,
+    //     0x2017B0E40, 0x2017B04C0, 0x2017AFB40, 0x2017AF1C0,
+    //     0x2017AE840, 0x2017ADEC0, 0x2017AD540, 0x2017ACBC0,
+    //     0x2017B5A40, 0x2017B50C0, 0x2017B4740, 0x2017B3DC0,
+    //     0x2017B3440, 0x2017B2AC0, 0x2017B2140, 0x2017B17C0,
+    //     0x2017BA640, 0x2017B9CC0, 0x2017B9340, 0x2017B89C0,
+    //     0x2017B8040, 0x2017B76C0, 0x2017B6D40, 0x2017B63C0
+    // };
+
+    uint64_t mbuf_addr_set_160_prev[] = {
+        0x201393D80, 0x201394700, 0x201395080, 0x201395A00,
+        0x201396380, 0x201396D00, 0x201397680, 0x201398000,
+        0x201398980, 0x201399300, 0x201399C80, 0x20139A600,
+        0x20139AF80, 0x20139B900, 0x20139C280, 0x20139CC00,
+        0x20139D580, 0x20139DF00, 0x20139E880, 0x20139F200,
+        0x20139FB80, 0x2013A0500, 0x2013A0E80, 0x2013A1800,
+        0x2013A2180, 0x2013A2B00, 0x2013A3480, 0x2013A3E00,
+        0x2013A4780, 0x2013A5100, 0x2013A5A80, 0x2013A6400
+    };
+
+    uint64_t mbuf_first_cacheline_set_160_prev[] = {
+        0x201393C80, 0x201394600, 0x201394F80, 0x201395900,
+        0x201396280, 0x201396C00, 0x201397580, 0x201397F00,
+        0x201398880, 0x201399200, 0x201399B80, 0x20139A500,
+        0x20139AE80, 0x20139B800, 0x20139C180, 0x20139CB00,
+        0x20139D480, 0x20139DE00, 0x20139E780, 0x20139F100,
+        0x20139FA80, 0x2013A0400, 0x2013A0D80, 0x2013A1700,
+        0x2013A2080, 0x2013A2A00, 0x2013A3380, 0x2013A3D00,
+        0x2013A4680, 0x2013A5000, 0x2013A5980, 0x2013A6300
+    };
+
+    uint64_t mbuf_second_cacheline_set_160_prev[] = {
+        0x201393CC0, 0x201394640, 0x201394FC0, 0x201395940,
+        0x2013962C0, 0x201396C40, 0x2013975C0, 0x201397F40,
+        0x2013988C0, 0x201399240, 0x201399BC0, 0x20139A540,
+        0x20139AEC0, 0x20139B840, 0x20139C1C0, 0x20139CB40,
+        0x20139D4C0, 0x20139DE40, 0x20139E7C0, 0x20139F140,
+        0x20139FAC0, 0x2013A0440, 0x2013A0DC0, 0x2013A1740,
+        0x2013A20C0, 0x2013A2A40, 0x2013A33C0, 0x2013A3D40,
+        0x2013A46C0, 0x2013A5040, 0x2013A59C0, 0x2013A6340
     };
 
     // mbuf's structure part
@@ -1567,12 +2550,13 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         uint64_t pkt_addr = pkt->getAddr();
         uint64_t pkt_addr_end = pkt_addr + pkt->getSize();
         // Check if the packet address is in the mbuf's structure part
-        // if (pkt_addr >= mbuf_first_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_preprev[i] + 64) {
-        //     printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95PREPREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
-        // }
-        // if (pkt_addr >= mbuf_second_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_second_cacheline_set_95_preprev[i] + 64) {
-        //     printf("[LOG], %llu, %s, %s, %d, MBUF_$1_95PREPREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
-        // }
+        /*
+        if (pkt_addr >= mbuf_first_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_preprev[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95PREPREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_95_preprev[i] && pkt_addr_end <= mbuf_second_cacheline_set_95_preprev[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_95PREPREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
         if (pkt_addr >= mbuf_first_cacheline_set_95_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_95_prev[i] + 64) {
             printf("[LOG], %llu, %s, %s, %d, MBUF_$0_95PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
@@ -1591,13 +2575,41 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         if (pkt_addr >= mbuf_second_cacheline_set_127_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_127_prev[i] + 64) {
             printf("[LOG], %llu, %s, %s, %d, MBUF_$1_127PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
+        */
+
+        // SVE
+        if (pkt_addr >= mbuf_first_cacheline_set_96_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_96_cur[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_96CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_96_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_96_cur[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_96CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_64_new[i] && pkt_addr_end <= mbuf_first_cacheline_set_64_new[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_64NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_64_new[i] && pkt_addr_end <= mbuf_second_cacheline_set_64_new[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_64NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_128_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_128_cur[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_128CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_128_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_128_cur[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_128CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_160_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_160_prev[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_160PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_160_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_160_prev[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_160PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
     }
 
     // mbuf's data part
     for (int i = 0; i < 32; i++) {
-        // if (pkt->getAddr() == mbuf_addr_set_95_preprev[i]) {
-        //     printf("[LOG], %llu, %s, %s, %d, MBUF95PREPREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
-        // }
+        /*
+        if (pkt->getAddr() == mbuf_addr_set_95_preprev[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF95PREPREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
         if (pkt->getAddr() == mbuf_addr_set_95_prev[i]) {
             printf("[LOG], %llu, %s, %s, %d, MBUF95PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
@@ -1606,6 +2618,21 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         }
         if (pkt->getAddr() == mbuf_addr_set_127_prev[i]) {
             printf("[LOG], %llu, %s, %s, %d, MBUF127PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        */
+
+       // SVE
+        if (pkt->getAddr() == mbuf_addr_set_96_cur[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF96CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt->getAddr() == mbuf_addr_set_64_new[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF64NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt->getAddr() == mbuf_addr_set_128_cur[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF128CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt->getAddr() == mbuf_addr_set_160_prev[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF160PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
     #endif
@@ -1701,13 +2728,13 @@ BaseCache::recvTimingResp(PacketPtr pkt)
     #endif
 
     #if LOG_LEVEL == 3
-    uint64_t comp_rx = 0x202099900;
-    uint64_t comp_rx2 = 0x202099480;
-    uint64_t comp_tx = 0x2020b2b80;
-    uint64_t comp_tx2 = 0x2020b2600;
+    uint64_t comp_rx = 0x20209b800;
+    uint64_t comp_rx2 = 0x20209b380;
+    uint64_t comp_tx = 0x2020b4b80;
+    uint64_t comp_tx2 = 0x2020b4600;
 
-    uint64_t mbuf_arr_rx = 0x202097400;
-    uint64_t mbuf_arr_rx2 = 0x202095380;
+    uint64_t mbuf_arr_rx = 0x202099300;
+    uint64_t mbuf_arr_rx2 = 0x202097280;
 
 
     // COMP_RX
@@ -1778,47 +2805,196 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         printf("[LOG], %llu, %s, %s, %d, TX_JOB_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0);
     }
 
-    uint64_t mbuf_addr1[] = { // RX_JOB_ID 12
-        0x2010e1200, 0x2010e0880, 0x2010dff00, 0x2010df580, 0x2010dec00, 0x2010de280, 0x2010dd900, 0x2010dcf80, 
-        0x2010dc600, 0x2010dbc80, 0x2010db300, 0x2010da980, 0x2010da000, 0x2010d9680, 0x2010d8d00, 0x2010d8380, 
-        0x2010d7a00, 0x2010d7080, 0x2010d6700, 0x2010d5d80, 0x2010d5400, 0x2010d4a80, 0x2010d4100, 0x2010d3780, 
-        0x2010d2e00, 0x2010d2480, 0x2010d1b00, 0x2010d1180, 0x2010d0800, 0x2010cfe80, 0x2010cf500, 0x2010ceb80
+    // RX_JOB_ID 12
+    uint64_t mbuf_addr_set_RXJ_12[] = {
+        0x201321D80, 0x201322700, 0x201323080, 0x201323A00,
+        0x201324380, 0x201324D00, 0x201325680, 0x201326000,
+        0x201326980, 0x201327300, 0x201327C80, 0x201328600,
+        0x201328F80, 0x201329900, 0x20132A280, 0x20132AC00,
+        0x20132B580, 0x20132BF00, 0x20132C880, 0x20132D200,
+        0x20132DB80, 0x20132E500, 0x20132EE80, 0x20132F800,
+        0x201330180, 0x201330B00, 0x201331480, 0x201331E00,
+        0x201332780, 0x201333100, 0x201333A80, 0x201334400
     };
 
-    uint64_t mbuf_addr2[] = { // TX_JOB_ID 9 (RX_JOB_ID 11)
-        0x2010bb200, 0x2010ba880, 0x2010b9f00, 0x2010b9580, 0x2010b8c00, 0x2010b8280, 0x2010b7900, 0x2010b6f80, 
-        0x2010b6600, 0x2010b5c80, 0x2010b5300, 0x2010b4980, 0x2010b4000, 0x2010b3680, 0x2010b2d00, 0x2010b2380, 
-        0x2010b1a00, 0x2010b1080, 0x2010b0700, 0x2010afd80, 0x2010af400, 0x2010aea80, 0x2010ae100, 0x2010ad780, 
-        0x2010ace00, 0x2010ac480, 0x2010abb00, 0x2010ab180, 0x2010aa800, 0x2010a9e80, 0x2010a9500, 0x2010a8b80
+    uint64_t mbuf_first_cacheline_set_RXJ_12[] = {
+        0x201321C80, 0x201322600, 0x201322F80, 0x201323900,
+        0x201324280, 0x201324C00, 0x201325580, 0x201325F00,
+        0x201326880, 0x201327200, 0x201327B80, 0x201328500,
+        0x201328E80, 0x201329800, 0x20132A180, 0x20132AB00,
+        0x20132B480, 0x20132BE00, 0x20132C780, 0x20132D100,
+        0x20132DA80, 0x20132E400, 0x20132ED80, 0x20132F700,
+        0x201330080, 0x201330A00, 0x201331380, 0x201331D00,
+        0x201332680, 0x201333000, 0x201333980, 0x201334300
+    };
+
+    uint64_t mbuf_second_cacheline_set_RXJ_12[] = {
+        0x201321CC0, 0x201322640, 0x201322FC0, 0x201323940,
+        0x2013242C0, 0x201324C40, 0x2013255C0, 0x201325F40,
+        0x2013268C0, 0x201327240, 0x201327BC0, 0x201328540,
+        0x201328EC0, 0x201329840, 0x20132A1C0, 0x20132AB40,
+        0x20132B4C0, 0x20132BE40, 0x20132C7C0, 0x20132D140,
+        0x20132DAC0, 0x20132E440, 0x20132EDC0, 0x20132F740,
+        0x2013300C0, 0x201330A40, 0x2013313C0, 0x201331D40,
+        0x2013326C0, 0x201333040, 0x2013339C0, 0x201334340
+    };
+
+    uint64_t mbuf_addr_set_RXJ_10[] = {
+        0x20131D180, 0x20131DB00, 0x20131E480, 0x20131EE00,
+        0x20131F780, 0x201320100, 0x201320A80, 0x201321400,
+        0x201318580, 0x201318F00, 0x201319880, 0x20131A200,
+        0x20131AB80, 0x20131B500, 0x20131BE80, 0x20131C800,
+        0x201313980, 0x201314300, 0x201314C80, 0x201315600,
+        0x201315F80, 0x201316900, 0x201317280, 0x201317C00,
+        0x20130ED80, 0x20130F700, 0x201310080, 0x201310A00,
+        0x201311380, 0x201311D00, 0x201312680, 0x201313000
+    };
+
+    uint64_t mbuf_first_cacheline_set_RXJ_10[] = {
+        0x20131D080, 0x20131DA00, 0x20131E380, 0x20131ED00,
+        0x20131F680, 0x201320000, 0x201320980, 0x201321300,
+        0x201318480, 0x201318E00, 0x201319780, 0x20131A100,
+        0x20131AA80, 0x20131B400, 0x20131BD80, 0x20131C700,
+        0x201313880, 0x201314200, 0x201314B80, 0x201315500,
+        0x201315E80, 0x201316800, 0x201317180, 0x201317B00,
+        0x20130EC80, 0x20130F600, 0x20130FF80, 0x201310900,
+        0x201311280, 0x201311C00, 0x201312580, 0x201312F00
+    };
+
+    uint64_t mbuf_second_cacheline_set_RXJ_10[] = {
+        0x20131D0C0, 0x20131DA40, 0x20131E3C0, 0x20131ED40,
+        0x20131F6C0, 0x201320040, 0x2013209C0, 0x201321340,
+        0x2013184C0, 0x201318E40, 0x2013197C0, 0x20131A140,
+        0x20131AAC0, 0x20131B440, 0x20131BDC0, 0x20131C740,
+        0x2013138C0, 0x201314240, 0x201314BC0, 0x201315540,
+        0x201315EC0, 0x201316840, 0x2013171C0, 0x201317B40,
+        0x20130ECC0, 0x20130F640, 0x20130FFC0, 0x201310940,
+        0x2013112C0, 0x201311C40, 0x2013125C0, 0x201312F40
+    };
+
+    uint64_t mbuf_addr_set_RXJ_11[] = {
+        0x20130A180, 0x20130AB00, 0x20130B480, 0x20130BE00,
+        0x20130C780, 0x20130D100, 0x20130DA80, 0x20130E400,
+        0x201305580, 0x201305F00, 0x201306880, 0x201307200,
+        0x201307B80, 0x201308500, 0x201308E80, 0x201309800,
+        0x201300980, 0x201301300, 0x201301C80, 0x201302600,
+        0x201302F80, 0x201303900, 0x201304280, 0x201304C00,
+        0x2012FBD80, 0x2012FC700, 0x2012FD080, 0x2012FDA00,
+        0x2012FE380, 0x2012FED00, 0x2012FF680, 0x201300000
+    };
+
+    uint64_t mbuf_first_cacheline_set_RXJ_11[] = {
+        0x20130A080, 0x20130AA00, 0x20130B380, 0x20130BD00,
+        0x20130C680, 0x20130D000, 0x20130D980, 0x20130E300,
+        0x201305480, 0x201305E00, 0x201306780, 0x201307100,
+        0x201307A80, 0x201308400, 0x201308D80, 0x201309700,
+        0x201300880, 0x201301200, 0x201301B80, 0x201302500,
+        0x201302E80, 0x201303800, 0x201304180, 0x201304B00,
+        0x2012FBC80, 0x2012FC600, 0x2012FCF80, 0x2012FD900,
+        0x2012FE280, 0x2012FEC00, 0x2012FF580, 0x2012FFF00
+    };
+
+    uint64_t mbuf_second_cacheline_set_RXJ_11[] = {
+        0x20130A0C0, 0x20130AA40, 0x20130B3C0, 0x20130BD40,
+        0x20130C6C0, 0x20130D040, 0x20130D9C0, 0x20130E340,
+        0x2013054C0, 0x201305E40, 0x2013067C0, 0x201307140,
+        0x201307AC0, 0x201308440, 0x201308DC0, 0x201309740,
+        0x2013008C0, 0x201301240, 0x201301BC0, 0x201302540,
+        0x201302EC0, 0x201303840, 0x2013041C0, 0x201304B40,
+        0x2012FBCC0, 0x2012FC640, 0x2012FCFC0, 0x2012FD940,
+        0x2012FE2C0, 0x2012FEC40, 0x2012FF5C0, 0x2012FFF40
+    };
+
+    uint64_t mbuf_addr_set_RXJ_13[] = {
+        0x20130ED80, 0x20130F700, 0x201310080, 0x201310A00,
+        0x201311380, 0x201311D00, 0x201312680, 0x201313000,
+        0x201313980, 0x201314300, 0x201314C80, 0x201315600,
+        0x201315F80, 0x201316900, 0x201317280, 0x201317C00,
+        0x201318580, 0x201318F00, 0x201319880, 0x20131A200,
+        0x20131AB80, 0x20131B500, 0x20131BE80, 0x20131C800,
+        0x20131D180, 0x20131DB00, 0x20131E480, 0x20131EE00,
+        0x20131F780, 0x201320100, 0x201320A80, 0x201321400
+    };
+
+    uint64_t mbuf_first_cacheline_set_RXJ_13[] = {
+        0x20130EC80, 0x20130F600, 0x20130FF80, 0x201310900,
+        0x201311280, 0x201311C00, 0x201312580, 0x201312F00,
+        0x201313880, 0x201314200, 0x201314B80, 0x201315500,
+        0x201315E80, 0x201316800, 0x201317180, 0x201317B00,
+        0x201318480, 0x201318E00, 0x201319780, 0x20131A100,
+        0x20131AA80, 0x20131B400, 0x20131BD80, 0x20131C700,
+        0x20131D080, 0x20131DA00, 0x20131E380, 0x20131ED00,
+        0x20131F680, 0x201320000, 0x201320980, 0x201321300
+    };
+
+    uint64_t mbuf_second_cacheline_set_RXJ_13[] = {
+        0x20130ECC0, 0x20130F640, 0x20130FFC0, 0x201310940,
+        0x2013112C0, 0x201311C40, 0x2013125C0, 0x201312F40,
+        0x2013138C0, 0x201314240, 0x201314BC0, 0x201315540,
+        0x201315EC0, 0x201316840, 0x2013171C0, 0x201317B40,
+        0x2013184C0, 0x201318E40, 0x2013197C0, 0x20131A140,
+        0x20131AAC0, 0x20131B440, 0x20131BDC0, 0x20131C740,
+        0x20131D0C0, 0x20131DA40, 0x20131E3C0, 0x20131ED40,
+        0x20131F6C0, 0x201320040, 0x2013209C0, 0x201321340
     };
 
     uint64_t desc_rx1[] = {
-        0x202099940, 0x202099980, 0x2020999c0, 0x202099a00, 0x202099a40, 0x202099a80, 0x202099ac0, 0x202099b00
+        0x20209B840, 0x20209B880, 0x20209B8C0, 0x20209B900, 0x20209B940, 0x20209B980, 0x20209B9C0, 0x20209BA00
     };
 
     uint64_t desc_rx2[] = {
-        0x2020994c0, 0x202099500, 0x202099540, 0x202099580, 0x2020995c0, 0x202099600, 0x202099640, 0x202099680
+        0x20209B3C0, 0x20209B400, 0x20209B440, 0x20209B480, 0x20209B4C0, 0x20209B500, 0x20209B540, 0x20209B580
     };
 
     uint64_t desc_tx1[] = {
-        0x2020b2700, 0x2020b2740, 0x2020b2780, 0x2020b27c0
+        0x2020b4700, 0x2020b4740, 0x2020b4780, 0x2020b47c0
     };
 
     uint64_t desc_tx2[] = {
-        0x2020b2180, 0x2020b21c0, 0x2020b2200, 0x2020b2240
+        0x2020b4180, 0x2020b41c0, 0x2020b4200, 0x2020b4240
     };
 
-    // MBUF_1
-    for (int i = 0; i < 32; i++) {
-        if (pkt->getAddr() == mbuf_addr1[i]) {
-            printf("[LOG], %llu, %s, %s, %d, BATCH_9_RSP[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+    for (int i = 0; i < 32; i ++) {
+        uint64_t pkt_addr = pkt->getAddr();
+        uint64_t pkt_addr_end = pkt_addr + pkt->getSize();
+        if (pkt_addr >= mbuf_first_cacheline_set_RXJ_12[i] && pkt_addr_end <= mbuf_first_cacheline_set_RXJ_12[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_RXJ12[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_RXJ_12[i] && pkt_addr_end <= mbuf_second_cacheline_set_RXJ_12[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_RXJ12[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_RXJ_10[i] && pkt_addr_end <= mbuf_first_cacheline_set_RXJ_10[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_RXJ10[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_RXJ_10[i] && pkt_addr_end <= mbuf_second_cacheline_set_RXJ_10[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_RXJ10[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_RXJ_11[i] && pkt_addr_end <= mbuf_first_cacheline_set_RXJ_11[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_RXJ11[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_RXJ_11[i] && pkt_addr_end <= mbuf_second_cacheline_set_RXJ_11[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_RXJ11[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_first_cacheline_set_RXJ_13[i] && pkt_addr_end <= mbuf_first_cacheline_set_RXJ_13[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_RXJ13[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt_addr >= mbuf_second_cacheline_set_RXJ_13[i] && pkt_addr_end <= mbuf_second_cacheline_set_RXJ_13[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_RXJ13[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
 
-    // MBUF_2
     for (int i = 0; i < 32; i++) {
-        if (pkt->getAddr() == mbuf_addr2[i]) {
-            printf("[LOG], %llu, %s, %s, %d, BATCH_8_RSP[%d]\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt->getAddr() == mbuf_addr_set_RXJ_12[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_RXJ12[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt->getAddr() == mbuf_addr_set_RXJ_10[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_RXJ10[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt->getAddr() == mbuf_addr_set_RXJ_11[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_RXJ11[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        }
+        if (pkt->getAddr() == mbuf_addr_set_RXJ_13[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_RXJ13[%d]_RSP\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
 
@@ -4335,7 +5511,9 @@ DTA::recvTimingReq(PacketPtr pkt)
             if (isValidJob) {
                 // Only do this when the received packet is the valid job
                 // printf("Receive the RX job request from CPU\n");
-                // printf("[LOG], %llu, DTA, RX_JOB_REQ_RECV\n", curTick());
+                #if LOG_LEVEL == 4 || LOG_LEVEL == 3
+                    printf("[LOG], %llu, DTA_RX_JOB_REQ_RECV\n", curTick());
+                #endif
                 // Make copy of the pkt and push the copy to the submission queue
                 // The original pkt will be responded to CPU
                 PacketPtr pkt_copy = new Packet(pkt, false, true);
@@ -4368,7 +5546,9 @@ DTA::recvTimingReq(PacketPtr pkt)
             return false;
         } else {
             // printf("Receive the TX job request from CPU\n");
-            // printf("[LOG], %llu, DTA, TX_JOB_REQ_RECV\n", curTick());
+            #if LOG_LEVEL == 4 || LOG_LEVEL == 3
+                printf("[LOG], %llu, DTA_TX_JOB_REQ_RECV\n", curTick());
+            #endif
             // Check if this is new batch job
             if (getInitializationStageTXContextID() == -1) {
                 // This is new batch job
@@ -4494,10 +5674,13 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
                 DPRINTF(DDIO, "Parsing RX job request 0th packet from CPU\n");
                 global_rx_job_id += 1;
                 dtaRXContextList[rx_context_id].rx_job_id = global_rx_job_id;
-                if (global_rx_job_id <= 13) {
-                    printf("%llu, DTA Parsing RX Job ID: %llu\n", curTick(), global_rx_job_id);
-                }
+                // if (global_rx_job_id <= 13) {
+                //     printf("%llu, DTA Parsing RX Job ID: %llu\n", curTick(), global_rx_job_id);
+                // }
                 // printf("[LOG], %llu, DTA_RX, %lu, RX_JOB_REQ_PARSE\n", curTick(), global_rx_job_id);
+                #if LOG_LEVEL == 4 || LOG_LEVEL == 3
+                    printf("[LOG], %llu, DTA_RX, %lu, RX_JOB_REQ_PARSE\n", curTick(), global_rx_job_id);
+                #endif
                 dtaRXContextList[rx_context_id].valid = true;
                 dtaRXContextList[rx_context_id].completion_stage = false;
                 uint32_t n_job_packet_received = 0;
@@ -4648,6 +5831,9 @@ DTA::parseJobRequestAndSetContext(PacketPtr pkt)
                 global_tx_job_id += 1;
                 dtaTXContextList[tx_context_id].tx_job_id = global_tx_job_id;
                 // printf("[LOG], %llu, DTA_TX, %lu, TX_JOB_REQ_PARSE\n", curTick(), global_tx_job_id);
+                #if LOG_LEVEL == 4 || LOG_LEVEL == 3
+                    printf("[LOG], %llu, DTA_TX, %lu, TX_JOB_REQ_PARSE\n", curTick(), global_tx_job_id);
+                #endif
                 dtaTXContextList[tx_context_id].valid = true;
                 uint32_t n_job_packet_received = 0;
                 uint8_t *data = pkt->getPtr<uint8_t>();

@@ -290,8 +290,15 @@ eth_em_dev_init(struct rte_eth_dev *eth_dev) //eth_igb_dev_init
 	// eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts_m2func_dta;
 
 	// JM - m2func + DTA (double comp)
+	// #ifdef EM_SVE_512
+	// printf("EM_SVE_512 defined\n");
+	// eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts_m2func_dta_double_comp_sve512;
+	// eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts_m2func_dta_double_comp_sve512;
+	// #else
+	// printf("EM_SVE_512 not defined\n");
 	// eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts_m2func_dta_double_comp;
 	// eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts_m2func_dta_double_comp;
+	// #endif
 
 	eth_dev->tx_pkt_prepare = (eth_tx_prep_t)&eth_em_prep_pkts;
 

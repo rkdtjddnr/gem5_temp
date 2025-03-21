@@ -29,14 +29,14 @@ from m5.objects import *
 # Simple ALU Instructions have a latency of 1
 class O3_ARM_v7a_Simple_Int(FUDesc):
     opList = [ OpDesc(opClass='IntAlu', opLat=1) ]
-    count = 2
+    count = 6
 
 # Complex ALU instructions have a variable latencies
 class O3_ARM_v7a_Complex_Int(FUDesc):
     opList = [ OpDesc(opClass='IntMult', opLat=3, pipelined=True),
                OpDesc(opClass='IntDiv', opLat=12, pipelined=False),
                OpDesc(opClass='IprAccess', opLat=3, pipelined=True) ]
-    count = 1
+    count = 2
 
 
 # Floating point and SIMD instructions
@@ -69,19 +69,19 @@ class O3_ARM_v7a_FP(FUDesc):
                OpDesc(opClass='FloatMult', opLat=4),
                OpDesc(opClass='FloatMultAcc', opLat=5),
                OpDesc(opClass='FloatMisc', opLat=3) ]
-    count = 2
+    count = 4
 
 
 # Load/Store Units
 class O3_ARM_v7a_Load(FUDesc):
-    opList = [ OpDesc(opClass='MemRead',opLat=2),
+    opList = [ OpDesc(opClass='MemRead',opLat=1),
                OpDesc(opClass='FloatMemRead',opLat=2) ]
-    count = 1
+    count = 2
 
 class O3_ARM_v7a_Store(FUDesc):
-    opList = [ OpDesc(opClass='MemWrite',opLat=2),
+    opList = [ OpDesc(opClass='MemWrite',opLat=1),
                OpDesc(opClass='FloatMemWrite',opLat=2) ]
-    count = 1
+    count = 2
 
 # Functional Units for this CPU
 class O3_ARM_v7a_FUP(FUPool):
@@ -116,10 +116,10 @@ class O3_ARM_v7a_3(DerivO3CPU):
     commitToRenameDelay = 1
     commitToIEWDelay = 1
     fetchWidth = 3
-    fetchBufferSize = 16
-    fetchToDecodeDelay = 3
+    fetchBufferSize = 64
+    fetchToDecodeDelay = 1
     decodeWidth = 3
-    decodeToRenameDelay = 2
+    decodeToRenameDelay = 1
     renameWidth = 3
     renameToIEWDelay = 1
     issueToExecuteDelay = 1

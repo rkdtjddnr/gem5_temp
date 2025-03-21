@@ -1545,6 +1545,11 @@ class Packet : public Printable
     void setJobID(uint64_t id) { job_id = id; }
     uint64_t getJobID() const { return job_id; }
 
+    bool canGetDataPtr() {
+        // flags.isSet(STATIC_DATA|DYNAMIC_DATA)
+        return flags.isSet(STATIC_DATA) || flags.isSet(DYNAMIC_DATA);
+    }
+
     // hardware transactional memory
 
     /**

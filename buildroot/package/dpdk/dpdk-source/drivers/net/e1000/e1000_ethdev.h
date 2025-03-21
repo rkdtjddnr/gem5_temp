@@ -546,6 +546,9 @@ uint16_t eth_em_recv_pkts_m2func_dta(void *rx_queue, struct rte_mbuf **rx_pkts,
 uint16_t eth_em_recv_pkts_m2func_dta_double_comp(void *rx_queue, struct rte_mbuf **rx_pkts,
 		uint16_t nb_pkts);
 
+uint16_t eth_em_recv_pkts_m2func_dta_double_comp_sve512(void *rx_queue, struct rte_mbuf **rx_pkts,
+		uint16_t nb_pkts);
+
 uint16_t eth_em_recv_pkts_m2func_poll_test(void *rx_queue,
 		struct rte_mbuf **rx_pkts, uint16_t nb_pkts);
 

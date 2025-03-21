@@ -1809,7 +1809,7 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset)
         //         packet->length, igbe->rxWriteDelay);
         
         #if LOG_LEVEL == 1
-        if (descTail() == 95) {
+        if (descTail() == 31 || descTail() == 63 || descTail() == 95) {
             printf("[LOG], %lu, NIC_WR_RX_PKT_TO_MBUF, %lx, %d\n", curTick(), pciToDma(desc->adv_read.pkt), packet->length);
         }
         #endif
@@ -1943,7 +1943,7 @@ IGbE::RxDescCache::pktComplete()
     DPRINTF(EthernetDpdk, "RXD[%d] Packet written to memory updating Descriptor\n", queueID);
 
     #if LOG_LEVEL == 1
-    if (descTail() == 95) {
+    if (descTail() == 31 || descTail() == 63 || descTail() == 95) {
         printf("[LOG], %lu, NIC_WR_RESP_RX_PKT_TO_MBUF, %lx, Head: %d, Tail: %d\n", curTick(), pciToDma(desc->adv_read.pkt), descHead(), descTail());
     }
     #endif
@@ -2400,7 +2400,7 @@ IGbE::TxDescCache::getPacketData(EthPacketPtr p)
         //         queueID, curTick(), p, pciToDma(txd_op::getBuf(desc)), txd_op::getLen(desc), igbe->txReadDelay);
 
         #if LOG_LEVEL == 1
-        if (descTail() == 128) {
+        if (descTail() == 64 || descTail() == 96 || descTail() == 128) {
             printf("[LOG], %lu, NIC_RD_REQ_TX_MBUF, %lx, %d\n", curTick(), pciToDma(txd_op::getBuf(desc)), txd_op::getLen(desc));
         }
         #endif
@@ -2470,7 +2470,7 @@ IGbE::TxDescCache::pktComplete()
     }
 
     #if LOG_LEVEL == 1
-    if (descTail() == 128) {
+    if (descTail() == 64 || descTail() == 96 || descTail() == 128) {
         printf("[LOG], %lu, NIC_RD_RESP_TX_MBUF, %lx, Head: %d, Tail: %d\n", curTick(), pciToDma(txd_op::getBuf(desc)), descHead(), descTail());
     }
     #endif
