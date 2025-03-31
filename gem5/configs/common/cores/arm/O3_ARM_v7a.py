@@ -30,6 +30,7 @@ from m5.objects import *
 class O3_ARM_v7a_Simple_Int(FUDesc):
     opList = [ OpDesc(opClass='IntAlu', opLat=1) ]
     count = 6
+    # count = 64
 
 # Complex ALU instructions have a variable latencies
 class O3_ARM_v7a_Complex_Int(FUDesc):
@@ -37,6 +38,7 @@ class O3_ARM_v7a_Complex_Int(FUDesc):
                OpDesc(opClass='IntDiv', opLat=12, pipelined=False),
                OpDesc(opClass='IprAccess', opLat=3, pipelined=True) ]
     count = 2
+    # count = 16
 
 
 # Floating point and SIMD instructions
@@ -70,18 +72,21 @@ class O3_ARM_v7a_FP(FUDesc):
                OpDesc(opClass='FloatMultAcc', opLat=5),
                OpDesc(opClass='FloatMisc', opLat=3) ]
     count = 4
+    # count = 64
 
 
 # Load/Store Units
 class O3_ARM_v7a_Load(FUDesc):
     opList = [ OpDesc(opClass='MemRead',opLat=1),
                OpDesc(opClass='FloatMemRead',opLat=2) ]
-    count = 2
+    count = 4
+    # count = 64
 
 class O3_ARM_v7a_Store(FUDesc):
     opList = [ OpDesc(opClass='MemWrite',opLat=1),
                OpDesc(opClass='FloatMemWrite',opLat=2) ]
-    count = 2
+    count = 4
+    # count = 64
 
 # Functional Units for this CPU
 class O3_ARM_v7a_FUP(FUPool):
@@ -165,7 +170,7 @@ class O3_ARM_v7a_DCache(Cache):
     tgts_per_mshr = 8
     size = '32kB'
     assoc = 2
-    write_buffers = 16
+    write_buffers = 64
     # Consider the L2 a victim cache also for clean lines
     writeback_clean = True
 
@@ -175,11 +180,11 @@ class O3_ARM_v7aWalkCache(Cache):
     tag_latency = 4
     data_latency = 4
     response_latency = 4
-    mshrs = 6
+    mshrs = 16
     tgts_per_mshr = 8
     size = '1kB'
     assoc = 8
-    write_buffers = 16
+    write_buffers = 64
     is_read_only = True
     # Writeback clean lines as well
     writeback_clean = True
@@ -196,7 +201,7 @@ class O3_ARM_v7aL2(Cache):
     tgts_per_mshr = 8
     size = '1MB'
     assoc = 16
-    write_buffers = 8
+    write_buffers = 64
     prefetch_on_access = True
     clusivity = 'mostly_excl'
     # Simple stride prefetcher

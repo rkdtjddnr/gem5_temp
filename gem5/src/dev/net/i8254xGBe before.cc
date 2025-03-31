@@ -108,8 +108,8 @@ IGbE::IGbE(const Params &p)
     // Initialize rxDescCacheArray and txDescCacheArray
     for (int i = 0; i < numQueues; i++) {
         if (commType == CommunicationType::RING) {
-            rxDescCacheArray[i] = new RxDescCacheGlobal(this, name()+".RxDescArray"+std::to_string(i), p.rx_desc_cache_size, i, p.num_dma_engines); // TODO
-            txDescCacheArray[i] = new TxDescCacheGlobal(this, name()+".TxDescArray"+std::to_string(i), p.tx_desc_cache_size, i, p.num_dma_engines);
+            rxDescCacheArray[i] = new RxDescCache(this, name()+".RxDescArray"+std::to_string(i), p.rx_desc_cache_size, i);
+            txDescCacheArray[i] = new TxDescCache(this, name()+".TxDescArray"+std::to_string(i), p.tx_desc_cache_size, i);
         } else if (commType == CommunicationType::M2FUNC) {
             // JM. For now, just set m2funcFifo size to 2. Maybe 1 is enough.
             rxM2funcContextArray[i] = new RxM2funcContext(this, name()+".RxM2funcContextArray"+std::to_string(i), 2, i, enableDTA, p.cxl_req_buf_size);
@@ -1331,22 +1331,9 @@ IGbE::chkInterrupt()
 ///////////////////////////// IGbE::DescCache //////////////////////////////
 
 template<class T>
-IGbE::DescCache<T>::DescCache(IGbE *i, const std::string n, bool _isRx, int engineIdx)
-    : igbe(i), _name(n), isRx(_isRx), dmaEngineIdx(engineIdx),
-      pktPtr(NULL), dmaAddr(0)
-{
-}
-
-template<class T>
-IGbE::DescCache<T>::~DescCache()
-{
-}
-
-
-template<class T>
-IGbE::DescCacheGlobal<T>::DescCacheGlobal(IGbE *i, const std::string n, int s, bool _isRx, int _numDMAEngines)
-    : igbe(i), _name(n), cachePnt(0), size(s), curFetching(0), isRx(_isRx), numDMAEngines(_numDMAEngines),
-      wbOut(0), moreToWb(false), wbAlignment(0),
+IGbE::DescCache<T>::DescCache(IGbE *i, const std::string n, int s, bool _isRx)
+    : igbe(i), _name(n), cachePnt(0), size(s), curFetching(0), isRx(_isRx),
+      wbOut(0), moreToWb(false), wbAlignment(0), pktPtr(NULL),
       wbDelayEvent([this]{ writeback1(); }, n),
       fetchDelayEvent([this]{ fetchDescriptors1(); }, n),
       fetchEvent([this]{ fetchComplete(); }, n),
@@ -1354,15 +1341,10 @@ IGbE::DescCacheGlobal<T>::DescCacheGlobal(IGbE *i, const std::string n, int s, b
 {
     fetchBuf = new T[size];
     wbBuf = new T[size];
-    // Initialize processingCache
-    for (int i = 0; i < MAX_DMA_ENGINE_SIZE; i++) {
-        processingCache[i] = {NULL, 0, false};
-        processingPktArray[i] = NULL;
-    }
 }
 
 template<class T>
-IGbE::DescCacheGlobal<T>::~DescCacheGlobal()
+IGbE::DescCache<T>::~DescCache()
 {
     reset();
     delete[] fetchBuf;
@@ -1371,7 +1353,7 @@ IGbE::DescCacheGlobal<T>::~DescCacheGlobal()
 
 template<class T>
 void
-IGbE::DescCacheGlobal<T>::areaChanged()
+IGbE::DescCache<T>::areaChanged()
 {
     if (usedCache.size() > 0 || curFetching || wbOut)
         panic("Descriptor Address, Length or Head changed. Bad\n");
@@ -1381,7 +1363,7 @@ IGbE::DescCacheGlobal<T>::areaChanged()
 
 template<class T>
 void
-IGbE::DescCacheGlobal<T>::writeback(Addr aMask)
+IGbE::DescCache<T>::writeback(Addr aMask)
 {
     int curHead = descHead();
     int max_to_wb = usedCache.size();
@@ -1429,7 +1411,7 @@ IGbE::DescCacheGlobal<T>::writeback(Addr aMask)
 
 template<class T>
 void
-IGbE::DescCacheGlobal<T>::writeback1()
+IGbE::DescCache<T>::writeback1()
 {
     // If we're draining delay issuing this DMA
     if (igbe->drainState() != DrainState::Running) {
@@ -1455,10 +1437,10 @@ IGbE::DescCacheGlobal<T>::writeback1()
 
     #if LOG_LEVEL == 1
     if (isRx) {
-        printf("[LOG], %lu, RXDescWB, Addr: %lx, Size: %d, (Head: %ld, Tail: %ld)\n",
+        printf("[LOG], %lu, RXDescWB, Addr: %llu, Size: %d, (Head: %ld, Tail: %ld)\n",
             curTick(), pciToDma(descBase() + descHead() * sizeof(T)), wbOut * sizeof(T), descHead(), descTail());
     } else {
-        printf("[LOG], %lu, TXDescWB, Addr: %lx, Size: %d, (Head: %ld, Tail: %ld)\n",
+        printf("[LOG], %lu, TXDescWB, Addr: %llu, Size: %d, (Head: %ld, Tail: %ld)\n",
             curTick(), pciToDma(descBase() + descHead() * sizeof(T)), wbOut * sizeof(T), descHead(), descTail());
     }
     for (int i = 0; i < wbOut; i++) {
@@ -1474,7 +1456,7 @@ IGbE::DescCacheGlobal<T>::writeback1()
 
 template<class T>
 void
-IGbE::DescCacheGlobal<T>::fetchDescriptors()
+IGbE::DescCache<T>::fetchDescriptors()
 {
     size_t max_to_fetch;
 
@@ -1496,7 +1478,7 @@ IGbE::DescCacheGlobal<T>::fetchDescriptors()
     }
 
     // Fix the underflow
-    size_t totalUsed = usedCache.size() + unusedCache.size() + descProcessing();
+    size_t totalUsed = usedCache.size() + unusedCache.size();
     size_t free_cache = (static_cast<size_t>(size) >= totalUsed) ? (static_cast<size_t>(size) - totalUsed) : 0;
 
 
@@ -1524,7 +1506,7 @@ IGbE::DescCacheGlobal<T>::fetchDescriptors()
 
 template<class T>
 void
-IGbE::DescCacheGlobal<T>::fetchDescriptors1()
+IGbE::DescCache<T>::fetchDescriptors1()
 {
     // If we're draining delay issuing this DMA
     if (igbe->drainState() != DrainState::Running) {
@@ -1539,10 +1521,10 @@ IGbE::DescCacheGlobal<T>::fetchDescriptors1()
 
     #if LOG_LEVEL == 1
     if (isRx) {
-        printf("[LOG], %lu, RXDescFetch, Addr: %lx, Size: %d, (cachePnt: %d, curFetching: %d, Head: %ld, Tail: %ld, unusedDesc: %d)\n",
+        printf("[LOG], %lu, RXDescFetch, Addr: %llu, Size: %d, (cachePnt: %d, curFetching: %d, Head: %ld, Tail: %ld, unusedDesc: %d)\n",
             curTick(), pciToDma(descBase() + cachePnt * sizeof(T)), curFetching * sizeof(T), cachePnt, curFetching, descHead(), descTail(), descUnused());
     } else {
-        printf("[LOG], %lu, TXDescFetch, Addr: %lx, Size: %d, (cachePnt: %d, curFetching: %d, Head: %ld, Tail: %ld, unusedDesc: %d)\n",
+        printf("[LOG], %lu, TXDescFetch, Addr: %llu, Size: %d, (cachePnt: %d, curFetching: %d, Head: %ld, Tail: %ld, unusedDesc: %d)\n",
             curTick(), pciToDma(descBase() + cachePnt * sizeof(T)), curFetching * sizeof(T), cachePnt, curFetching, descHead(), descTail(), descUnused());
     }
     #endif
@@ -1554,7 +1536,7 @@ IGbE::DescCacheGlobal<T>::fetchDescriptors1()
 
 template<class T>
 void
-IGbE::DescCacheGlobal<T>::fetchComplete()
+IGbE::DescCache<T>::fetchComplete()
 {
     std::string printStr = "";
     T *newDesc;
@@ -1601,7 +1583,7 @@ IGbE::DescCacheGlobal<T>::fetchComplete()
 
 template<class T>
 void
-IGbE::DescCacheGlobal<T>::wbComplete()
+IGbE::DescCache<T>::wbComplete()
 {
 
     long curHead = descHead();
@@ -1656,22 +1638,13 @@ IGbE::DescCacheGlobal<T>::wbComplete()
 
 template<class T>
 void
-IGbE::DescCacheGlobal<T>::reset()
+IGbE::DescCache<T>::reset()
 {
     DPRINTF(EthernetDesc, "Reseting descriptor cache\n");
     for (typename CacheType::size_type x = 0; x < usedCache.size(); x++)
         delete usedCache[x];
     for (typename CacheType::size_type x = 0; x < unusedCache.size(); x++)
         delete unusedCache[x];
-    for (int i = 0; i < MAX_DMA_ENGINE_SIZE; i++) {
-        if (processingCache[i].desc != NULL) {
-            delete processingCache[i].desc;
-            processingCache[i].desc = NULL;
-        }
-    }
-    for (int i = 0; i < MAX_DMA_ENGINE_SIZE; i++) {
-        processingPktArray[i] = NULL;
-    }
 
     usedCache.clear();
     unusedCache.clear();
@@ -1682,7 +1655,7 @@ IGbE::DescCacheGlobal<T>::reset()
 
 template<class T>
 void
-IGbE::DescCacheGlobal<T>::serialize(CheckpointOut &cp) const
+IGbE::DescCache<T>::serialize(CheckpointOut &cp) const
 {
     SERIALIZE_SCALAR(cachePnt);
     SERIALIZE_SCALAR(curFetching);
@@ -1697,36 +1670,11 @@ IGbE::DescCacheGlobal<T>::serialize(CheckpointOut &cp) const
                       (uint8_t*)usedCache[x],sizeof(T));
     }
 
-    // push back the processing cache to unused cache, regarding the sequence number
-    // Sort the processing cache by sequence number
-    CacheType mergedCache;
-
-    std::vector<std::pair<int, T*>> processingCacheVec;
-    for (int i = 0; i < MAX_DMA_ENGINE_SIZE; i++) {
-        if (processingCache[i].desc != NULL) {
-            processingCacheVec.push_back(std::make_pair(processingCache[i].seqIdx, processingCache[i].desc));
-        }
-    }
-    std::sort(processingCacheVec.begin(), processingCacheVec.end(),
-          [](const std::pair<int, T*>& a, const std::pair<int, T*>& b) {
-              return a.first < b.first;
-          });
-
-    for (const auto& pair : processingCacheVec) {
-        mergedCache.push_back(pair.second);
-    }
-
-    // merge unusedCache
-    for (const auto& desc : unusedCache) {
-        mergedCache.push_back(desc);
-    }
-
-    // Step 5: mergedCache serialize
-    typename CacheType::size_type unusedCacheSize = mergedCache.size();
+    typename CacheType::size_type unusedCacheSize = unusedCache.size();
     SERIALIZE_SCALAR(unusedCacheSize);
     for (typename CacheType::size_type x = 0; x < unusedCacheSize; x++) {
         arrayParamOut(cp, csprintf("unusedCache_%d", x),
-                    (uint8_t*)mergedCache[x], sizeof(T));
+                      (uint8_t*)unusedCache[x],sizeof(T));
     }
 
     Tick fetch_delay = 0, wb_delay = 0;
@@ -1742,7 +1690,7 @@ IGbE::DescCacheGlobal<T>::serialize(CheckpointOut &cp) const
 
 template<class T>
 void
-IGbE::DescCacheGlobal<T>::unserialize(CheckpointIn &cp)
+IGbE::DescCache<T>::unserialize(CheckpointIn &cp)
 {
     UNSERIALIZE_SCALAR(cachePnt);
     UNSERIALIZE_SCALAR(curFetching);
@@ -1781,13 +1729,22 @@ IGbE::DescCacheGlobal<T>::unserialize(CheckpointIn &cp)
 
 ///////////////////////////// IGbE::RxDescCache //////////////////////////////
 
-IGbE::RxDescCache::RxDescCache(IGbE *i, const std::string n, int qid, int engineIdx, RxDescCacheGlobal *_parent)
-    : DescCache<RxDesc>(i, n, true, engineIdx), pktWaiting(false),
-    splitCount(0), queueID(qid), parent(_parent), bytesCopied(0), correspondingDesc(NULL),
+IGbE::RxDescCache::RxDescCache(IGbE *i, const std::string n, int s, int qid)
+    : DescCache<RxDesc>(i, n, s, true), pktDone(false), splitCount(0), queueID(qid),
     pktEvent([this]{ pktComplete(); }, n),
     pktHdrEvent([this]{ pktSplitDone(); }, n),
-    pktDataEvent([this]{ pktSplitDone(); }, n)
+    pktDataEvent([this]{ pktSplitDone(); }, n),
+    _rdtrEvent([this]{ _rdtrProcess(); }, n),
+    _radvEvent([this]{ _radvProcess(); }, n)
+
 {
+    annSmFetch = "RX Desc Fetch";
+    annSmWb = "RX Desc Writeback";
+    annUnusedDescQ = "RX Unused Descriptors";
+    annUnusedCacheQ = "RX Unused Descriptor Cache";
+    annUsedCacheQ = "RX Used Descriptor Cache";
+    annUsedDescQ = "RX Used Descriptors";
+    annDescQ = "RX Descriptors";
 }
 
 void
@@ -1806,19 +1763,20 @@ IGbE::RxDescCache::pktSplitDone()
 }
 
 int
-IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset, igbreg::RxDesc* rxDesc)
+IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset)
 {
-    assert(correspondingDesc == NULL);
-    correspondingDesc = rxDesc;
+    assert(unusedCache.size());
+    //if (!unusedCache.size())
+    //    return false;
 
     pktPtr = packet;
-    pktWaiting = true;
-
+    pktDone = false;
     unsigned buf_len, hdr_len;
 
     if (pktPtr->rxDMAStartTick == 0)
         pktPtr->rxDMAStartTick = curTick();
 
+    RxDesc *desc = unusedCache.front();
     switch (igbe->regs.srrctl_array[queueID].desctype()) {
       case RXDT_LEGACY:
         assert(pkt_offset == 0);
@@ -1828,7 +1786,7 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset, igbreg::RxDe
         DPRINTF(EthernetDpdk, "RXD[%d] LEGACY Packet Length: %d Desc Size: %d\n",
                 queueID, packet->length, igbe->regs.rctl.descSize());
         assert(packet->length < igbe->regs.rctl.descSize());
-        igbe->dmaWrite(pciToDma(correspondingDesc->legacy.buf),
+        igbe->dmaWrite(pciToDma(desc->legacy.buf),
                        packet->length, &pktEvent, packet->data,
                        igbe->rxWriteDelay);
         break;
@@ -1843,26 +1801,26 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset, igbreg::RxDe
                 queueID, igbe->regs.rctl.lpe(), packet->length, igbe->regs.srrctl_array[queueID](), buf_len);
         assert(packet->length < buf_len);
         // SHIN. Change to IDIO
-        // igbe->dmaWrite(pciToDma(correspondingDesc->adv_read.pkt),
+        // igbe->dmaWrite(pciToDma(desc->adv_read.pkt),
         //                packet->length, &pktEvent, packet->data,
         //                igbe->rxWriteDelay);
         // printf("RXD[%d] At clk: %ld IdioWrite pktPtr: %p, Addr: %lx, Size: %d, Delay: %ld\n",
-        //         queueID, curTick(), pktPtr, pciToDma(correspondingDesc->adv_read.pkt),
+        //         queueID, curTick(), pktPtr, pciToDma(desc->adv_read.pkt),
         //         packet->length, igbe->rxWriteDelay);
         
         #if LOG_LEVEL == 1
-        if (descTail() == 63 || descTail() == 127 || descTail() == 191) {
-            printf("[LOG], %lu, NIC_WR_RX_PKT_TO_MBUF_DMAE[%d], %lx, %d, Head: %d, Tail: %d\n", curTick(), dmaEngineIdx, pciToDma(correspondingDesc->adv_read.pkt), packet->length, descHead(), descTail());
+        if (descTail() == 31 || descTail() == 63 || descTail() == 95) {
+            printf("[LOG], %lu, NIC_WR_RX_PKT_TO_MBUF, %lx, %d\n", curTick(), pciToDma(desc->adv_read.pkt), packet->length);
         }
         #endif
 
-        igbe->IdioWrite(pciToDma(correspondingDesc->adv_read.pkt),
+        igbe->IdioWrite(pciToDma(desc->adv_read.pkt),
                        packet->length, &pktEvent, packet->data,
                        igbe->rxWriteDelay, 0, igbe->adq);
 
-        correspondingDesc->adv_wb.header_len = htole(0);
-        correspondingDesc->adv_wb.sph = htole(0);
-        correspondingDesc->adv_wb.pkt_len = htole((uint16_t)(pktPtr->length));
+        desc->adv_wb.header_len = htole(0);
+        desc->adv_wb.sph = htole(0);
+        desc->adv_wb.pkt_len = htole((uint16_t)(pktPtr->length));
         break;
       case RXDT_ADV_SPLIT_A:
         int split_point;
@@ -1872,16 +1830,16 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset, igbreg::RxDe
         hdr_len = igbe->regs.rctl.lpe() ? igbe->regs.srrctl_array[queueID].hdrLen() : 0;
         DPRINTF(EthernetDesc,
                 "lpe: %d Packet Length: %d offset: %d srrctl: %#x "
-                "hdr addr: %#x Hdr Size: %d correspondingDesc addr: %#x Desc Size: %d\n",
+                "hdr addr: %#x Hdr Size: %d desc addr: %#x Desc Size: %d\n",
                 igbe->regs.rctl.lpe(), packet->length, pkt_offset,
-                igbe->regs.srrctl_array[queueID](), correspondingDesc->adv_read.hdr, hdr_len,
-                correspondingDesc->adv_read.pkt, buf_len);
+                igbe->regs.srrctl_array[queueID](), desc->adv_read.hdr, hdr_len,
+                desc->adv_read.pkt, buf_len);
         DPRINTF(EthernetDpdk,
                 "RXD[%d] lpe: %d Packet Length: %d offset: %d srrctl: %#x "
-                "hdr addr: %#x Hdr Size: %d correspondingDesc addr: %#x Desc Size: %d\n",
+                "hdr addr: %#x Hdr Size: %d desc addr: %#x Desc Size: %d\n",
                 queueID, igbe->regs.rctl.lpe(), packet->length, pkt_offset,
-                igbe->regs.srrctl_array[queueID](), correspondingDesc->adv_read.hdr, hdr_len,
-                correspondingDesc->adv_read.pkt, buf_len);
+                igbe->regs.srrctl_array[queueID](), desc->adv_read.hdr, hdr_len,
+                desc->adv_read.pkt, buf_len);
 
         split_point = hsplit(pktPtr);
 
@@ -1890,16 +1848,16 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset, igbreg::RxDe
             assert(pkt_offset == 0);
             DPRINTF(EthernetDesc, "Hdr split: Entire packet in header\n");
             // SHIN. Change To IDIO
-            // igbe->dmaWrite(pciToDma(correspondingDesc->adv_read.hdr),
+            // igbe->dmaWrite(pciToDma(desc->adv_read.hdr),
             //                packet->length, &pktEvent, packet->data,
             //                igbe->rxWriteDelay);
-            igbe->IdioWrite(pciToDma(correspondingDesc->adv_read.hdr),
+            igbe->IdioWrite(pciToDma(desc->adv_read.hdr),
                            packet->length, &pktEvent, packet->data,
                            igbe->rxWriteDelay, 0, igbe->adq);
 
-            correspondingDesc->adv_wb.header_len = htole((uint16_t)packet->length);
-            correspondingDesc->adv_wb.sph = htole(0);
-            correspondingDesc->adv_wb.pkt_len = htole(0);
+            desc->adv_wb.header_len = htole((uint16_t)packet->length);
+            desc->adv_wb.sph = htole(0);
+            desc->adv_wb.pkt_len = htole(0);
         } else if (split_point) {
             if (pkt_offset) {
                 // we are only copying some data, header/data has already been
@@ -1911,18 +1869,18 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset, igbreg::RxDe
                         "Hdr split: Continuing data buffer copy\n");
                 
                 // SHIN
-                // igbe->dmaWrite(pciToDma(correspondingDesc->adv_read.pkt),
+                // igbe->dmaWrite(pciToDma(desc->adv_read.pkt),
                 //                max_to_copy, &pktEvent,
                 //                packet->data + pkt_offset, igbe->rxWriteDelay);
 
-                igbe->IdioWrite(pciToDma(correspondingDesc->adv_read.pkt),
+                igbe->IdioWrite(pciToDma(desc->adv_read.pkt),
                                max_to_copy, &pktEvent,
                                packet->data + pkt_offset, igbe->rxWriteDelay,
                                0, igbe->adq);
 
-                correspondingDesc->adv_wb.header_len = htole(0);
-                correspondingDesc->adv_wb.pkt_len = htole((uint16_t)max_to_copy);
-                correspondingDesc->adv_wb.sph = htole(0);
+                desc->adv_wb.header_len = htole(0);
+                desc->adv_wb.pkt_len = htole((uint16_t)max_to_copy);
+                desc->adv_wb.sph = htole(0);
             } else {
                 int max_to_copy =
                     std::min(packet->length - split_point, buf_len);
@@ -1931,23 +1889,23 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset, igbreg::RxDe
                 DPRINTF(EthernetDesc, "Hdr split: splitting at %d\n",
                         split_point);
                 // SHIN
-                // igbe->dmaWrite(pciToDma(correspondingDesc->adv_read.hdr),
+                // igbe->dmaWrite(pciToDma(desc->adv_read.hdr),
                 //                split_point, &pktHdrEvent,
                 //                packet->data, igbe->rxWriteDelay);
-                // igbe->dmaWrite(pciToDma(correspondingDesc->adv_read.pkt),
+                // igbe->dmaWrite(pciToDma(desc->adv_read.pkt),
                 //                max_to_copy, &pktDataEvent,
                 //                packet->data + split_point, igbe->rxWriteDelay);
-                igbe->IdioWrite(pciToDma(correspondingDesc->adv_read.hdr),
+                igbe->IdioWrite(pciToDma(desc->adv_read.hdr),
                                split_point, &pktHdrEvent,
                                packet->data, igbe->rxWriteDelay,
                                0, igbe->adq);
-                igbe->IdioWrite(pciToDma(correspondingDesc->adv_read.pkt),
+                igbe->IdioWrite(pciToDma(desc->adv_read.pkt),
                                max_to_copy, &pktDataEvent,
                                packet->data + split_point, igbe->rxWriteDelay,
                                0, igbe->adq);
-                correspondingDesc->adv_wb.header_len = htole(split_point);
-                correspondingDesc->adv_wb.sph = 1;
-                correspondingDesc->adv_wb.pkt_len = htole((uint16_t)(max_to_copy));
+                desc->adv_wb.header_len = htole(split_point);
+                desc->adv_wb.sph = 1;
+                desc->adv_wb.pkt_len = htole((uint16_t)(max_to_copy));
             }
         } else {
             panic("Header split not fitting within header buffer or "
@@ -1958,14 +1916,16 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset, igbreg::RxDe
         panic("Unimplemnted RX receive buffer type: %d\n",
               igbe->regs.srrctl_array[queueID].desctype());
     }
-    return bytesCopied; // TODO: have to deal with this bytesCopied for each DMA engine within RxDescCacheGlobal - make array or..
+    return bytesCopied;
 
 }
 
 void
 IGbE::RxDescCache::pktComplete()
 {
-    assert(correspondingDesc!=NULL);
+    assert(unusedCache.size());
+    RxDesc *desc;
+    desc = unusedCache.front();
 
     uint16_t crcfixup = igbe->regs.rctl.secrc() ? 0 : 4 ;
     DPRINTF(EthernetDesc, "RXD[%d] pktPtr->length: %d bytesCopied: %d "
@@ -1983,8 +1943,8 @@ IGbE::RxDescCache::pktComplete()
     DPRINTF(EthernetDpdk, "RXD[%d] Packet written to memory updating Descriptor\n", queueID);
 
     #if LOG_LEVEL == 1
-    if (descTail() == 63 || descTail() == 127 || descTail() == 191) {
-        printf("[LOG], %lu, NIC_WR_RESP_RX_PKT_TO_MBUF_DMAE[%d], Head: %d, Tail: %d\n", curTick(), dmaEngineIdx, descHead(), descTail());
+    if (descTail() == 31 || descTail() == 63 || descTail() == 95) {
+        printf("[LOG], %lu, NIC_WR_RESP_RX_PKT_TO_MBUF, %lx, Head: %d, Tail: %d\n", curTick(), pciToDma(desc->adv_read.pkt), descHead(), descTail());
     }
     #endif
 
@@ -2058,29 +2018,29 @@ IGbE::RxDescCache::pktComplete()
 
     switch (igbe->regs.srrctl_array[queueID].desctype()) {
       case RXDT_LEGACY:
-        correspondingDesc->legacy.len = htole((uint16_t)(pktPtr->length + crcfixup));
-        correspondingDesc->legacy.status = htole(status);
-        correspondingDesc->legacy.errors = htole(err);
+        desc->legacy.len = htole((uint16_t)(pktPtr->length + crcfixup));
+        desc->legacy.status = htole(status);
+        desc->legacy.errors = htole(err);
         // No vlan support at this point... just set it to 0
-        correspondingDesc->legacy.vlan = 0;
+        desc->legacy.vlan = 0;
         DPRINTF(EthernetDesc, "RXD[%d] Descriptor LEGACY complete len: %#x status: %#x\n",
-                queueID, correspondingDesc->legacy.len, correspondingDesc->legacy.status);
+                queueID, desc->legacy.len, desc->legacy.status);
         break;
       case RXDT_ADV_SPLIT_A:
       case RXDT_ADV_ONEBUF:
-        correspondingDesc->adv_wb.rss_type = htole(0);
-        correspondingDesc->adv_wb.pkt_type = htole(ptype);
+        desc->adv_wb.rss_type = htole(0);
+        desc->adv_wb.pkt_type = htole(ptype);
         if (igbe->regs.rxcsum.pcsd()) {
             // no rss support right now
-            correspondingDesc->adv_wb.rss_hash = htole(0);
+            desc->adv_wb.rss_hash = htole(0);
         } else {
-            correspondingDesc->adv_wb.id = htole(ip_id);
-            correspondingDesc->adv_wb.csum = htole(csum);
+            desc->adv_wb.id = htole(ip_id);
+            desc->adv_wb.csum = htole(csum);
         }
-        correspondingDesc->adv_wb.status = htole(status);
-        correspondingDesc->adv_wb.errors = htole(ext_err);
+        desc->adv_wb.status = htole(status);
+        desc->adv_wb.errors = htole(ext_err);
         // no vlan support
-        correspondingDesc->adv_wb.vlan_tag = htole(0);
+        desc->adv_wb.vlan_tag = htole(0);
         break;
       default:
         panic("Unimplemnted RX receive buffer type %d\n", queueID,
@@ -2088,164 +2048,27 @@ IGbE::RxDescCache::pktComplete()
     }
 
     DPRINTF(EthernetDesc, "RXD[%d] Descriptor complete w0: %#x w1: %#x\n",
-            queueID, correspondingDesc->adv_read.pkt, correspondingDesc->adv_read.hdr);
+            queueID, desc->adv_read.pkt, desc->adv_read.hdr);
 
     if (bytesCopied == pktPtr->length) {
         DPRINTF(EthernetDesc,
                 "RXD[%d] Packet completely written to descriptor buffers\n", queueID);
         DPRINTF(EthernetDpdk,
-                "RXD[%d] Packet completely written to descriptor buffers\n", queueID);
-        
-        if (pktPtr->rxDMAEndTick == 0)
-            pktPtr->rxDMAEndTick = curTick();
-        
-        if (pktPtr->rxMadeTick != 0 && pktPtr->rxPortTick != 0 && pktPtr->rxFifoTick != 0 && pktPtr->rxDMAStartTick != 0 && pktPtr->rxDMAEndTick != 0) {
-            uint64_t rxTotalTime = pktPtr->rxDMAEndTick - pktPtr->rxMadeTick;
-            uint64_t rxEtherLinkTime = pktPtr->rxPortTick - pktPtr->rxMadeTick;
-            uint64_t rxPort2FifoTime = pktPtr->rxFifoTick - pktPtr->rxPortTick;
-            uint64_t rxFifo2DMAStartTime = pktPtr->rxDMAStartTick - pktPtr->rxFifoTick;
-            uint64_t rxDMATime = pktPtr->rxDMAEndTick - pktPtr->rxDMAStartTick;
-            // printf("RXD[%d] RX Total Time: %ld, EtherLink Time: %ld, Port2Fifo Time: %ld, Fifo2DMAStart Time: %ld, DMA Time: %ld\n", queueID, rxTotalTime, rxEtherLinkTime, rxPort2FifoTime, rxFifo2DMAStartTime, rxDMATime);
-            float rxTotalTimeInSec = (float)rxTotalTime / 10.0e12;
-            float rxEtherLinkTimeInSec = (float)rxEtherLinkTime / 10.0e12;
-            float rxPort2FifoTimeInSec = (float)rxPort2FifoTime / 10.0e12;
-            float rxFifo2DMAStartTimeInSec = (float)rxFifo2DMAStartTime / 10.0e12;
-            float rxDMATimeInSec = (float)rxDMATime / 10.0e12;
-        }
-    }
-
-    pktPtr = NULL;
-    pktWaiting = false;
-    correspondingDesc = NULL;
-
-    DPRINTF(EthernetDesc, "RXD[%d] Processing of this descriptor complete\n", queueID);
-    DPRINTF(EthernetDpdk, "RXD[%d] Processing of this descriptor complete\n", queueID);
-    
-    // call RxDescCacheGlobal to return the descriptor
-    parent->onDMAComplete(dmaEngineIdx);
-}
-
-bool
-IGbE::RxDescCache::hasOutstandingEvents()
-{
-    return pktEvent.scheduled() || pktHdrEvent.scheduled() ||
-        pktDataEvent.scheduled();
-
-}
-
-///////////////////////////// IGbE::RxDescCacheGlobal //////////////////////////////
-
-IGbE::RxDescCacheGlobal::RxDescCacheGlobal(IGbE *i, const std::string n, int s, int qid, int _numDMAEngines)
-    : DescCacheGlobal<RxDesc>(i, n, s, true, _numDMAEngines), queueID(qid),
-    _rdtrEvent([this]{ _rdtrProcess(); }, n),
-    _radvEvent([this]{ _radvProcess(); }, n)
-
-{
-    annSmFetch = "RX Desc Fetch";
-    annSmWb = "RX Desc Writeback";
-    annUnusedDescQ = "RX Unused Descriptors";
-    annUnusedCacheQ = "RX Unused Descriptor Cache";
-    annUsedCacheQ = "RX Used Descriptor Cache";
-    annUsedDescQ = "RX Used Descriptors";
-    annDescQ = "RX Descriptors";
-
-    // initialize the DMA engine
-    assert(numDMAEngines > 0);
-    printf("==================RxDescCacheGlobal with %d DMA Engines==================\n", numDMAEngines);
-    for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
-        // Treat original RxDescCache as the DMA engine
-        std::string dmaEngineName = n + ".DMAEngine" + std::to_string(engine_idx);
-        dmaEngineArray[engine_idx] = new RxDescCache(i, dmaEngineName, qid, engine_idx, this);
-        processingPktOffsetArray[engine_idx] = 0;
-        processingPktDoneArray[engine_idx] = false;
-    }
-    
-}
-
-bool 
-IGbE::RxDescCacheGlobal::writePacketGlobal(EthPacketPtr packet)
-{
-    // First receive ethpacket and will choose the DMA engine to write the packet
-    if (!unusedCache.size()) {
-        // This can happen, because DMA engine will use the descriptors in the unusedCache, 
-        // and it is counted as descUnused(), but new DMA engine cannot use. 
-        // So we have to wait until descUnused() becomes 0, which means previous work is done.
-        return false;
-    }
-
-    // Choose the DMA engine to write the packet
-    assert(hasFreeDMAEngine());
-    int idx = getFreeDMAEngine();
-    assert(idx != -1);
-    assert(processingPktArray[idx] == NULL);
-    assert(processingPktOffsetArray[idx] == 0);
-    assert(processingPktDoneArray[idx] == false);
-    assert(processingCache[idx].desc == NULL);
-    processingPktArray[idx] = packet;
-    RxDesc *desc = unusedCache.front();
-    processingCache[idx].desc = desc;
-    processingCache[idx].seqIdx = nextSeqToProcess++;
-    processingCache[idx].done = false;
-    unusedCache.pop_front();
-
-    // printf("[LOG], %lu, RXD[%d]_Use_DMAEngine[%d]_For_Packet_with_seqIdx_%d\n"
-    //         , curTick(), queueID, idx, processingCache[idx].seqIdx);
-
-    // Call the writePacket function of the DMA engine
-    processingPktOffsetArray[idx] = dmaEngineArray[idx]->writePacket(packet, 0, desc);
-    DPRINTF(EthernetSM, "RXS[%d]: Writing packet into memory\n", queueID);
-    DPRINTF(EthernetDpdk, "RXS[%d]: Writing packet into memory\n", queueID);
-
-    return true;
-}
-
-void
-IGbE::RxDescCacheGlobal::onDMAComplete(int engineIdx)
-{
-    assert(engineIdx < numDMAEngines);
-    RxDescCache *dmaEngine = dmaEngineArray[engineIdx];
-    assert(dmaEngine != NULL);
-
-    // Get the info from the DMA engine
-    EthPacketPtr pktPtr = processingPktArray[engineIdx];
-    assert(pktPtr != NULL);
-    unsigned bytesCopied = dmaEngine->getBytesCopied();
-    assert(bytesCopied > 0);
-
-    if (bytesCopied == pktPtr->length) {
-        // This is end of processing ethPacket
-        DPRINTF(EthernetSM, "RXS[%d]: Packet completely written to memory\n", queueID);
-        DPRINTF(EthernetDpdk, "RXS[%d]: Packet completely written to memory\n", queueID);
-        
-        // Update the info of DMA engine
-        processingPktOffsetArray[engineIdx] = 0;
-        processingPktDoneArray[engineIdx] = true;
-        processingPktArray[engineIdx] = NULL;
-        // Reset the bytes copied
-        dmaEngine->setBytesCopied(0);
-
-        // Set done the processing descriptor
-        processingCache[engineIdx].done = true;
-        RxDesc *desc = processingCache[engineIdx].desc;
-        assert(desc != NULL);
-
-        // printf("[LOG], %lu, RXD[%d]_DMAEngine[%d]_Done_with_seqIdx_%d\n"
-        //     , curTick(), queueID, engineIdx, processingCache[engineIdx].seqIdx);
-
-        // Call to the manage the used cache and the processingCache to meet the sequence
-        manageUsedCache();
-        
-
+                "RXD[%d] Packet completely written to descriptor buffers\n", queueID);    
         // Deal with the rx timer interrupts
         if (igbe->regs.rdtr.delay()) {
             Tick delay = igbe->regs.rdtr.delay() * igbe->intClock();
             DPRINTF(EthernetSM, "RXS[%d]: Scheduling DTR for %d\n", queueID, delay);
+            // igbe->reschedule(igbe->rdtrEvent, curTick() + delay);
             igbe->reschedule(_rdtrEvent, curTick() + delay);
         }
 
         if (igbe->regs.radv.idv()) {
             Tick delay = igbe->regs.radv.idv() * igbe->intClock();
             DPRINTF(EthernetSM, "RXS[%d]: Scheduling ADV for %d\n", queueID, delay);
+            // if (!igbe->radvEvent.scheduled()) {
+            //     igbe->schedule(igbe->radvEvent, curTick() + delay);
+            // }
             if (!_radvEvent.scheduled()) {
                 igbe->schedule(_radvEvent, curTick() + delay);
             }
@@ -2264,73 +2087,44 @@ IGbE::RxDescCacheGlobal::onDMAComplete(int engineIdx)
             DPRINTF(EthernetSM,
                     "RXS: Posting IT_SRPD beacuse small packet received\n");
             igbe->postInterrupt(IT_SRPD);
-        }        
-    } else {
-        // This is not end of processing ethPacket
-        DPRINTF(EthernetSM, "RXS[%d]: Packet partially written to memory\n", queueID);
-        DPRINTF(EthernetDpdk, "RXS[%d]: Packet partially written to memory\n", queueID);
-        // Update the info of DMA engine
-        assert(0 && "Not implemented yet");
+        }
+        bytesCopied = 0;
+        if (pktPtr->rxDMAEndTick == 0)
+            pktPtr->rxDMAEndTick = curTick();
+        
+        if (pktPtr->rxMadeTick != 0 && pktPtr->rxPortTick != 0 && pktPtr->rxFifoTick != 0 && pktPtr->rxDMAStartTick != 0 && pktPtr->rxDMAEndTick != 0) {
+            uint64_t rxTotalTime = pktPtr->rxDMAEndTick - pktPtr->rxMadeTick;
+            uint64_t rxEtherLinkTime = pktPtr->rxPortTick - pktPtr->rxMadeTick;
+            uint64_t rxPort2FifoTime = pktPtr->rxFifoTick - pktPtr->rxPortTick;
+            uint64_t rxFifo2DMAStartTime = pktPtr->rxDMAStartTick - pktPtr->rxFifoTick;
+            uint64_t rxDMATime = pktPtr->rxDMAEndTick - pktPtr->rxDMAStartTick;
+            // printf("RXD[%d] RX Total Time: %ld, EtherLink Time: %ld, Port2Fifo Time: %ld, Fifo2DMAStart Time: %ld, DMA Time: %ld\n", queueID, rxTotalTime, rxEtherLinkTime, rxPort2FifoTime, rxFifo2DMAStartTime, rxDMATime);
+            float rxTotalTimeInSec = (float)rxTotalTime / 10.0e12;
+            float rxEtherLinkTimeInSec = (float)rxEtherLinkTime / 10.0e12;
+            float rxPort2FifoTimeInSec = (float)rxPort2FifoTime / 10.0e12;
+            float rxFifo2DMAStartTimeInSec = (float)rxFifo2DMAStartTime / 10.0e12;
+            float rxDMATimeInSec = (float)rxDMATime / 10.0e12;
+            // igbe->etherDeviceStats.rxEnd2EndClk.sample(rxTotalTimeInSec);
+            // igbe->etherDeviceStats.rxEtherLinkClk.sample(rxEtherLinkTimeInSec);
+            // igbe->etherDeviceStats.rxPort2FifoClk.sample(rxPort2FifoTimeInSec);
+            // igbe->etherDeviceStats.rxFifo2DmaClk.sample(rxFifo2DMAStartTimeInSec);
+            // igbe->etherDeviceStats.rxDma2CoreClk.sample(rxDMATimeInSec);
+        }
     }
 
+    pktPtr = NULL;
     igbe->checkDrain();
     enableSm();
-}
+    pktDone = true;
 
-int 
-IGbE::RxDescCacheGlobal::hasReadyEthPacket()
-{
-    // Check each DMA engine has ready packet
-    // Ready packet: processingPktDoneArray[engineIdx] == true
-    for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
-        if (processingPktDoneArray[engine_idx]) {
-            return engine_idx;
-        }
-    }
-    return -1;
-}
-        
-void 
-IGbE::RxDescCacheGlobal::clearDoneEthPacket(int engineIdx)
-{   
-    processingPktDoneArray[engineIdx] = false;
-    assert(processingPktArray[engineIdx] == NULL);
-    assert(processingPktOffsetArray[engineIdx] == 0);
-    // assert(processingCache[engineIdx].desc == NULL); // This can be not NULL if the mbuf DMA is not done sequentially
-
+    DPRINTF(EthernetDesc, "RXD[%d] Processing of this descriptor complete\n", queueID);
+    DPRINTF(EthernetDpdk, "RXD[%d] Processing of this descriptor complete\n", queueID);
+    unusedCache.pop_front();
+    usedCache.push_back(desc);
 }
 
 void
-IGbE::RxDescCacheGlobal::manageUsedCache()
-{
-    bool progress = true;
-    while (progress) {
-        progress = false;
-
-        for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
-            if (processingCache[engine_idx].done &&
-                processingCache[engine_idx].seqIdx == nextSeqToWriteback) {
-
-                RxDesc *desc = processingCache[engine_idx].desc;
-                assert(desc != NULL);
-
-                usedCache.push_back(desc);
-                processingCache[engine_idx].desc = NULL;
-                processingCache[engine_idx].seqIdx = 0;
-                processingCache[engine_idx].done = false;
-
-                // printf("[LOG], %lu, RXD[%d]_Push_ProcessingCache[%d]_To_UsedCache_with_seqIdx_%d\n"
-                //     , curTick(), queueID, engine_idx, nextSeqToWriteback);
-                nextSeqToWriteback++;
-                progress = true; // made progress, need to scan again
-                break; // restart loop to recheck all engines
-            }
-        }
-    }
-}
-
-void
-IGbE::RxDescCacheGlobal::enableSm()
+IGbE::RxDescCache::enableSm()
 {
     if (igbe->drainState() != DrainState::Draining) {
         igbe->rxTick = true;
@@ -2339,22 +2133,31 @@ IGbE::RxDescCacheGlobal::enableSm()
 }
 
 bool
-IGbE::RxDescCacheGlobal::hasOutstandingEvents()
+IGbE::RxDescCache::packetDone()
 {
-    bool descCacheGlobalOutstanding = wbEvent.scheduled() ||
-        fetchEvent.scheduled();
-    // Have to check all DMA engines
-    for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
-        descCacheGlobalOutstanding |= dmaEngineArray[engine_idx]->hasOutstandingEvents();
+    if (pktDone) {
+        // pktDone = false;
+        return true;
     }
-    return descCacheGlobalOutstanding;
+    return false;
+}
+
+bool
+IGbE::RxDescCache::hasOutstandingEvents()
+{
+    return pktEvent.scheduled() || wbEvent.scheduled() ||
+        fetchEvent.scheduled() || pktHdrEvent.scheduled() ||
+        pktDataEvent.scheduled();
 
 }
 
 void
-IGbE::RxDescCacheGlobal::serialize(CheckpointOut &cp) const
+IGbE::RxDescCache::serialize(CheckpointOut &cp) const
 {
-    DescCacheGlobal<RxDesc>::serialize(cp);
+    DescCache<RxDesc>::serialize(cp);
+    SERIALIZE_SCALAR(pktDone);
+    SERIALIZE_SCALAR(splitCount);
+    SERIALIZE_SCALAR(bytesCopied);
 
     Tick _rdtr_time = 0, _radv_time = 0;
 
@@ -2367,9 +2170,12 @@ IGbE::RxDescCacheGlobal::serialize(CheckpointOut &cp) const
 }
 
 void
-IGbE::RxDescCacheGlobal::unserialize(CheckpointIn &cp)
+IGbE::RxDescCache::unserialize(CheckpointIn &cp)
 {
-    DescCacheGlobal<RxDesc>::unserialize(cp);
+    DescCache<RxDesc>::unserialize(cp);
+    UNSERIALIZE_SCALAR(pktDone);
+    UNSERIALIZE_SCALAR(splitCount);
+    UNSERIALIZE_SCALAR(bytesCopied);
 
     Tick _rdtr_time = 0, _radv_time = 0;
     UNSERIALIZE_SCALAR(_rdtr_time);
@@ -2383,85 +2189,14 @@ IGbE::RxDescCacheGlobal::unserialize(CheckpointIn &cp)
 
 ///////////////////////////// IGbE::TxDescCache //////////////////////////////
 
-IGbE::TxDescCache::TxDescCache(IGbE *i, const std::string n, int qid, int engineIdx, TxDescCacheGlobal *_parent)
-    : DescCache<TxDesc>(i,n, false, engineIdx), pktDone(false), parent(_parent),
-      pktWaiting(false), queueID(qid),
-    pktEvent([this]{ pktComplete(); }, n)
-{
-
-}
-
-void
-IGbE::TxDescCache::getPacketData(EthPacketPtr p, Addr addr, int size)
-{
-    assert(pktPtr == NULL);
-    assert(pktWaiting == false);
-
-    pktPtr = p;
-    dmaAddr = addr;
-
-    pktWaiting = true;
-
-    DPRINTF(EthernetDesc, "TXD[%d] Starting DMA of packet at offset %d\n", queueID, p->length);
-
-    #if LOG_LEVEL == 1
-    if (descTail() == 128 || descTail() == 192 || descTail() == 256) {
-        printf("[LOG], %lu, NIC_RD_REQ_TX_MBUF_DMAE[%d], %lx, %d, Head: %d, Tail: %d\n", curTick(), dmaEngineIdx, addr, size, descHead(), descTail());
-    }
-    #endif
-    igbe->dmaRead(addr,
-                    size, &pktEvent, p->data + p->length,
-                    igbe->txReadDelay);
-
-}
-
-void
-IGbE::TxDescCache::pktComplete()
-{
-    assert(pktPtr);
-
-    DPRINTF(EthernetDesc, "TXD[%d] DMAE[%d] of packet complete\n", queueID, dmaEngineIdx);
-    DPRINTF(EthernetDpdk, "TXD[%d] DMAE[%d] of packet complete\n", queueID, dmaEngineIdx);
-
-    // printf("TXD[%d] At clk: %ld pktComplete() pktPtr: %p\n", queueID, curTick(), pktPtr);
-
-    #if LOG_LEVEL == 1
-    if (descTail() == 128 || descTail() == 192 || descTail() == 256) {
-        printf("[LOG], %lu, NIC_RD_RESP_TX_MBUF_DMAE[%d], %lx, Head: %d, Tail: %d\n", curTick(), dmaEngineIdx, dmaAddr, descHead(), descTail());
-    }
-    #endif
-    
-    // Call the global level to process the descriptor
-    parent->onDMAComplete(dmaEngineIdx);
-    pktPtr = NULL;
-    dmaAddr = 0;
-    return;
-}
-
-bool
-IGbE::TxDescCache::packetAvailable()
-{
-    if (pktDone) {
-        // pktDone = false; -> it is set through unsetPacketDone()
-        return true;
-    }
-    return false;
-}
-
-bool
-IGbE::TxDescCache::hasOutstandingEvents()
-{
-    return pktEvent.scheduled();
-}
-
-////////////////////////////// IGbE::TxDescCacheGlobal //////////////////////////////
-IGbE::TxDescCacheGlobal::TxDescCacheGlobal(IGbE *i, const std::string n, int s, int qid, int _numDMAEngines)
-    : DescCacheGlobal<TxDesc>(i,n, s, false, _numDMAEngines), queueID(qid), roundRobinIdx(0),
-      isTcp(false), pktHdrWaiting(false), pktMultiDesc(false),
+IGbE::TxDescCache::TxDescCache(IGbE *i, const std::string n, int s, int qid)
+    : DescCache<TxDesc>(i,n, s, false), pktDone(false), isTcp(false),
+      pktWaiting(false), pktMultiDesc(false),
       completionAddress(0), completionEnabled(false),
       useTso(false), tsoHeaderLen(0), tsoMss(0), tsoTotalLen(0), tsoUsedLen(0),
       tsoPrevSeq(0), tsoPktPayloadBytes(0), tsoLoadedHeader(false),
-      tsoPktHasHeader(false), tsoDescBytesUsed(0), tsoCopyBytes(0), tsoPkts(0), tsoDMAEngineIdx(-1),
+      tsoPktHasHeader(false), tsoDescBytesUsed(0), tsoCopyBytes(0), tsoPkts(0), queueID(qid),
+    pktEvent([this]{ pktComplete(); }, n),
     headerEvent([this]{ headerComplete(); }, n),
     nullEvent([this]{ nullCallback(); }, n),
     _tadvEvent([this]{ _tadvProcess(); }, n),
@@ -2474,20 +2209,12 @@ IGbE::TxDescCacheGlobal::TxDescCacheGlobal(IGbE *i, const std::string n, int s, 
     annUsedCacheQ = "TX Used Descriptor Cache";
     annUsedDescQ = "TX Used Descriptors";
     annDescQ = "TX Descriptors";
-
-    // initialize the DMA engine
-    assert(numDMAEngines > 0);
-    printf("==================TxDescCacheGlobal with %d DMA Engines==================\n", numDMAEngines);
-    for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
-        // Treat original TxDescCache as the DMA engine
-        std::string dmaEngineName = n + ".DMAEngine" + std::to_string(engine_idx);
-        dmaEngineArray[engine_idx] = new TxDescCache(i, dmaEngineName, qid, engine_idx, this);
-    }
 }
 
 void
-IGbE::TxDescCacheGlobal::processContextDesc()
+IGbE::TxDescCache::processContextDesc()
 {
+    assert(unusedCache.size());
     TxDesc *desc;
 
     DPRINTF(EthernetDesc, "TXD[%d] Checking and  processing context descriptors\n", queueID);
@@ -2552,7 +2279,7 @@ IGbE::TxDescCacheGlobal::processContextDesc()
         // we need to fetch a header
         DPRINTF(EthernetDesc, "TXD[%d] Starting DMA of TSO header\n", queueID);
         assert(txd_op::isData(desc) && txd_op::getLen(desc) >= tsoHeaderLen);
-        pktHdrWaiting = true;
+        pktWaiting = true;
         assert(tsoHeaderLen <= 256);
         igbe->dmaRead(pciToDma(txd_op::getBuf(desc)),
                       tsoHeaderLen, &headerEvent, tsoHeader, 0);
@@ -2560,10 +2287,10 @@ IGbE::TxDescCacheGlobal::processContextDesc()
 }
 
 void
-IGbE::TxDescCacheGlobal::headerComplete()
+IGbE::TxDescCache::headerComplete()
 {
     DPRINTF(EthernetDesc, "TXD[%d] TSO: Fetching TSO header complete\n", queueID);
-    pktHdrWaiting = false;
+    pktWaiting = false;
 
     assert(unusedCache.size());
     TxDesc *desc = unusedCache.front();
@@ -2585,7 +2312,7 @@ IGbE::TxDescCacheGlobal::headerComplete()
 }
 
 unsigned
-IGbE::TxDescCacheGlobal::getPacketSize()
+IGbE::TxDescCache::getPacketSize(EthPacketPtr p)
 {
     if (!unusedCache.size())
         return 0;
@@ -2602,17 +2329,12 @@ IGbE::TxDescCacheGlobal::getPacketSize()
                 "used: %d loaded hdr: %d\n", queueID, useTso, tsoHeaderLen, tsoMss,
                 tsoTotalLen, tsoUsedLen, tsoLoadedHeader);
 
-        if (tsoPktHasHeader) {
-            assert(tsoDMAEngineIdx != -1);
-            EthPacketPtr p = processingPktArray[tsoDMAEngineIdx];
-            assert(p != NULL);
+        if (tsoPktHasHeader)
             tsoCopyBytes =  std::min((tsoMss + tsoHeaderLen) - p->length,
                                      txd_op::getLen(desc) - tsoDescBytesUsed);
-        }
-        else {
+        else
             tsoCopyBytes =  std::min(tsoMss,
                                      txd_op::getLen(desc) - tsoDescBytesUsed);
-        }
         unsigned pkt_size =
             tsoCopyBytes + (tsoPktHasHeader ? 0 : tsoHeaderLen);
 
@@ -2630,8 +2352,8 @@ IGbE::TxDescCacheGlobal::getPacketSize()
 }
 
 void
-IGbE::TxDescCacheGlobal::getPacketDataGlobal()
-{   
+IGbE::TxDescCache::getPacketData(EthPacketPtr p)
+{
     assert(unusedCache.size());
 
     TxDesc *desc;
@@ -2642,79 +2364,70 @@ IGbE::TxDescCacheGlobal::getPacketDataGlobal()
     assert((txd_op::isLegacy(desc) || txd_op::isData(desc)) &&
            txd_op::getLen(desc));
 
-    if (!useTso) {
-        EthPacketPtr p = std::make_shared<EthPacketData>(16384);
-        assert(hasFreeDMAEngine());
-        int idx = getFreeDMAEngine();
-        assert(idx != -1);
-        assert(processingPktArray[idx] == NULL);
-        assert(processingCache[idx].desc == NULL);
-        processingPktArray[idx] = p;
-        processingCache[idx].desc = desc;
-        processingCache[idx].seqIdx = nextSeqToProcess++;
-        processingCache[idx].done = false;
-        unusedCache.pop_front();
+    pktPtr = p;
 
-        // printf("[LOG], %lu, TXD[%d]_Use_DMAEngine[%d]_For_Packet_with_seqIdx_%d\n"
-        //     , curTick(), queueID, idx, processingCache[idx].seqIdx);
+    pktWaiting = true;
 
-        // Call dmaEngine's getPacketData
-        dmaEngineArray[idx]->getPacketData(p, pciToDma(txd_op::getBuf(desc)),
-                        txd_op::getLen(desc));
-    } else {
-        // useTso
-        if (tsoDMAEngineIdx == -1) {
-            // First descriptor of TSO packet
-            EthPacketPtr p = std::make_shared<EthPacketData>(16384);
-            assert(hasFreeDMAEngine());
-            tsoDMAEngineIdx = getFreeDMAEngine();
-            assert(tsoDMAEngineIdx != -1);
-            assert(processingPktArray[tsoDMAEngineIdx] == NULL);
-            processingPktArray[tsoDMAEngineIdx] = p;
-        }
-        assert(processingPktArray[tsoDMAEngineIdx] != NULL);
+    DPRINTF(EthernetDesc, "TXD[%d] Starting DMA of packet at offset %d\n", queueID, p->length);
+
+    if (useTso) {
         assert(tsoLoadedHeader);
         if (!tsoPktHasHeader) {
             DPRINTF(EthernetDesc,
                     "TXD[%d] Loading TSO header (%d bytes) into start of packet\n", queueID,
                     tsoHeaderLen);
-            memcpy(processingPktArray[tsoDMAEngineIdx]->data, &tsoHeader,
-                   tsoHeaderLen);
-            processingPktArray[tsoDMAEngineIdx]->length += tsoHeaderLen;
+            memcpy(p->data, &tsoHeader,tsoHeaderLen);
+            p->length +=tsoHeaderLen;
             tsoPktHasHeader = true;
         }
-        assert(processingCache[tsoDMAEngineIdx].desc == NULL);
-        processingCache[tsoDMAEngineIdx].desc = desc;
-        processingCache[tsoDMAEngineIdx].seqIdx = nextSeqToProcess++;
-        processingCache[tsoDMAEngineIdx].done = false;
-        unusedCache.pop_front();
+    }
 
-        // Call dmaEngine's getPacketData
-        assert(tsoCopyBytes > 0);
-        dmaEngineArray[tsoDMAEngineIdx]->getPacketData(processingPktArray[tsoDMAEngineIdx], 
-                        pciToDma(txd_op::getBuf(desc)) + tsoDescBytesUsed,
-                        tsoCopyBytes);
+    if (useTso) {
+        DPRINTF(EthernetDesc,
+                "TXD[%d] Starting DMA of packet at offset %d length: %d\n", queueID,
+                p->length, tsoCopyBytes);
+        // printf("TXD[%d] At clk: %ld DmaRead pktPtr: %p, Addr: %lx, Size: %d, Delay: %ld\n", 
+        //         queueID, curTick(), p, pciToDma(txd_op::getBuf(desc)) + tsoDescBytesUsed, tsoCopyBytes, igbe->txReadDelay);
+
+        igbe->dmaRead(pciToDma(txd_op::getBuf(desc))
+                      + tsoDescBytesUsed,
+                      tsoCopyBytes, &pktEvent, p->data + p->length,
+                      igbe->txReadDelay);
         tsoDescBytesUsed += tsoCopyBytes;
         assert(tsoDescBytesUsed <= txd_op::getLen(desc));
+    } else {
+        // printf("TXD[%d] At clk: %ld DmaRead pktPtr: %p, Addr: %lx, Size: %d, Delay: %ld\n", 
+        //         queueID, curTick(), p, pciToDma(txd_op::getBuf(desc)), txd_op::getLen(desc), igbe->txReadDelay);
+
+        #if LOG_LEVEL == 1
+        if (descTail() == 64 || descTail() == 96 || descTail() == 128) {
+            printf("[LOG], %lu, NIC_RD_REQ_TX_MBUF, %lx, %d\n", curTick(), pciToDma(txd_op::getBuf(desc)), txd_op::getLen(desc));
+        }
+        #endif
+        igbe->dmaRead(pciToDma(txd_op::getBuf(desc)),
+                      txd_op::getLen(desc), &pktEvent, p->data + p->length,
+                      igbe->txReadDelay);
     }
 }
 
 void
-IGbE::TxDescCacheGlobal::onDMAComplete(int engineIdx)
+IGbE::TxDescCache::pktComplete()
 {
-    assert(engineIdx < numDMAEngines);
-    TxDescCache *dmaEngine = dmaEngineArray[engineIdx];
-    assert(dmaEngine != NULL);
 
-    // Get the info from the DMA engine
-    EthPacketPtr pktPtr = processingPktArray[engineIdx];
-    assert(pktPtr != NULL);
-    TxDesc *desc = processingCache[engineIdx].desc;
-    assert(desc != NULL);
+    TxDesc *desc;
+    assert(unusedCache.size());
+    assert(pktPtr);
 
+    DPRINTF(EthernetDesc, "TXD[%d] DMA of packet complete\n", queueID);
+    DPRINTF(EthernetDpdk, "TXD[%d] DMA of packet complete\n", queueID);
+
+    // printf("TXD[%d] At clk: %ld pktComplete() pktPtr: %p\n", queueID, curTick(), pktPtr);
+
+
+    desc = unusedCache.front();
     assert((txd_op::isLegacy(desc) || txd_op::isData(desc)) &&
            txd_op::getLen(desc));
-    
+
     DPRINTF(EthernetDesc, "TXD[%d] TxDescriptor data d1: %#llx d2: %#llx\n", queueID,
             desc->d1, desc->d2);
 
@@ -2733,29 +2446,35 @@ IGbE::TxDescCacheGlobal::onDMAComplete(int engineIdx)
         pktPtr->length += txd_op::getLen(desc);
     }
 
+
+
     if ((!txd_op::eop(desc) && !useTso) ||
         (pktPtr->length < ( tsoMss + tsoHeaderLen) &&
          tsoTotalLen != tsoUsedLen && useTso)) {
         assert(!useTso || (tsoDescBytesUsed == txd_op::getLen(desc)));
-
-        processingCache[engineIdx].done = true;
-
-        // Call to the manage the used cache and the processingCache to meet the sequence
-        manageUsedCache();
+        unusedCache.pop_front();
+        usedCache.push_back(desc);
 
         tsoDescBytesUsed = 0;
-        dmaEngine->setPktDone(true);
-        dmaEngine->setPktWaiting(false);
-
+        pktDone = true;
+        pktWaiting = false;
         pktMultiDesc = true;
 
         DPRINTF(EthernetDesc, "TXD[%d] Partial Packet Descriptor of %d bytes Done\n", queueID,
                 pktPtr->length);
+        pktPtr = NULL;
 
         enableSm();
         igbe->checkDrain();
         return;
     }
+
+    #if LOG_LEVEL == 1
+    if (descTail() == 64 || descTail() == 96 || descTail() == 128) {
+        printf("[LOG], %lu, NIC_RD_RESP_TX_MBUF, %lx, Head: %d, Tail: %d\n", curTick(), pciToDma(txd_op::getBuf(desc)), descHead(), descTail());
+    }
+    #endif
+
 
     pktMultiDesc = false;
     // no support for vlans
@@ -2771,7 +2490,7 @@ IGbE::TxDescCacheGlobal::onDMAComplete(int engineIdx)
 
     DPRINTF(EthernetDesc, "TXD[%d] TxDescriptor data d1: %#llx d2: %#llx\n", queueID,
             desc->d1, desc->d2);
-    
+
     if (useTso) {
         IpPtr ip(pktPtr);
         Ip6Ptr ip6(pktPtr);
@@ -2863,23 +2582,17 @@ IGbE::TxDescCacheGlobal::onDMAComplete(int engineIdx)
         }
     }
 
+
     if (!useTso ||  txd_op::getLen(desc) == tsoDescBytesUsed) {
         DPRINTF(EthernetDesc, "TXD[%d] Descriptor Done\n", queueID);
-        processingCache[engineIdx].done = true;
-
-        // printf("[LOG], %lu, TXD[%d]_DMAEngine[%d]_Done_with_seqIdx_%d\n"
-        //     , curTick(), queueID, engineIdx, processingCache[engineIdx].seqIdx);
-        
-        // Call to the manage the used cache and the processingCache to meet the sequence
-        manageUsedCache();
-
+        unusedCache.pop_front();
+        usedCache.push_back(desc);
         tsoDescBytesUsed = 0;
     }
 
-    if (useTso && tsoUsedLen == tsoTotalLen) {
+    if (useTso && tsoUsedLen == tsoTotalLen)
         useTso = false;
-        tsoDMAEngineIdx = -1;
-    }
+
 
     DPRINTF(EthernetDesc,
             "TXD[%d] ------Packet of %d bytes ready for transmission-------\n", queueID,
@@ -2890,8 +2603,9 @@ IGbE::TxDescCacheGlobal::onDMAComplete(int engineIdx)
     
     igbe->etherDeviceStats.txDMABytes += pktPtr->length;
 
-    dmaEngine->setPktDone(true);
-    dmaEngine->setPktWaiting(false);
+    pktDone = true;
+    pktWaiting = false;
+    pktPtr = NULL;
     tsoPktHasHeader = false;
 
     if (igbe->regs.txdctl_array[queueID].wthresh() == 0) {
@@ -2908,87 +2622,16 @@ IGbE::TxDescCacheGlobal::onDMAComplete(int engineIdx)
 
     enableSm();
     igbe->checkDrain();
-    return;
-}
-
-bool
-IGbE::TxDescCacheGlobal::hasReadyEthPacket()
-{
-    // Check each DMA engine has ready packet
-    // Ready packet: pktDone == true && pktWaiting == false && pktPtr != NULL && pktMultiDesc == false && pktPtr->length > 0
-    for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
-        if (!pktMultiDesc &&
-            dmaEngineArray[engine_idx]->packetAvailable() && 
-            processingPktArray[engine_idx] != NULL &&
-            processingPktArray[engine_idx]->length > 0) {
-            
-            return true;
-        }
-    }
-    return false;
-}
-
-EthPacketPtr 
-IGbE::TxDescCacheGlobal::getReadyEthPacket()
-{
-    assert(hasReadyEthPacket());
-    EthPacketPtr pktPtr = NULL;
-    for (int i = 0; i < numDMAEngines; i++) {
-        int engine_idx = (roundRobinIdx + i) % numDMAEngines;
-        if (!pktMultiDesc &&
-            dmaEngineArray[engine_idx]->packetAvailable() && 
-            processingPktArray[engine_idx] != NULL &&
-            processingPktArray[engine_idx]->length > 0) {
-            
-            pktPtr = processingPktArray[engine_idx];
-            // Reset the DMA engine
-            processingPktArray[engine_idx] = NULL;
-            dmaEngineArray[engine_idx]->unsetPacketDone();
-            assert(dmaEngineArray[engine_idx]->packetWaiting() == false);
-            
-            roundRobinIdx = (engine_idx + 1) % numDMAEngines;
-            break;
-        }   
-    }
-    return pktPtr;
 }
 
 void
-IGbE::TxDescCacheGlobal::manageUsedCache()
-{
-    bool progress = true;
-    while (progress) {
-        progress = false;
-
-        for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
-            if (processingCache[engine_idx].done &&
-                processingCache[engine_idx].seqIdx == nextSeqToWriteback) {
-
-                TxDesc *desc = processingCache[engine_idx].desc;
-                assert(desc != NULL);
-
-                usedCache.push_back(desc);
-                processingCache[engine_idx].desc = NULL;
-                processingCache[engine_idx].seqIdx = 0;
-                processingCache[engine_idx].done = false;
-
-                // printf("[LOG], %lu, TXD[%d]_Push_ProcessingCache[%d]_To_UsedCache_with_seqIdx_%d\n"
-                //     , curTick(), queueID, engine_idx, nextSeqToWriteback);
-                nextSeqToWriteback++;
-                progress = true; // made progress, need to scan again
-                break; // restart loop to recheck all engines
-            }
-        }
-    }
-}
-
-void
-IGbE::TxDescCacheGlobal::actionAfterWb()
+IGbE::TxDescCache::actionAfterWb()
 {
     DPRINTF(EthernetDesc, "TXD[%d] actionAfterWb() completionEnabled: %d\n", queueID,
             completionEnabled);
     igbe->postInterrupt(igbreg::IT_TXDW);
     if (completionEnabled) {
+        // descEnd = igbe->regs.tdh();
         descEnd = igbe->regs.tdh_array[queueID]();
         DPRINTF(EthernetDesc,
                 "TXD[%d] Completion writing back value: %d to addr: %#x\n", queueID, descEnd,
@@ -3002,11 +2645,13 @@ IGbE::TxDescCacheGlobal::actionAfterWb()
 }
 
 void
-IGbE::TxDescCacheGlobal::serialize(CheckpointOut &cp) const
-{   
-    DescCacheGlobal<TxDesc>::serialize(cp);
+IGbE::TxDescCache::serialize(CheckpointOut &cp) const
+{
+    DescCache<TxDesc>::serialize(cp);
 
+    SERIALIZE_SCALAR(pktDone);
     SERIALIZE_SCALAR(isTcp);
+    SERIALIZE_SCALAR(pktWaiting);
     SERIALIZE_SCALAR(pktMultiDesc);
 
     SERIALIZE_SCALAR(useTso);
@@ -3038,11 +2683,13 @@ IGbE::TxDescCacheGlobal::serialize(CheckpointOut &cp) const
 }
 
 void
-IGbE::TxDescCacheGlobal::unserialize(CheckpointIn &cp)
-{   
-    DescCacheGlobal<TxDesc>::unserialize(cp);
+IGbE::TxDescCache::unserialize(CheckpointIn &cp)
+{
+    DescCache<TxDesc>::unserialize(cp);
 
+    UNSERIALIZE_SCALAR(pktDone);
     UNSERIALIZE_SCALAR(isTcp);
+    UNSERIALIZE_SCALAR(pktWaiting);
     UNSERIALIZE_SCALAR(pktMultiDesc);
 
     UNSERIALIZE_SCALAR(useTso);
@@ -3072,8 +2719,18 @@ IGbE::TxDescCacheGlobal::unserialize(CheckpointIn &cp)
         igbe->schedule(_tadvEvent, _tadv_time);
 }
 
+bool
+IGbE::TxDescCache::packetAvailable()
+{
+    if (pktDone) {
+        // pktDone = false; -> it is set through unsetPacketDone()
+        return true;
+    }
+    return false;
+}
+
 void
-IGbE::TxDescCacheGlobal::enableSm()
+IGbE::TxDescCache::enableSm()
 {
     if (igbe->drainState() != DrainState::Draining) {
         igbe->txTick = true;
@@ -3082,19 +2739,14 @@ IGbE::TxDescCacheGlobal::enableSm()
 }
 
 bool
-IGbE::TxDescCacheGlobal::hasOutstandingEvents()
+IGbE::TxDescCache::hasOutstandingEvents()
 {
-    bool descCacheGlobalOutstanding = wbEvent.scheduled() || fetchEvent.scheduled();
-    // Have to check all DMA engines
-    for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
-        descCacheGlobalOutstanding |= dmaEngineArray[engine_idx]->hasOutstandingEvents();
-    }
-    return descCacheGlobalOutstanding;
-    
+    return pktEvent.scheduled() || wbEvent.scheduled() ||
+        fetchEvent.scheduled();
 }
 
 std::string 
-IGbE::TxDescCacheGlobal::wbBufToString(int idx) {
+IGbE::TxDescCache::wbBufToString(int idx) {
     igbreg::TxDesc *desc;
     desc = wbBuf + idx;
     uint8_t Dd = txd_op::getDd(desc);
@@ -3103,7 +2755,7 @@ IGbE::TxDescCacheGlobal::wbBufToString(int idx) {
     return descStr;
 }
 std::string 
-IGbE::TxDescCacheGlobal::fetchBufToString(igbreg::TxDesc* desc) {
+IGbE::TxDescCache::fetchBufToString(igbreg::TxDesc* desc) {
     std::string descStr = "TxDescFetch_addr: ";
     descStr += csprintf("%#x", txd_op::getBuf(desc));
     descStr += " TxDescFetch_len: ";
@@ -4375,8 +4027,8 @@ IGbE::txStateMachine(int queueID)
     // iteration we'll get the rest of the data
     // if (txPacket && txDescCache.packetAvailable()
     //     && !txDescCache.packetMultiDesc() && txPacket->length) {
-    // Check txDescCacheArray has ready ethPacket
-    if (txDescCacheArray[queueID]->hasReadyEthPacket()) {
+    if (txPacketArray[queueID] && txDescCacheArray[queueID]->packetAvailable()
+        && !txDescCacheArray[queueID]->packetMultiDesc() && txPacketArray[queueID]->length) {
         if (candidateTxQueue != queueID) {
             DPRINTF(EthernetSM, "TXD[%d]: Packet available to push FIFO, but not for this queue, candidate is %d\n", queueID, candidateTxQueue);
             DPRINTF(EthernetDpdk, "TXD[%d]: Packet available to push FIFO, but not for this queue, candidate is %d\n", queueID, candidateTxQueue);
@@ -4385,49 +4037,63 @@ IGbE::txStateMachine(int queueID)
         } else {
             DPRINTF(EthernetSM, "TXD[%d]: packet placed in TX FIFO\n", queueID);
             DPRINTF(EthernetDpdk, "TXD[%d]: packet placed in TX FIFO\n", queueID);
-
-            txPacketArray[queueID] = txDescCacheArray[queueID]->getReadyEthPacket();
-            assert(txPacketArray[queueID]);
             bool success =
+                // txFifo.push(txPacket);
                 txFifo.push(txPacketArray[queueID]);
             txFifoTick = true && drainState() != DrainState::Draining;
             assert(success);
-
+            // txPacket = NULL;
             txPacketArray[queueID] = nullptr;
+            // txDescCache.writeback((cacheBlockSize()-1)>>4);
             txDescCacheArray[queueID]->writeback((cacheBlockSize()-1)>>4);
+            // return;
             // set successTxQueueSend to true
             successTxQueueSend = true;
-            
+            // unset pktDone
+            txDescCacheArray[queueID]->unsetPacketDone();
             return txTickQueue;
         }
     }
 
     // Only support descriptor granularity
+    // if (regs.txdctl.lwthresh() &&
+    //     txDescCache.descLeft() < (regs.txdctl.lwthresh() * 8)) {
     if (regs.txdctl_array[queueID].lwthresh() &&
         txDescCacheArray[queueID]->descLeft() < (regs.txdctl_array[queueID].lwthresh() * 8)) {
         DPRINTF(EthernetSM, "TXD[%d]: LWTHRESH caused posting of TXDLOW\n", queueID);
         postInterrupt(IT_TXDLOW);
     }
 
+    // if (!txPacket) {
+    //     txPacket = std::make_shared<EthPacketData>(16384);
+    // }
+    if (!txPacketArray[queueID]) {
+        txPacketArray[queueID] = std::make_shared<EthPacketData>(16384);
+    }
+
     // if (!txDescCache.packetWaiting()) {
-    if (!txDescCacheArray[queueID]->packetHdrWaiting() && txDescCacheArray[queueID]->hasFreeDMAEngine()) {
-        // Check DMA is doing or not.
-        //  1. Check txDescCacheGlobal's waiting for packet header (packetHdrWaiting). Meaningful only when useTso
-        //  2. Check txDescCacheGlobal's DMA engine are all busy.
-        // If none of the above, we have to check descriptor is sufficient or not.
+    if (!txDescCacheArray[queueID]->packetWaiting()) {
+        // if (txDescCache.descLeft() == 0) {
         if (txDescCacheArray[queueID]->descLeft() == 0) {
             etherDeviceStats.txRingBufferFull++; //TODO - jm: make stat as array
             postInterrupt(IT_TXQE);
+            // txDescCache.writeback(0);
+            // txDescCache.fetchDescriptors();
             txDescCacheArray[queueID]->writeback(0);
             txDescCacheArray[queueID]->fetchDescriptors();
             DPRINTF(EthernetSM, "TXD[%d]: No descriptors left in ring, forcing "
                     "writeback stopping ticking and posting TXQE\n", queueID);
             DPRINTF(EthernetDpdk, "TXD[%d]: No descriptors left in ring, forcing "
                     "writeback stopping ticking and posting TXQE\n", queueID);
+            // txTick = false;
             txTickQueue = false;
+            // return;
             return txTickQueue;
         }
 
+
+        // if (!(txDescCache.descUnused())) {
+        //     txDescCache.fetchDescriptors();
         if (!(txDescCacheArray[queueID]->descUnused())) {
             txDescCacheArray[queueID]->fetchDescriptors();
             etherDeviceStats.txDescCacheFullCount++; //TODO - jm: make stat as array
@@ -4435,6 +4101,8 @@ IGbE::txStateMachine(int queueID)
                     "fetching and stopping ticking\n", queueID);
             DPRINTF(EthernetDpdk, "TXD[%d]: No descriptors available in cache, "
                     "fetching and stopping ticking\n", queueID);
+            // txTick = false;
+            // return;
             txTickQueue = false;
             return txTickQueue;
         }
@@ -4443,7 +4111,7 @@ IGbE::txStateMachine(int queueID)
         // txDescCache.processContextDesc();
         txDescCacheArray[queueID]->processContextDesc();
         // if (txDescCache.packetWaiting()) {
-        if (txDescCacheArray[queueID]->packetHdrWaiting()) {
+        if (txDescCacheArray[queueID]->packetWaiting()) {
             DPRINTF(EthernetSM,
                     "TXD[%d]: Fetching TSO header, stopping ticking\n", queueID);
             DPRINTF(EthernetDpdk,
@@ -4455,7 +4123,7 @@ IGbE::txStateMachine(int queueID)
         }
 
         // unsigned size = txDescCache.getPacketSize(txPacket);
-        unsigned size = txDescCacheArray[queueID]->getPacketSize();
+        unsigned size = txDescCacheArray[queueID]->getPacketSize(txPacketArray[queueID]);
         if (size > 0 && txFifo.avail() > size) {
             DPRINTF(EthernetSM, "TXD[%d]: Reserving %d bytes in FIFO and "
                     "beginning DMA of next packet\n", queueID, size);
@@ -4463,7 +4131,7 @@ IGbE::txStateMachine(int queueID)
                     "beginning DMA of next packet\n", queueID, size);
             txFifo.reserve(size);
             // txDescCache.getPacketData(txPacket);
-            txDescCacheArray[queueID]->getPacketDataGlobal();
+            txDescCacheArray[queueID]->getPacketData(txPacketArray[queueID]);
         } else if (size == 0) {
             DPRINTF(EthernetSM, "TXD[%d]: getPacketSize returned: %d\n", queueID, size);
             DPRINTF(EthernetSM,
@@ -4784,7 +4452,8 @@ IGbE::txPackettoTxFifo() {
     for (int i = 0; i < numQueues; i++) {
         int queueID = (candidateTxQueue + i) % numQueues;
         if (commType == CommunicationType::RING) {
-            if (txDescCacheArray[queueID]->hasReadyEthPacket()) {
+            if (txPacketArray[queueID] && txDescCacheArray[queueID]->packetAvailable()
+                && !txDescCacheArray[queueID]->packetMultiDesc() && txPacketArray[queueID]->length) {
                 DPRINTF(EthernetSM, "TXF[%d]: packet can be placed in TX FIFO, so get the credit!\n", queueID);
                 DPRINTF(EthernetDpdk, "TXF[%d]: packet can be placed in TX FIFO, so get the credit!\n", queueID);
 
@@ -5397,7 +5066,7 @@ IGbE::ethRxPkt(EthPacketPtr pkt)
             if (rxDescCacheArray[i]->descLeft() > 0) {
                 rxDescCacheFull = false;
             }
-            if (txDescCacheArray[i]->packetWaitingGlobal() || txDescCacheArray[i]->descLeft() < 1024) {
+            if (txDescCacheArray[i]->packetWaiting() || txDescCacheArray[i]->descLeft() < 1024) {
                 txDescCacheFull = false;
             }
         }
@@ -5483,15 +5152,15 @@ IGbE::rxStateMachine(int queueID)
         return rxTickQueue;
     }
     // If the packet is done check for interrupts/descriptors/etc
-    // if (rxDescCacheArray[queueID]->packetDone()) {
-    int readyDMAEngineIdx = rxDescCacheArray[queueID]->hasReadyEthPacket();
-    if (readyDMAEngineIdx != -1) {
-        // rxDmaPacketArray[queueID] = false;
-        // rxDescCacheArray[queueID]->unsetPacketDone();
-        rxDescCacheArray[queueID]->clearDoneEthPacket(readyDMAEngineIdx);
+    // if (rxDescCache.packetDone()) {
+    if (rxDescCacheArray[queueID]->packetDone()) {
+        // rxDmaPacket = false;
+        rxDmaPacketArray[queueID] = false;
+        rxDescCacheArray[queueID]->unsetPacketDone();
 
         DPRINTF(EthernetSM, "RXS[%d]: Packet completed DMA to memory\n", queueID);
         DPRINTF(EthernetDpdk, "RXS[%d]: Packet completed DMA to memory\n", queueID);
+        // int descLeft = rxDescCache.descLeft();
         int descLeft = rxDescCacheArray[queueID]->descLeft();
         DPRINTF(EthernetSM, "RXS[%d]: descLeft: %d rdmts: %d rdlen: %d\n", queueID,
                 descLeft, regs.rctl.rdmts(), regs.rdlen_array[queueID]()); //regs.rdlen());
@@ -5500,42 +5169,53 @@ IGbE::rxStateMachine(int queueID)
 
         // rdmts 2->1/8, 1->1/4, 0->1/2
         int ratio = (1ULL << (regs.rctl.rdmts() + 1));
+        // if (descLeft * ratio <= regs.rdlen()) {
         if (descLeft * ratio <= regs.rdlen_array[queueID]()) {
             DPRINTF(Ethernet, "RXS[%d]: Interrupting (RXDMT) "
                     "because of descriptors left\n", queueID);
             DPRINTF(EthernetDpdk, "RXS[%d]: Interrupting (RXDMT) "
                     "because of descriptors left\n", queueID);
+            // rxDescCache.writeback(0);
             rxDescCacheArray[queueID]->writeback(0);
          }
 
         if (descLeft < 32)
         {
+            // rxDescCache.writeback(0);
             rxDescCacheArray[queueID]->writeback(0);
         }
 
         if (rxFifo.empty()) {
+            // rxDescCache.writeback(0);
             rxDescCacheArray[queueID]->writeback(0);
         }
 
         if (descLeft == 0) { 
             etherDeviceStats.rxRingBufferFull++; //TODO - jm : make this as array 
+            // rxDescCache.writeback(0);
             rxDescCacheArray[queueID]->writeback(0);
             DPRINTF(EthernetSM, "RXS[%d]: No descriptors left in ring, forcing"
                     " writeback and stopping ticking\n", queueID);
             DPRINTF(EthernetDpdk, "RXS[%d]: No descriptors left in ring, forcing"
                     " writeback and stopping ticking\n", queueID);
+            // rxTick = false;
             rxTickQueue = false;
         }
 
         // only support descriptor granulaties
+        // assert(regs.rxdctl.gran());
         assert(regs.rxdctl_array[queueID].gran());
 
+        // if (regs.rxdctl.wthresh() >= rxDescCache.descUsed()) {
         if (regs.rxdctl_array[queueID].wthresh() >= rxDescCacheArray[queueID]->descUsed()) {
             DPRINTF(EthernetSM,
                     "RXS[%d]: Writing back because WTHRESH >= descUsed\n", queueID);
             DPRINTF(EthernetDpdk,
                     "RXS[%d]: Writing back because WTHRESH >= descUsed\n", queueID);
-            
+            // if (regs.rxdctl.wthresh() < (cacheBlockSize()>>4))
+            //     rxDescCache.writeback(regs.rxdctl.wthresh()-1);
+            // else
+            //     rxDescCache.writeback((cacheBlockSize()-1)>>4);
             if (regs.rxdctl_array[queueID].wthresh() < (cacheBlockSize()>>4))
                 rxDescCacheArray[queueID]->writeback(regs.rxdctl_array[queueID].wthresh()-1);
             else
@@ -5543,6 +5223,15 @@ IGbE::rxStateMachine(int queueID)
            
         }
 
+        // if ((rxDescCache.descUnused() < regs.rxdctl.pthresh()) &&
+        //     ((rxDescCache.descLeft() - rxDescCache.descUnused()) >
+        //      regs.rxdctl.hthresh())) {
+        //     DPRINTF(EthernetSM, "RXS: Fetching descriptors because "
+        //             "descUnused < PTHRESH\n");
+        //     DPRINTF(EthernetDpdk, "RXS: Fetching descriptors because "
+        //             "descUnused < PTHRESH\n");
+        //     rxDescCache.fetchDescriptors();
+        // }
         if ((rxDescCacheArray[queueID]->descUnused() < regs.rxdctl_array[queueID].pthresh()) &&
             ((rxDescCacheArray[queueID]->descLeft() - rxDescCacheArray[queueID]->descUnused()) >
              regs.rxdctl_array[queueID].hthresh())) {
@@ -5553,6 +5242,8 @@ IGbE::rxStateMachine(int queueID)
             rxDescCacheArray[queueID]->fetchDescriptors();
         }
         
+        // if (rxDescCache.descUnused() == 0) {
+            // rxDescCache.fetchDescriptors();
         if (rxDescCacheArray[queueID]->descUnused() == 0) {
             rxDescCacheArray[queueID]->fetchDescriptors();
             etherDeviceStats.rxDescCacheFullCount++;
@@ -5560,17 +5251,19 @@ IGbE::rxStateMachine(int queueID)
                     "fetching descriptors and stopping ticking\n", queueID);
             DPRINTF(EthernetDpdk, "RXS[%d]: No descriptors available in cache, "
                     "fetching descriptors and stopping ticking\n", queueID);
+            // rxTick = false;
             rxTickQueue = false;
         }
+        // return;
         return rxTickQueue;
     }
 
-    // if (rxDmaPacketArray[queueID]) {
-    if (!rxDescCacheArray[queueID]->hasFreeDMAEngine()) {
+    // if (rxDmaPacket) {
+    if (rxDmaPacketArray[queueID]) {
         DPRINTF(EthernetSM,
-                "RXS[%d]: stopping ticking until packet DMA completes. No free DMA engines\n", queueID);
+                "RXS[%d]: stopping ticking until packet DMA completes\n", queueID);
         DPRINTF(EthernetDpdk,
-                "RXS[%d]: stopping ticking until packet DMA completes. No free DMA engines\n", queueID);
+                "RXS[%d]: stopping ticking until packet DMA completes\n", queueID);
         // rxTick = false;
         // return;
         rxTickQueue = false;
@@ -5619,13 +5312,30 @@ IGbE::rxStateMachine(int queueID)
 
     // EthPacketPtr pkt;
     // pkt = rxFifo.front();
-
-    bool success = rxDescCacheArray[queueID]->writePacketGlobal(pkt);
-    if (success) {
+    
+    // pktOffset = rxDescCache.writePacket(pkt, pktOffset);
+    pktOffsetArray[queueID] = rxDescCacheArray[queueID]->writePacket(pkt, pktOffsetArray[queueID]);
+    DPRINTF(EthernetSM, "RXS[%d]: Writing packet into memory\n", queueID);
+    DPRINTF(EthernetDpdk, "RXS[%d]: Writing packet into memory\n", queueID);
+    // if (pktOffset == pkt->length) {
+    if (pktOffsetArray[queueID] == pkt->length) {
+        DPRINTF(EthernetSM, "RXS[%d]: Removing packet from FIFO\n", queueID);
+        DPRINTF(EthernetDpdk, "RXS[%d]: Removing packet from FIFO\n", queueID);
+        // pktOffset = 0;
+        pktOffsetArray[queueID] = 0;
+        // rxFifo.pop();
         rxPacketArray[queueID] = nullptr;
+
+        // Stat
         updateRxRingBufferDMAStartStat(curTick());
     }
-    rxTickQueue = true; // Because new DMA engine can be started
+
+    DPRINTF(EthernetSM, "RXS[%d]: stopping ticking until packet DMA completes\n", queueID);
+    DPRINTF(EthernetDpdk, "RXS[%d]: stopping ticking until packet DMA completes\n", queueID);
+    // rxTick = false;
+    rxTickQueue = false;
+    // rxDmaPacket = true;
+    rxDmaPacketArray[queueID] = true;
     return rxTickQueue;
 }
 

@@ -71,7 +71,7 @@
 #include "base.hh"
 
 // LOG_LEVEL: 0 - no log, 1 - ring buffer log, 2 - dta log, 3 - dta double buffer log, 4 - dta log prepare
-#define LOG_LEVEL 1
+#define LOG_LEVEL 0
 
 
 namespace gem5
@@ -604,15 +604,15 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         uint64_t tx_sw_ring_end = tx_sw_ring_base + max_desc * mbuf_ptr_size;
 
         // RX Software Ring
-        if (pkt->getAddr() >= rx_sw_ring_base && pkt->getAddr() < rx_sw_ring_end) {
-            int offset = (pkt->getAddr() - rx_sw_ring_base) / mbuf_ptr_size;
-            printf("[LOG], %llu, %s, %s, %d, RX_SW_RING[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
-        }
-        // TX Software Ring
-        if (pkt->getAddr() >= tx_sw_ring_base && pkt->getAddr() < tx_sw_ring_end) {
-            int offset = (pkt->getAddr() - tx_sw_ring_base) / mbuf_ptr_size;
-            printf("[LOG], %llu, %s, %s, %d, TX_SW_RING[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
-        }
+        // if (pkt->getAddr() >= rx_sw_ring_base && pkt->getAddr() < rx_sw_ring_end) {
+        //     int offset = (pkt->getAddr() - rx_sw_ring_base) / mbuf_ptr_size;
+        //     printf("[LOG], %llu, %s, %s, %d, RX_SW_RING[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+        // }
+        // // TX Software Ring
+        // if (pkt->getAddr() >= tx_sw_ring_base && pkt->getAddr() < tx_sw_ring_end) {
+        //     int offset = (pkt->getAddr() - tx_sw_ring_base) / mbuf_ptr_size;
+        //     printf("[LOG], %llu, %s, %s, %d, TX_SW_RING[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+        // }
 
         // normal version
         // uint64_t rx_desc_base = 8624155648;
@@ -622,201 +622,138 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         uint64_t rx_desc_base = 8624135424;
         uint64_t tx_desc_base = 8624237824;
 
-        // RX Descriptor (0-31)
-        uint64_t rx_desc_0 = rx_desc_base + 16 * 0;
-        if (pkt->getAddr() >= rx_desc_0 && pkt->getAddr() < rx_desc_0 + 512) {
-            int offset = (pkt->getAddr() - rx_desc_0) / 16;
-            int num_desc = (pkt->getSize() / 16);
+        uint64_t batch_size = 64;
+        uint64_t desc_size = 16;
+
+        // RX Descriptor (0-63)
+        uint64_t rx_desc_0 = rx_desc_base + desc_size * 0;
+        if (pkt->getAddr() >= rx_desc_0 && pkt->getAddr() < rx_desc_0 + batch_size * desc_size) {
+            int offset = (pkt->getAddr() - rx_desc_0) / desc_size;
+            int num_desc = (pkt->getSize() / desc_size);
             int last_offset = offset + num_desc - 1;
-            if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+            if ((last_offset == 63 || last_offset == 62) && pkt->canGetDataPtr()) {
                 // Get the last descriptor's DD bit
                 uint8_t *data = pkt->getPtr<uint8_t>();
-                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                uint8_t *last_desc = data + (num_desc - 1) * desc_size;
                 E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
                 bool dd = false;
                 if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
                     dd = desc->status_error & E1000_RXD_STAT_DD;
                 }
-                printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_31[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_63[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
             }
             else {
-                printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_31[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_63[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
             }
         }
 
-        // RX Descriptor (32-63)
-        uint64_t rx_desc_32 = rx_desc_base + 16 * 32;
-        if (pkt->getAddr() >= rx_desc_32 && pkt->getAddr() < rx_desc_32 + 512) {
-            int offset = (pkt->getAddr() - rx_desc_32) / 16;
-            int num_desc = (pkt->getSize() / 16);
+        // RX Descriptor (64-127)
+        uint64_t rx_desc_64 = rx_desc_base + desc_size * 64;
+        if (pkt->getAddr() >= rx_desc_64 && pkt->getAddr() < rx_desc_64 + batch_size * desc_size) {
+            int offset = (pkt->getAddr() - rx_desc_64) / desc_size;
+            int num_desc = (pkt->getSize() / desc_size);
             int last_offset = offset + num_desc - 1;
-            if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+            if ((last_offset == 63 || last_offset == 62) && pkt->canGetDataPtr()) {
                 // Get the last descriptor's DD bit
                 uint8_t *data = pkt->getPtr<uint8_t>();
-                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                uint8_t *last_desc = data + (num_desc - 1) * desc_size;
                 E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
                 bool dd = false;
                 if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
                     dd = desc->status_error & E1000_RXD_STAT_DD;
                 }
-                printf("[LOG], %llu, %s, %s, %d, RX_DESC_32_63[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_64_127[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
             }
             else {
-                printf("[LOG], %llu, %s, %s, %d, RX_DESC_32_63[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_64_127[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
             }
         }
 
-        // RX Descriptor (63-95)
-        uint64_t rx_desc_63 = rx_desc_base + 16 * 63;
-        if (pkt->getAddr() >= rx_desc_63 && pkt->getAddr() < rx_desc_63 + 512) {
-            int offset = (pkt->getAddr() - rx_desc_63) / 16;
-            int num_desc = (pkt->getSize() / 16);
+        // RX Descriptor (192-255)
+        uint64_t rx_desc_192 = rx_desc_base + desc_size * 192;
+        if (pkt->getAddr() >= rx_desc_192 && pkt->getAddr() < rx_desc_192 + batch_size * desc_size) {
+            int offset = (pkt->getAddr() - rx_desc_192) / desc_size;
+            int num_desc = (pkt->getSize() / desc_size);
             int last_offset = offset + num_desc - 1;
-            if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+            if ((last_offset == 63 || last_offset == 62) && pkt->canGetDataPtr()) {
                 // Get the last descriptor's DD bit
                 uint8_t *data = pkt->getPtr<uint8_t>();
-                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                uint8_t *last_desc = data + (num_desc - 1) * desc_size;
                 E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
                 bool dd = false;
                 if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
                     dd = desc->status_error & E1000_RXD_STAT_DD;
                 }
-                printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_192_255[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
             }
             else {
-                printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+                printf("[LOG], %llu, %s, %s, %d, RX_DESC_192_255[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
             }
         }
 
-        // RX Descriptor (96-127)
-        uint64_t rx_desc_96 = rx_desc_base + 16 * 96;
-        if (pkt->getAddr() >= rx_desc_96 && pkt->getAddr() < rx_desc_96 + 512) {
-            int offset = (pkt->getAddr() - rx_desc_96) / 16;
-            int num_desc = (pkt->getSize() / 16);
+        // TX Descriptor (128-192)
+        uint64_t tx_desc_128 = tx_desc_base + desc_size * 128;
+        if (pkt->getAddr() >= tx_desc_128 && pkt->getAddr() < tx_desc_128 + batch_size * desc_size) {
+            int offset = (pkt->getAddr() - tx_desc_128) / desc_size;
+            int num_desc = (pkt->getSize() / desc_size);
             int last_offset = offset + num_desc - 1;
-            if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+            if ((last_offset == 63) && pkt->canGetDataPtr()) {
                 // Get the last descriptor's DD bit
                 uint8_t *data = pkt->getPtr<uint8_t>();
-                uint8_t *last_desc = data + (num_desc - 1) * 16;
-                E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
-                bool dd = false;
-                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
-                    dd = desc->status_error & E1000_RXD_STAT_DD;
-                }
-                printf("[LOG], %llu, %s, %s, %d, RX_DESC_96_127[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
-            }
-            else {
-                printf("[LOG], %llu, %s, %s, %d, RX_DESC_96_127[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
-            }
-        }
-
-        // RX Descriptor (127-159)
-        uint64_t rx_desc_127 = rx_desc_base + 16 * 127;
-        if (pkt->getAddr() >= rx_desc_127 && pkt->getAddr() < rx_desc_127 + 512) {
-            int offset = (pkt->getAddr() - rx_desc_127) / 16;
-            int num_desc = (pkt->getSize() / 16);
-            int last_offset = offset + num_desc - 1;
-            if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
-                // Get the last descriptor's DD bit
-                uint8_t *data = pkt->getPtr<uint8_t>();
-                uint8_t *last_desc = data + (num_desc - 1) * 16;
-                E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
-                bool dd = false;
-                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
-                    dd = desc->status_error & E1000_RXD_STAT_DD;
-                }
-                printf("[LOG], %llu, %s, %s, %d, RX_DESC_127_159[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
-            }
-            else {
-                printf("[LOG], %llu, %s, %s, %d, RX_DESC_127_159[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
-            }
-        }
-
-        // TX Descriptor (64-95)
-        uint64_t tx_desc_64 = tx_desc_base + 16 * 64;
-        if (pkt->getAddr() >= tx_desc_64 && pkt->getAddr() < tx_desc_64 + 512) {
-            int offset = (pkt->getAddr() - tx_desc_64) / 16;
-            int num_desc = (pkt->getSize() / 16);
-            int last_offset = offset + num_desc - 1;
-            if ((last_offset == 31) && pkt->canGetDataPtr()) {
-                // Get the last descriptor's DD bit
-                uint8_t *data = pkt->getPtr<uint8_t>();
-                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                uint8_t *last_desc = data + (num_desc - 1) * desc_size;
                 E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
                 bool dd = false;
                 if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
                     dd = desc->wb.status & E1000_TXD_STAT_DD;
                 }
-                printf("[LOG], %llu, %s, %s, %d, TX_DESC_64_95[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_192[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
             }
             else {
-                printf("[LOG], %llu, %s, %s, %d, TX_DESC_64_95[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_192[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
             }
         }
 
-        // TX Descriptor (96-128)
-        uint64_t tx_desc_96 = tx_desc_base + 16 * 96;
-        if (pkt->getAddr() >= tx_desc_96 && pkt->getAddr() < tx_desc_96 + 512) {
-            int offset = (pkt->getAddr() - tx_desc_96) / 16;
-            int num_desc = (pkt->getSize() / 16);
+        // TX Descriptor (192-256)
+        uint64_t tx_desc_192 = tx_desc_base + desc_size * 192;
+        if (pkt->getAddr() >= tx_desc_192 && pkt->getAddr() < tx_desc_192 + batch_size * desc_size) {
+            int offset = (pkt->getAddr() - tx_desc_192) / desc_size;
+            int num_desc = (pkt->getSize() / desc_size);
             int last_offset = offset + num_desc - 1;
-            if ((last_offset == 31) && pkt->canGetDataPtr()) {
+            if ((last_offset == 63) && pkt->canGetDataPtr()) {
                 // Get the last descriptor's DD bit
                 uint8_t *data = pkt->getPtr<uint8_t>();
-                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                uint8_t *last_desc = data + (num_desc - 1) * desc_size;
                 E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
                 bool dd = false;
                 if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
                     dd = desc->wb.status & E1000_TXD_STAT_DD;
                 }
-                printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_192_256[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
             }
             else {
-                printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_192_256[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
             }
         }
 
-        // TX Descriptor (128-160)
-        uint64_t tx_desc_128 = tx_desc_base + 16 * 128;
-        if (pkt->getAddr() >= tx_desc_128 && pkt->getAddr() < tx_desc_128 + 512) {
-            int offset = (pkt->getAddr() - tx_desc_128) / 16;
-            int num_desc = (pkt->getSize() / 16);
+        // TX Descriptor (256-320)
+        uint64_t tx_desc_256 = tx_desc_base + desc_size * 256;
+        if (pkt->getAddr() >= tx_desc_256 && pkt->getAddr() < tx_desc_256 + batch_size * desc_size) {
+            int offset = (pkt->getAddr() - tx_desc_256) / desc_size;
+            int num_desc = (pkt->getSize() / desc_size);
             int last_offset = offset + num_desc - 1;
-            if ((last_offset == 31) && pkt->canGetDataPtr()) {
+            if ((last_offset == 63) && pkt->canGetDataPtr()) {
                 // Get the last descriptor's DD bit
                 uint8_t *data = pkt->getPtr<uint8_t>();
-                uint8_t *last_desc = data + (num_desc - 1) * 16;
+                uint8_t *last_desc = data + (num_desc - 1) * desc_size;
                 E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
                 bool dd = false;
                 if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
                     dd = desc->wb.status & E1000_TXD_STAT_DD;
                 }
-                printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_160[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_256_320[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
             }
             else {
-                printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_160[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
-            }
-        }
-
-        // TX Descriptor (160-192)
-        uint64_t tx_desc_160 = tx_desc_base + 16 * 160;
-        if (pkt->getAddr() >= tx_desc_160 && pkt->getAddr() < tx_desc_160 + 512) {
-            int offset = (pkt->getAddr() - tx_desc_160) / 16;
-            int num_desc = (pkt->getSize() / 16);
-            int last_offset = offset + num_desc - 1;
-            if ((last_offset == 31) && pkt->canGetDataPtr()) {
-                // Get the last descriptor's DD bit
-                uint8_t *data = pkt->getPtr<uint8_t>();
-                uint8_t *last_desc = data + (num_desc - 1) * 16;
-                E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
-                bool dd = false;
-                if ((pkt->isRead() && satisfied) || pkt->isWrite()) {
-                    dd = desc->wb.status & E1000_TXD_STAT_DD;
-                }
-                printf("[LOG], %llu, %s, %s, %d, TX_DESC_160_192[%d]_REQ_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
-            }
-            else {
-                printf("[LOG], %llu, %s, %s, %d, TX_DESC_160_192[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+                printf("[LOG], %llu, %s, %s, %d, TX_DESC_256_320[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
             }
         }
 
@@ -964,41 +901,66 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         */
 
         // sve version
-        // mbuf for TX Descriptor (64-95 current) - throught current phase's tdt 96 wr prefetch
-        // uint64_t mbuf_addr_set_96_cur[] = {
-        //     0x2012D5D80, 0x2012D6700, 0x2012D7080, 0x2012D7A00,
-        //     0x2012D8380, 0x2012D8D00, 0x2012D9680, 0x2012DA000,
-        //     0x2012DA980, 0x2012DB300, 0x2012DBC80, 0x2012DC600,
-        //     0x2012DCF80, 0x2012DD900, 0x2012DE280, 0x2012DEC00,
-        //     0x2012DF580, 0x2012DFF00, 0x2012E0880, 0x2012E1200,
-        //     0x2012E1B80, 0x2012E2500, 0x2012E2E80, 0x2012E3800,
-        //     0x2012E4180, 0x2012E4B00, 0x2012E5480, 0x2012E5E00,
-        //     0x2012E6780, 0x2012E7100, 0x2012E7A80, 0x2012E8400
-        // };
+        // mbuf for TX Descriptor (128-191 current) - throught current phase's tdt 192 wr prefetch
+        uint64_t mbuf_addr_set_192_cur[] = {
+            0x2013B9D80, 0x2013BA700, 0x2013BB080, 0x2013BBA00,
+            0x2013BC380, 0x2013BCD00, 0x2013BD680, 0x2013BE000,
+            0x2013BE980, 0x2013BF300, 0x2013BFC80, 0x2013C0600,
+            0x2013C0F80, 0x2013C1900, 0x2013C2280, 0x2013C2C00,
+            0x2013C3580, 0x2013C3F00, 0x2013C4880, 0x2013C5200,
+            0x2013C5B80, 0x2013C6500, 0x2013C6E80, 0x2013C7800,
+            0x2013C8180, 0x2013C8B00, 0x2013C9480, 0x2013C9E00,
+            0x2013CA780, 0x2013CB100, 0x2013CBA80, 0x2013CC400,
+            0x2013CCD80, 0x2013CD700, 0x2013CE080, 0x2013CEA00,
+            0x2013CF380, 0x2013CFD00, 0x2013D0680, 0x2013D1000,
+            0x2013D1980, 0x2013D2300, 0x2013D2C80, 0x2013D3600,
+            0x2013D3F80, 0x2013D4900, 0x2013D5280, 0x2013D5C00,
+            0x2013D6580, 0x2013D6F00, 0x2013D7880, 0x2013D8200,
+            0x2013D8B80, 0x2013D9500, 0x2013D9E80, 0x2013DA800,
+            0x2013DB180, 0x2013DBB00, 0x2013DC480, 0x2013DCE00,
+            0x2013DD780, 0x2013DE100, 0x2013DEA80, 0x2013DF400
+        };
 
-        // uint64_t mbuf_first_cacheline_set_96_cur[] = {
-        //     0x2012D5C80, 0x2012D6600, 0x2012D6F80, 0x2012D7900,
-        //     0x2012D8280, 0x2012D8C00, 0x2012D9580, 0x2012D9F00,
-        //     0x2012DA880, 0x2012DB200, 0x2012DBB80, 0x2012DC500,
-        //     0x2012DCE80, 0x2012DD800, 0x2012DE180, 0x2012DEB00,
-        //     0x2012DF480, 0x2012DFE00, 0x2012E0780, 0x2012E1100,
-        //     0x2012E1A80, 0x2012E2400, 0x2012E2D80, 0x2012E3700,
-        //     0x2012E4080, 0x2012E4A00, 0x2012E5380, 0x2012E5D00,
-        //     0x2012E6680, 0x2012E7000, 0x2012E7980, 0x2012E8300
-        // };
+        uint64_t mbuf_first_cacheline_set_192_cur[] = {
+            0x2013B9C80, 0x2013BA600, 0x2013BAF80, 0x2013BB900,
+            0x2013BC280, 0x2013BCC00, 0x2013BD580, 0x2013BDF00,
+            0x2013BE880, 0x2013BF200, 0x2013BFB80, 0x2013C0500,
+            0x2013C0E80, 0x2013C1800, 0x2013C2180, 0x2013C2B00,
+            0x2013C3480, 0x2013C3E00, 0x2013C4780, 0x2013C5100,
+            0x2013C5A80, 0x2013C6400, 0x2013C6D80, 0x2013C7700,
+            0x2013C8080, 0x2013C8A00, 0x2013C9380, 0x2013C9D00,
+            0x2013CA680, 0x2013CB000, 0x2013CB980, 0x2013CC300,
+            0x2013CCC80, 0x2013CD600, 0x2013CDF80, 0x2013CE900,
+            0x2013CF280, 0x2013CFC00, 0x2013D0580, 0x2013D0F00,
+            0x2013D1880, 0x2013D2200, 0x2013D2B80, 0x2013D3500,
+            0x2013D3E80, 0x2013D4800, 0x2013D5180, 0x2013D5B00,
+            0x2013D6480, 0x2013D6E00, 0x2013D7780, 0x2013D8100,
+            0x2013D8A80, 0x2013D9400, 0x2013D9D80, 0x2013DA700,
+            0x2013DB080, 0x2013DBA00, 0x2013DC380, 0x2013DCD00,
+            0x2013DD680, 0x2013DE000, 0x2013DE980, 0x2013DF300
+        };
 
-        // uint64_t mbuf_second_cacheline_set_96_cur[] = {
-        //     0x2012D5CC0, 0x2012D6640, 0x2012D6FC0, 0x2012D7940,
-        //     0x2012D82C0, 0x2012D8C40, 0x2012D95C0, 0x2012D9F40,
-        //     0x2012DA8C0, 0x2012DB240, 0x2012DBBC0, 0x2012DC540,
-        //     0x2012DCEC0, 0x2012DD840, 0x2012DE1C0, 0x2012DEB40,
-        //     0x2012DF4C0, 0x2012DFE40, 0x2012E07C0, 0x2012E1140,
-        //     0x2012E1AC0, 0x2012E2440, 0x2012E2DC0, 0x2012E3740,
-        //     0x2012E40C0, 0x2012E4A40, 0x2012E53C0, 0x2012E5D40,
-        //     0x2012E66C0, 0x2012E7040, 0x2012E79C0, 0x2012E8340
-        // };
-
-        uint64_t mbuf_addr_set_96_cur[] = {
+        uint64_t mbuf_second_cacheline_set_192_cur[] = {
+            0x2013B9CC0, 0x2013BA640, 0x2013BAFC0, 0x2013BB940,
+            0x2013BC2C0, 0x2013BCC40, 0x2013BD5C0, 0x2013BDF40,
+            0x2013BE8C0, 0x2013BF240, 0x2013BFBC0, 0x2013C0540,
+            0x2013C0EC0, 0x2013C1840, 0x2013C21C0, 0x2013C2B40,
+            0x2013C34C0, 0x2013C3E40, 0x2013C47C0, 0x2013C5140,
+            0x2013C5AC0, 0x2013C6440, 0x2013C6DC0, 0x2013C7740,
+            0x2013C80C0, 0x2013C8A40, 0x2013C93C0, 0x2013C9D40,
+            0x2013CA6C0, 0x2013CB040, 0x2013CB9C0, 0x2013CC340,
+            0x2013CCCC0, 0x2013CD640, 0x2013CDFC0, 0x2013CE940,
+            0x2013CF2C0, 0x2013CFC40, 0x2013D05C0, 0x2013D0F40,
+            0x2013D18C0, 0x2013D2240, 0x2013D2BC0, 0x2013D3540,
+            0x2013D3EC0, 0x2013D4840, 0x2013D51C0, 0x2013D5B40,
+            0x2013D64C0, 0x2013D6E40, 0x2013D77C0, 0x2013D8140,
+            0x2013D8AC0, 0x2013D9440, 0x2013D9DC0, 0x2013DA740,
+            0x2013DB0C0, 0x2013DBA40, 0x2013DC3C0, 0x2013DCD40,
+            0x2013DD6C0, 0x2013DE040, 0x2013DE9C0, 0x2013DF340
+        };
+        
+        // mbuf for RX Descriptor (64-127 new) - through next phase's tdt 128 wr prefetch
+        uint64_t mbuf_addr_set_128_new[] = {
             0x201498B00, 0x201498180, 0x201497800, 0x201496E80,
             0x201496500, 0x201495B80, 0x201495200, 0x201494880,
             0x201493F00, 0x201493580, 0x201492C00, 0x201492280,
@@ -1006,133 +968,7 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             0x20148F300, 0x20148E980, 0x20148E000, 0x20148D680,
             0x20148CD00, 0x20148C380, 0x20148BA00, 0x20148B080,
             0x20148A700, 0x201489D80, 0x201489400, 0x201488A80,
-            0x201488100, 0x201487780, 0x201486E00, 0x201486480
-        };
-
-        uint64_t mbuf_first_cacheline_set_96_cur[] = {
-            0x201498A00, 0x201498080, 0x201497700, 0x201496D80,
-            0x201496400, 0x201495A80, 0x201495100, 0x201494780,
-            0x201493E00, 0x201493480, 0x201492B00, 0x201492180,
-            0x201491800, 0x201490E80, 0x201490500, 0x20148FB80,
-            0x20148F200, 0x20148E880, 0x20148DF00, 0x20148D580,
-            0x20148CC00, 0x20148C280, 0x20148B900, 0x20148AF80,
-            0x20148A600, 0x201489C80, 0x201489300, 0x201488980,
-            0x201488000, 0x201487680, 0x201486D00, 0x201486380
-        };
-
-        uint64_t mbuf_second_cacheline_set_96_cur[] = {
-            0x201498A40, 0x2014980C0, 0x201497740, 0x201496DC0,
-            0x201496440, 0x201495AC0, 0x201495140, 0x2014947C0,
-            0x201493E40, 0x2014934C0, 0x201492B40, 0x2014921C0,
-            0x201491840, 0x201490EC0, 0x201490540, 0x20148FBC0,
-            0x20148F240, 0x20148E8C0, 0x20148DF40, 0x20148D5C0,
-            0x20148CC40, 0x20148C2C0, 0x20148B940, 0x20148AFC0,
-            0x20148A640, 0x201489CC0, 0x201489340, 0x2014889C0,
-            0x201488040, 0x2014876C0, 0x201486D40, 0x2014863C0
-        };
-
-        // mbuf for RX Descriptor (32-63 new) - through next phase's tdt 64 wr prefetch
-        // uint64_t mbuf_addr_set_64_new[] = {
-        //     0x2017CD700, 0x2017CCD80, 0x2017CC400, 0x2017CBA80,
-        //     0x2017CB100, 0x2017CA780, 0x2017C9E00, 0x2017C9480,
-        //     0x2017C8B00, 0x2017C8180, 0x2017C7800, 0x2017C6E80,
-        //     0x2017C6500, 0x2017C5B80, 0x2017C5200, 0x2017C4880,
-        //     0x2017C3F00, 0x2017C3580, 0x2017C2C00, 0x2017C2280,
-        //     0x2017C1900, 0x2017C0F80, 0x2017C0600, 0x2017BFC80,
-        //     0x2017BF300, 0x2017BE980, 0x2017BE000, 0x2017BD680,
-        //     0x2017BCD00, 0x2017BC380, 0x2017BBA00, 0x2017BB080
-        // };
-
-        // uint64_t mbuf_first_cacheline_set_64_new[] = {
-        //     0x2017CD600, 0x2017CCC80, 0x2017CC300, 0x2017CB980,
-        //     0x2017CB000, 0x2017CA680, 0x2017C9D00, 0x2017C9380,
-        //     0x2017C8A00, 0x2017C8080, 0x2017C7700, 0x2017C6D80,
-        //     0x2017C6400, 0x2017C5A80, 0x2017C5100, 0x2017C4780,
-        //     0x2017C3E00, 0x2017C3480, 0x2017C2B00, 0x2017C2180,
-        //     0x2017C1800, 0x2017C0E80, 0x2017C0500, 0x2017BFB80,
-        //     0x2017BF200, 0x2017BE880, 0x2017BDF00, 0x2017BD580,
-        //     0x2017BCC00, 0x2017BC280, 0x2017BB900, 0x2017BAF80
-        // };
-
-        // uint64_t mbuf_second_cacheline_set_64_new[] = {
-        //     0x2017CD640, 0x2017CCCC0, 0x2017CC340, 0x2017CB9C0,
-        //     0x2017CB040, 0x2017CA6C0, 0x2017C9D40, 0x2017C93C0,
-        //     0x2017C8A40, 0x2017C80C0, 0x2017C7740, 0x2017C6DC0,
-        //     0x2017C6440, 0x2017C5AC0, 0x2017C5140, 0x2017C47C0,
-        //     0x2017C3E40, 0x2017C34C0, 0x2017C2B40, 0x2017C21C0,
-        //     0x2017C1840, 0x2017C0EC0, 0x2017C0540, 0x2017BFBC0,
-        //     0x2017BF240, 0x2017BE8C0, 0x2017BDF40, 0x2017BD5C0,
-        //     0x2017BCC40, 0x2017BC2C0, 0x2017BB940, 0x2017BAFC0
-        // };
-
-        uint64_t mbuf_addr_set_64_new[] = {
-            0x2013B5180, 0x2013B5B00, 0x2013B6480, 0x2013B6E00,
-            0x2013B7780, 0x2013B8100, 0x2013B8A80, 0x2013B9400,
-            0x2013B0580, 0x2013B0F00, 0x2013B1880, 0x2013B2200,
-            0x2013B2B80, 0x2013B3500, 0x2013B3E80, 0x2013B4800,
-            0x2013AB980, 0x2013AC300, 0x2013ACC80, 0x2013AD600,
-            0x2013ADF80, 0x2013AE900, 0x2013AF280, 0x2013AFC00,
-            0x2013A6D80, 0x2013A7700, 0x2013A8080, 0x2013A8A00,
-            0x2013A9380, 0x2013A9D00, 0x2013AA680, 0x2013AB000
-        };
-
-        uint64_t mbuf_first_cacheline_set_64_new[] = {
-            0x2013B5080, 0x2013B5A00, 0x2013B6380, 0x2013B6D00,
-            0x2013B7680, 0x2013B8000, 0x2013B8980, 0x2013B9300,
-            0x2013B0480, 0x2013B0E00, 0x2013B1780, 0x2013B2100,
-            0x2013B2A80, 0x2013B3400, 0x2013B3D80, 0x2013B4700,
-            0x2013AB880, 0x2013AC200, 0x2013ACB80, 0x2013AD500,
-            0x2013ADE80, 0x2013AE800, 0x2013AF180, 0x2013AFB00,
-            0x2013A6C80, 0x2013A7600, 0x2013A7F80, 0x2013A8900,
-            0x2013A9280, 0x2013A9C00, 0x2013AA580, 0x2013AAF00
-        };
-
-        uint64_t mbuf_second_cacheline_set_64_new[] = {
-            0x2013B50C0, 0x2013B5A40, 0x2013B63C0, 0x2013B6D40,
-            0x2013B76C0, 0x2013B8040, 0x2013B89C0, 0x2013B9340,
-            0x2013B04C0, 0x2013B0E40, 0x2013B17C0, 0x2013B2140,
-            0x2013B2AC0, 0x2013B3440, 0x2013B3DC0, 0x2013B4740,
-            0x2013AB8C0, 0x2013AC240, 0x2013ACBC0, 0x2013AD540,
-            0x2013ADEC0, 0x2013AE840, 0x2013AF1C0, 0x2013AFB40,
-            0x2013A6CC0, 0x2013A7640, 0x2013A7FC0, 0x2013A8940,
-            0x2013A92C0, 0x2013A9C40, 0x2013AA5C0, 0x2013AAF40
-        };
-
-        // mbuf for RX Descriptor (96-127 current) - through current phase's tdt 128 wr prefetch
-        // uint64_t mbuf_addr_set_128_cur[] = {
-        //     0x2012C2D80, 0x2012C3700, 0x2012C4080, 0x2012C4A00,
-        //     0x2012C5380, 0x2012C5D00, 0x2012C6680, 0x2012C7000,
-        //     0x2012C7980, 0x2012C8300, 0x2012C8C80, 0x2012C9600,
-        //     0x2012C9F80, 0x2012CA900, 0x2012CB280, 0x2012CBC00,
-        //     0x2012CC580, 0x2012CCF00, 0x2012CD880, 0x2012CE200,
-        //     0x2012CEB80, 0x2012CF500, 0x2012CFE80, 0x2012D0800,
-        //     0x2012D1180, 0x2012D1B00, 0x2012D2480, 0x2012D2E00,
-        //     0x2012D3780, 0x2012D4100, 0x2012D4A80, 0x2012D5400
-        // };
-
-        // uint64_t mbuf_first_cacheline_set_128_cur[] = {
-        //     0x2012C2C80, 0x2012C3600, 0x2012C3F80, 0x2012C4900,
-        //     0x2012C5280, 0x2012C5C00, 0x2012C6580, 0x2012C6F00,
-        //     0x2012C7880, 0x2012C8200, 0x2012C8B80, 0x2012C9500,
-        //     0x2012C9E80, 0x2012CA800, 0x2012CB180, 0x2012CBB00,
-        //     0x2012CC480, 0x2012CCE00, 0x2012CD780, 0x2012CE100,
-        //     0x2012CEA80, 0x2012CF400, 0x2012CFD80, 0x2012D0700,
-        //     0x2012D1080, 0x2012D1A00, 0x2012D2380, 0x2012D2D00,
-        //     0x2012D3680, 0x2012D4000, 0x2012D4980, 0x2012D5300
-        // };
-
-        // uint64_t mbuf_second_cacheline_set_128_cur[] = {
-        //     0x2012C2CC0, 0x2012C3640, 0x2012C3FC0, 0x2012C4940,
-        //     0x2012C52C0, 0x2012C5C40, 0x2012C65C0, 0x2012C6F40,
-        //     0x2012C78C0, 0x2012C8240, 0x2012C8BC0, 0x2012C9540,
-        //     0x2012C9EC0, 0x2012CA840, 0x2012CB1C0, 0x2012CBB40,
-        //     0x2012CC4C0, 0x2012CCE40, 0x2012CD7C0, 0x2012CE140,
-        //     0x2012CEAC0, 0x2012CF440, 0x2012CFDC0, 0x2012D0740,
-        //     0x2012D10C0, 0x2012D1A40, 0x2012D23C0, 0x2012D2D40,
-        //     0x2012D36C0, 0x2012D4040, 0x2012D49C0, 0x2012D5340
-        // };
-
-        uint64_t mbuf_addr_set_128_cur[] = {
+            0x201488100, 0x201487780, 0x201486E00, 0x201486480,
             0x201485B00, 0x201485180, 0x201484800, 0x201483E80,
             0x201483500, 0x201482B80, 0x201482200, 0x201481880,
             0x201480F00, 0x201480580, 0x20147FC00, 0x20147F280,
@@ -1143,7 +979,15 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             0x201475100, 0x201474780, 0x201473E00, 0x201473480
         };
 
-        uint64_t mbuf_first_cacheline_set_128_cur[] = {
+        uint64_t mbuf_first_cacheline_set_128_new[] = {
+            0x201498A00, 0x201498080, 0x201497700, 0x201496D80,
+            0x201496400, 0x201495A80, 0x201495100, 0x201494780,
+            0x201493E00, 0x201493480, 0x201492B00, 0x201492180,
+            0x201491800, 0x201490E80, 0x201490500, 0x20148FB80,
+            0x20148F200, 0x20148E880, 0x20148DF00, 0x20148D580,
+            0x20148CC00, 0x20148C280, 0x20148B900, 0x20148AF80,
+            0x20148A600, 0x201489C80, 0x201489300, 0x201488980,
+            0x201488000, 0x201487680, 0x201486D00, 0x201486380,
             0x201485A00, 0x201485080, 0x201484700, 0x201483D80,
             0x201483400, 0x201482A80, 0x201482100, 0x201481780,
             0x201480E00, 0x201480480, 0x20147FB00, 0x20147F180,
@@ -1154,7 +998,15 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             0x201475000, 0x201474680, 0x201473D00, 0x201473380
         };
 
-        uint64_t mbuf_second_cacheline_set_128_cur[] = {
+        uint64_t mbuf_second_cacheline_set_128_new[] = {
+            0x201498A40, 0x2014980C0, 0x201497740, 0x201496DC0,
+            0x201496440, 0x201495AC0, 0x201495140, 0x2014947C0,
+            0x201493E40, 0x2014934C0, 0x201492B40, 0x2014921C0,
+            0x201491840, 0x201490EC0, 0x201490540, 0x20148FBC0,
+            0x20148F240, 0x20148E8C0, 0x20148DF40, 0x20148D5C0,
+            0x20148CC40, 0x20148C2C0, 0x20148B940, 0x20148AFC0,
+            0x20148A640, 0x201489CC0, 0x201489340, 0x2014889C0,
+            0x201488040, 0x2014876C0, 0x201486D40, 0x2014863C0,
             0x201485A40, 0x2014850C0, 0x201484740, 0x201483DC0,
             0x201483440, 0x201482AC0, 0x201482140, 0x2014817C0,
             0x201480E40, 0x2014804C0, 0x20147FB40, 0x20147F1C0,
@@ -1165,41 +1017,8 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             0x201475040, 0x2014746C0, 0x201473D40, 0x2014733C0
         };
 
-        // mbuf for TX Descriptor (128-159 prev) - through previous phase's tdt 160 wr prefetch
-        // uint64_t mbuf_addr_set_160_prev[] = {
-        //     0x2017AC300, 0x2017AB980, 0x2017AB000, 0x2017AA680,
-        //     0x2017A9D00, 0x2017A9380, 0x2017A8A00, 0x2017A8080,
-        //     0x2017B0F00, 0x2017B0580, 0x2017AFC00, 0x2017AF280,
-        //     0x2017AE900, 0x2017ADF80, 0x2017AD600, 0x2017ACC80,
-        //     0x2017B5B00, 0x2017B5180, 0x2017B4800, 0x2017B3E80,
-        //     0x2017B3500, 0x2017B2B80, 0x2017B2200, 0x2017B1880,
-        //     0x2017BA700, 0x2017B9D80, 0x2017B9400, 0x2017B8A80,
-        //     0x2017B8100, 0x2017B7780, 0x2017B6E00, 0x2017B6480
-        // };
-
-        // uint64_t mbuf_first_cacheline_set_160_prev[] = {
-        //     0x2017AC200, 0x2017AB880, 0x2017AAF00, 0x2017AA580,
-        //     0x2017A9C00, 0x2017A9280, 0x2017A8900, 0x2017A7F80,
-        //     0x2017B0E00, 0x2017B0480, 0x2017AFB00, 0x2017AF180,
-        //     0x2017AE800, 0x2017ADE80, 0x2017AD500, 0x2017ACB80,
-        //     0x2017B5A00, 0x2017B5080, 0x2017B4700, 0x2017B3D80,
-        //     0x2017B3400, 0x2017B2A80, 0x2017B2100, 0x2017B1780,
-        //     0x2017BA600, 0x2017B9C80, 0x2017B9300, 0x2017B8980,
-        //     0x2017B8000, 0x2017B7680, 0x2017B6D00, 0x2017B6380
-        // };
-
-        // uint64_t mbuf_second_cacheline_set_160_prev[] = {
-        //     0x2017AC240, 0x2017AB8C0, 0x2017AAF40, 0x2017AA5C0,
-        //     0x2017A9C40, 0x2017A92C0, 0x2017A8940, 0x2017A7FC0,
-        //     0x2017B0E40, 0x2017B04C0, 0x2017AFB40, 0x2017AF1C0,
-        //     0x2017AE840, 0x2017ADEC0, 0x2017AD540, 0x2017ACBC0,
-        //     0x2017B5A40, 0x2017B50C0, 0x2017B4740, 0x2017B3DC0,
-        //     0x2017B3440, 0x2017B2AC0, 0x2017B2140, 0x2017B17C0,
-        //     0x2017BA640, 0x2017B9CC0, 0x2017B9340, 0x2017B89C0,
-        //     0x2017B8040, 0x2017B76C0, 0x2017B6D40, 0x2017B63C0
-        // };
-
-        uint64_t mbuf_addr_set_160_prev[] = {
+        // mbuf for RX Descriptor (192-255 current) - through current phase's tdt 256 wr prefetch
+        uint64_t mbuf_addr_set_256_cur[] = {
             0x201393D80, 0x201394700, 0x201395080, 0x201395A00,
             0x201396380, 0x201396D00, 0x201397680, 0x201398000,
             0x201398980, 0x201399300, 0x201399C80, 0x20139A600,
@@ -1207,10 +1026,18 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             0x20139D580, 0x20139DF00, 0x20139E880, 0x20139F200,
             0x20139FB80, 0x2013A0500, 0x2013A0E80, 0x2013A1800,
             0x2013A2180, 0x2013A2B00, 0x2013A3480, 0x2013A3E00,
-            0x2013A4780, 0x2013A5100, 0x2013A5A80, 0x2013A6400
+            0x2013A4780, 0x2013A5100, 0x2013A5A80, 0x2013A6400,
+            0x2013A6D80, 0x2013A7700, 0x2013A8080, 0x2013A8A00,
+            0x2013A9380, 0x2013A9D00, 0x2013AA680, 0x2013AB000,
+            0x2013AB980, 0x2013AC300, 0x2013ACC80, 0x2013AD600,
+            0x2013ADF80, 0x2013AE900, 0x2013AF280, 0x2013AFC00,
+            0x2013B0580, 0x2013B0F00, 0x2013B1880, 0x2013B2200,
+            0x2013B2B80, 0x2013B3500, 0x2013B3E80, 0x2013B4800,
+            0x2013B5180, 0x2013B5B00, 0x2013B6480, 0x2013B6E00,
+            0x2013B7780, 0x2013B8100, 0x2013B8A80, 0x2013B9400
         };
 
-        uint64_t mbuf_first_cacheline_set_160_prev[] = {
+        uint64_t mbuf_first_cacheline_set_256_cur[] = {
             0x201393C80, 0x201394600, 0x201394F80, 0x201395900,
             0x201396280, 0x201396C00, 0x201397580, 0x201397F00,
             0x201398880, 0x201399200, 0x201399B80, 0x20139A500,
@@ -1218,10 +1045,18 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             0x20139D480, 0x20139DE00, 0x20139E780, 0x20139F100,
             0x20139FA80, 0x2013A0400, 0x2013A0D80, 0x2013A1700,
             0x2013A2080, 0x2013A2A00, 0x2013A3380, 0x2013A3D00,
-            0x2013A4680, 0x2013A5000, 0x2013A5980, 0x2013A6300
+            0x2013A4680, 0x2013A5000, 0x2013A5980, 0x2013A6300,
+            0x2013A6C80, 0x2013A7600, 0x2013A7F80, 0x2013A8900,
+            0x2013A9280, 0x2013A9C00, 0x2013AA580, 0x2013AAF00,
+            0x2013AB880, 0x2013AC200, 0x2013ACB80, 0x2013AD500,
+            0x2013ADE80, 0x2013AE800, 0x2013AF180, 0x2013AFB00,
+            0x2013B0480, 0x2013B0E00, 0x2013B1780, 0x2013B2100,
+            0x2013B2A80, 0x2013B3400, 0x2013B3D80, 0x2013B4700,
+            0x2013B5080, 0x2013B5A00, 0x2013B6380, 0x2013B6D00,
+            0x2013B7680, 0x2013B8000, 0x2013B8980, 0x2013B9300
         };
 
-        uint64_t mbuf_second_cacheline_set_160_prev[] = {
+        uint64_t mbuf_second_cacheline_set_256_cur[] = {
             0x201393CC0, 0x201394640, 0x201394FC0, 0x201395940,
             0x2013962C0, 0x201396C40, 0x2013975C0, 0x201397F40,
             0x2013988C0, 0x201399240, 0x201399BC0, 0x20139A540,
@@ -1229,13 +1064,78 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             0x20139D4C0, 0x20139DE40, 0x20139E7C0, 0x20139F140,
             0x20139FAC0, 0x2013A0440, 0x2013A0DC0, 0x2013A1740,
             0x2013A20C0, 0x2013A2A40, 0x2013A33C0, 0x2013A3D40,
-            0x2013A46C0, 0x2013A5040, 0x2013A59C0, 0x2013A6340
+            0x2013A46C0, 0x2013A5040, 0x2013A59C0, 0x2013A6340,
+            0x2013A6CC0, 0x2013A7640, 0x2013A7FC0, 0x2013A8940,
+            0x2013A92C0, 0x2013A9C40, 0x2013AA5C0, 0x2013AAF40,
+            0x2013AB8C0, 0x2013AC240, 0x2013ACBC0, 0x2013AD540,
+            0x2013ADEC0, 0x2013AE840, 0x2013AF1C0, 0x2013AFB40,
+            0x2013B04C0, 0x2013B0E40, 0x2013B17C0, 0x2013B2140,
+            0x2013B2AC0, 0x2013B3440, 0x2013B3DC0, 0x2013B4740,
+            0x2013B50C0, 0x2013B5A40, 0x2013B63C0, 0x2013B6D40,
+            0x2013B76C0, 0x2013B8040, 0x2013B89C0, 0x2013B9340
         };
-        
+
+        // mbuf for TX Descriptor (256-319 prev) - through previous phase's tdt 320 wr prefetch
+        uint64_t mbuf_addr_set_320_prev[] = {
+            0x201451700, 0x201450D80, 0x201450400, 0x20144FA80,
+            0x20144F100, 0x20144E780, 0x20144DE00, 0x20144D480,
+            0x201456300, 0x201455980, 0x201455000, 0x201454680,
+            0x201453D00, 0x201453380, 0x201452A00, 0x201452080,
+            0x20145AF00, 0x20145A580, 0x201459C00, 0x201459280,
+            0x201458900, 0x201457F80, 0x201457600, 0x201456C80,
+            0x20145FB00, 0x20145F180, 0x20145E800, 0x20145DE80,
+            0x20145D500, 0x20145CB80, 0x20145C200, 0x20145B880,
+            0x201464700, 0x201463D80, 0x201463400, 0x201462A80,
+            0x201462100, 0x201461780, 0x201460E00, 0x201460480,
+            0x201469300, 0x201468980, 0x201468000, 0x201467680,
+            0x201466D00, 0x201466380, 0x201465A00, 0x201465080,
+            0x20146DF00, 0x20146D580, 0x20146CC00, 0x20146C280,
+            0x20146B900, 0x20146AF80, 0x20146A600, 0x201469C80,
+            0x201472B00, 0x201472180, 0x201471800, 0x201470E80,
+            0x201470500, 0x20146FB80, 0x20146F200, 0x20146E880
+        };
+
+        uint64_t mbuf_first_cacheline_set_320_prev[] = {
+            0x201451600, 0x201450C80, 0x201450300, 0x20144F980,
+            0x20144F000, 0x20144E680, 0x20144DD00, 0x20144D380,
+            0x201456200, 0x201455880, 0x201454F00, 0x201454580,
+            0x201453C00, 0x201453280, 0x201452900, 0x201451F80,
+            0x20145AE00, 0x20145A480, 0x201459B00, 0x201459180,
+            0x201458800, 0x201457E80, 0x201457500, 0x201456B80,
+            0x20145FA00, 0x20145F080, 0x20145E700, 0x20145DD80,
+            0x20145D400, 0x20145CA80, 0x20145C100, 0x20145B780,
+            0x201464600, 0x201463C80, 0x201463300, 0x201462980,
+            0x201462000, 0x201461680, 0x201460D00, 0x201460380,
+            0x201469200, 0x201468880, 0x201467F00, 0x201467580,
+            0x201466C00, 0x201466280, 0x201465900, 0x201464F80,
+            0x20146DE00, 0x20146D480, 0x20146CB00, 0x20146C180,
+            0x20146B800, 0x20146AE80, 0x20146A500, 0x201469B80,
+            0x201472A00, 0x201472080, 0x201471700, 0x201470D80,
+            0x201470400, 0x20146FA80, 0x20146F100, 0x20146E780
+        };
+
+        uint64_t mbuf_second_cacheline_set_320_prev[] = {
+            0x201451640, 0x201450CC0, 0x201450340, 0x20144F9C0,
+            0x20144F040, 0x20144E6C0, 0x20144DD40, 0x20144D3C0,
+            0x201456240, 0x2014558C0, 0x201454F40, 0x2014545C0,
+            0x201453C40, 0x2014532C0, 0x201452940, 0x201451FC0,
+            0x20145AE40, 0x20145A4C0, 0x201459B40, 0x2014591C0,
+            0x201458840, 0x201457EC0, 0x201457540, 0x201456BC0,
+            0x20145FA40, 0x20145F0C0, 0x20145E740, 0x20145DDC0,
+            0x20145D440, 0x20145CAC0, 0x20145C140, 0x20145B7C0,
+            0x201464640, 0x201463CC0, 0x201463340, 0x2014629C0,
+            0x201462040, 0x2014616C0, 0x201460D40, 0x2014603C0,
+            0x201469240, 0x2014688C0, 0x201467F40, 0x2014675C0,
+            0x201466C40, 0x2014662C0, 0x201465940, 0x201464FC0,
+            0x20146DE40, 0x20146D4C0, 0x20146CB40, 0x20146C1C0,
+            0x20146B840, 0x20146AEC0, 0x20146A540, 0x201469BC0,
+            0x201472A40, 0x2014720C0, 0x201471740, 0x201470DC0,
+            0x201470440, 0x20146FAC0, 0x20146F140, 0x20146E7C0
+        };        
 
 
         // mbuf's structure part
-        for (int i = 0; i < 32; i ++) {
+        for (int i = 0; i < 64; i ++) {
             uint64_t pkt_addr = pkt->getAddr();
             uint64_t pkt_addr_end = pkt_addr + pkt->getSize();
             // Check if the packet address is in the mbuf's structure part
@@ -1267,9 +1167,9 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             */
 
             // SVE
-            if (pkt_addr >= mbuf_first_cacheline_set_96_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_96_cur[i] + 64) {
+            if (pkt_addr >= mbuf_first_cacheline_set_192_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_192_cur[i] + 64) {
                 uint64_t pktdata = 111111111;
-                if (pkt_addr - mbuf_first_cacheline_set_96_cur[i] == 0x38) {
+                if (pkt_addr - mbuf_first_cacheline_set_192_cur[i] == 0x38) {
                     // This is the access to the mbuf's pool addr
                     if (pkt->isRead() && satisfied) {
                         // Get value from pkt's data
@@ -1280,17 +1180,17 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
                         int64_t* data = pkt->getPtr<int64_t>();
                         pktdata = data[0];
                     }
-                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_96CUR[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_192CUR[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
                 } else {
-                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_96CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_192CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
                 }
             }
-            if (pkt_addr >= mbuf_second_cacheline_set_96_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_96_cur[i] + 64) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_96CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            if (pkt_addr >= mbuf_second_cacheline_set_192_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_192_cur[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_192CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
-            if (pkt_addr >= mbuf_first_cacheline_set_64_new[i] && pkt_addr_end <= mbuf_first_cacheline_set_64_new[i] + 64) {
+            if (pkt_addr >= mbuf_first_cacheline_set_128_new[i] && pkt_addr_end <= mbuf_first_cacheline_set_128_new[i] + 64) {
                 uint64_t pktdata = 111111111;
-                if (pkt_addr - mbuf_first_cacheline_set_64_new[i] == 0x38) {
+                if (pkt_addr - mbuf_first_cacheline_set_128_new[i] == 0x38) {
                     // This is the access to the mbuf's pool addr
                     if (pkt->isRead() && satisfied) {
                         // Get value from pkt's data
@@ -1301,17 +1201,17 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
                         int64_t* data = pkt->getPtr<int64_t>();
                         pktdata = data[0];
                     }
-                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_64NEW[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_128NEW[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
                 } else {
-                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_64NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_128NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
                 }
             }
-            if (pkt_addr >= mbuf_second_cacheline_set_64_new[i] && pkt_addr_end <= mbuf_second_cacheline_set_64_new[i] + 64) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_64NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            if (pkt_addr >= mbuf_second_cacheline_set_128_new[i] && pkt_addr_end <= mbuf_second_cacheline_set_128_new[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_128NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
-            if (pkt_addr >= mbuf_first_cacheline_set_128_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_128_cur[i] + 64) {
+            if (pkt_addr >= mbuf_first_cacheline_set_256_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_256_cur[i] + 64) {
                 uint64_t pktdata = 111111111;
-                if (pkt_addr - mbuf_first_cacheline_set_128_cur[i] == 0x38) {
+                if (pkt_addr - mbuf_first_cacheline_set_256_cur[i] == 0x38) {
                     // This is the access to the mbuf's pool addr
                     if (pkt->isRead() && satisfied) {
                         // Get value from pkt's data
@@ -1322,17 +1222,17 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
                         int64_t* data = pkt->getPtr<int64_t>();
                         pktdata = data[0];
                     }
-                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_128CUR[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_256CUR[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
                 } else {
-                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_128CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_256CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
                 }
             }
-            if (pkt_addr >= mbuf_second_cacheline_set_128_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_128_cur[i] + 64) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_128CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            if (pkt_addr >= mbuf_second_cacheline_set_256_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_256_cur[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_256CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
-            if (pkt_addr >= mbuf_first_cacheline_set_160_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_160_prev[i] + 64) {
+            if (pkt_addr >= mbuf_first_cacheline_set_320_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_320_prev[i] + 64) {
                 uint64_t pktdata = 111111111;
-                if (pkt_addr - mbuf_first_cacheline_set_160_prev[i] == 0x38) {
+                if (pkt_addr - mbuf_first_cacheline_set_320_prev[i] == 0x38) {
                     // This is the access to the mbuf's pool addr
                     if (pkt->isRead() && satisfied) {
                         // Get value from pkt's data
@@ -1343,13 +1243,13 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
                         int64_t* data = pkt->getPtr<int64_t>();
                         pktdata = data[0];
                     }
-                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_160PREV[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_320PREV[%d]_pool_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
                 } else {
-                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_160PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
+                    printf("[LOG], %llu, %s, %s, %d, MBUF_$0_320PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), pktdata, i);
                 }
             }
-            if (pkt_addr >= mbuf_second_cacheline_set_160_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_160_prev[i] + 64) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_160PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            if (pkt_addr >= mbuf_second_cacheline_set_320_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_320_prev[i] + 64) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF_$1_320PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
             
         }
@@ -1370,17 +1270,17 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             // }
 
             // SVE
-            if (pkt->getAddr() == mbuf_addr_set_96_cur[i]) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF96CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            if (pkt->getAddr() == mbuf_addr_set_192_cur[i]) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF192CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
-            if (pkt->getAddr() == mbuf_addr_set_64_new[i]) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF64NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            if (pkt->getAddr() == mbuf_addr_set_128_new[i]) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF128NEW[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
-            if (pkt->getAddr() == mbuf_addr_set_128_cur[i]) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF128CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            if (pkt->getAddr() == mbuf_addr_set_256_cur[i]) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF256CUR[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
-            if (pkt->getAddr() == mbuf_addr_set_160_prev[i]) {
-                printf("[LOG], %llu, %s, %s, %d, MBUF160PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
+            if (pkt->getAddr() == mbuf_addr_set_320_prev[i]) {
+                printf("[LOG], %llu, %s, %s, %d, MBUF320PREV[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, i);
             }
             
         }
@@ -1927,15 +1827,15 @@ BaseCache::recvTimingResp(PacketPtr pkt)
     uint64_t tx_sw_ring_end = tx_sw_ring_base + max_desc * mbuf_ptr_size;
 
     // RX SW Ring
-    if (pkt->getAddr() >= rx_sw_ring_base && pkt->getAddr() < rx_sw_ring_end) {
-        int offset = (pkt->getAddr() - rx_sw_ring_base) / mbuf_ptr_size;
-        printf("[LOG], %llu, %s, %s, %d, RX_SW_RING[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
-    }
-    // TX SW Ring
-    if (pkt->getAddr() >= tx_sw_ring_base && pkt->getAddr() < tx_sw_ring_end) {
-        int offset = (pkt->getAddr() - tx_sw_ring_base) / mbuf_ptr_size;
-        printf("[LOG], %llu, %s, %s, %d, TX_SW_RING[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
-    }
+    // if (pkt->getAddr() >= rx_sw_ring_base && pkt->getAddr() < rx_sw_ring_end) {
+    //     int offset = (pkt->getAddr() - rx_sw_ring_base) / mbuf_ptr_size;
+    //     printf("[LOG], %llu, %s, %s, %d, RX_SW_RING[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+    // }
+    // // TX SW Ring
+    // if (pkt->getAddr() >= tx_sw_ring_base && pkt->getAddr() < tx_sw_ring_end) {
+    //     int offset = (pkt->getAddr() - tx_sw_ring_base) / mbuf_ptr_size;
+    //     printf("[LOG], %llu, %s, %s, %d, TX_SW_RING[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+    // }
 
     // normal version
     // uint64_t rx_desc_base = 8624155648;
@@ -1945,192 +1845,133 @@ BaseCache::recvTimingResp(PacketPtr pkt)
     uint64_t rx_desc_base = 8624135424;
     uint64_t tx_desc_base = 8624237824;
 
-    // RX Descriptor (0-31)
-    uint64_t rx_desc_0 = rx_desc_base + 16 * 0;
-    if (pkt->getAddr() >= rx_desc_0 && pkt->getAddr() < rx_desc_0 + 512) {
-        int offset = (pkt->getAddr() - rx_desc_0) / 16;
-        int num_desc = (pkt->getSize() / 16);
+    uint64_t batch_size = 64;
+    uint64_t desc_size = 16;
+
+    // RX Descriptor (0-63)
+    uint64_t rx_desc_0 = rx_desc_base + desc_size * 0;
+    if (pkt->getAddr() >= rx_desc_0 && pkt->getAddr() < rx_desc_0 + batch_size * desc_size) {
+        int offset = (pkt->getAddr() - rx_desc_0) / desc_size;
+        int num_desc = (pkt->getSize() / desc_size);  
         int last_offset = offset + num_desc - 1;
-        if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+        if ((last_offset == 63 || last_offset == 62) && pkt->canGetDataPtr()) {
             // Get the last descriptor's DD bit
             uint8_t *data = pkt->getPtr<uint8_t>();
-            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            uint8_t *last_desc = data + (num_desc - 1) * desc_size;
             E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
             bool dd = false;
             if (pkt->isRead()) {
                 dd = desc->status_error & E1000_RXD_STAT_DD;
             }
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_31[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_63[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
         } else {
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_31[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_0_63[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
         }
     }
 
-    // RX Descriptor (32-63)
-    uint64_t rx_desc_32 = rx_desc_base + 16 * 32;
-    if (pkt->getAddr() >= rx_desc_32 && pkt->getAddr() < rx_desc_32 + 512) {
-        int offset = (pkt->getAddr() - rx_desc_32) / 16;
-        int num_desc = (pkt->getSize() / 16);  
+    // RX Descriptor (64-127)
+    uint64_t rx_desc_64 = rx_desc_base + desc_size * 64;
+    if (pkt->getAddr() >= rx_desc_64 && pkt->getAddr() < rx_desc_64 + batch_size * desc_size) {
+        int offset = (pkt->getAddr() - rx_desc_64) / desc_size;
+        int num_desc = (pkt->getSize() / desc_size);
         int last_offset = offset + num_desc - 1;
-        if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+        if ((last_offset == 63 || last_offset == 62) && pkt->canGetDataPtr()) {
             // Get the last descriptor's DD bit
             uint8_t *data = pkt->getPtr<uint8_t>();
-            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            uint8_t *last_desc = data + (num_desc - 1) * desc_size;
             E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
             bool dd = false;
             if (pkt->isRead()) {
                 dd = desc->status_error & E1000_RXD_STAT_DD;
             }
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_32_63[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_64_127[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
         } else {
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_32_63[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_64_127[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
         }
     }
 
-    // RX Descriptor (63-95)
-    uint64_t rx_desc_63 = rx_desc_base + 16 * 63;
-    if (pkt->getAddr() >= rx_desc_63 && pkt->getAddr() < rx_desc_63 + 512) {
-        int offset = (pkt->getAddr() - rx_desc_63) / 16;
-        int num_desc = (pkt->getSize() / 16);
+    // RX Descriptor (192-255)
+    uint64_t rx_desc_192 = rx_desc_base + desc_size * 192;
+    if (pkt->getAddr() >= rx_desc_192 && pkt->getAddr() < rx_desc_192 + batch_size * desc_size) {
+        int offset = (pkt->getAddr() - rx_desc_192) / desc_size;
+        int num_desc = (pkt->getSize() / desc_size);
         int last_offset = offset + num_desc - 1;
-        if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+        if ((last_offset == 63 || last_offset == 62) && pkt->canGetDataPtr()) {
             // Get the last descriptor's DD bit
             uint8_t *data = pkt->getPtr<uint8_t>();
-            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            uint8_t *last_desc = data + (num_desc - 1) * desc_size;
             E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
             bool dd = false;
             if (pkt->isRead()) {
                 dd = desc->status_error & E1000_RXD_STAT_DD;
             }
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_192_255[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
         } else {
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_63_95[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+            printf("[LOG], %llu, %s, %s, %d, RX_DESC_192_255[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
         }
     }
 
-    // RX Descriptor (96-127)
-    uint64_t rx_desc_96 = rx_desc_base + 16 * 96;
-    if (pkt->getAddr() >= rx_desc_96 && pkt->getAddr() < rx_desc_96 + 512) {
-        int offset = (pkt->getAddr() - rx_desc_96) / 16;
-        int num_desc = (pkt->getSize() / 16);
+    // TX Descriptor (128-192)
+    uint64_t tx_desc_128 = tx_desc_base + desc_size * 128;
+    if (pkt->getAddr() >= tx_desc_128 && pkt->getAddr() < tx_desc_128 + batch_size * desc_size) {
+        int offset = (pkt->getAddr() - tx_desc_128) / desc_size;
+        int num_desc = (pkt->getSize() / desc_size);
         int last_offset = offset + num_desc - 1;
-        if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
+        if ((last_offset == 63) && pkt->canGetDataPtr()) {
             // Get the last descriptor's DD bit
             uint8_t *data = pkt->getPtr<uint8_t>();
-            uint8_t *last_desc = data + (num_desc - 1) * 16;
-            E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
-            bool dd = false;
-            if (pkt->isRead()) {
-                dd = desc->status_error & E1000_RXD_STAT_DD;
-            }
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_96_127[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
-        } else {
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_96_127[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
-        }
-    }
-
-    // RX Descriptor (127-159)
-    uint64_t rx_desc_127 = rx_desc_base + 16 * 127;
-    if (pkt->getAddr() >= rx_desc_127 && pkt->getAddr() < rx_desc_127 + 512) {
-        int offset = (pkt->getAddr() - rx_desc_127) / 16;
-        int num_desc = (pkt->getSize() / 16);
-        int last_offset = offset + num_desc - 1;
-        if ((last_offset == 31 || last_offset == 30) && pkt->canGetDataPtr()) {
-            // Get the last descriptor's DD bit
-            uint8_t *data = pkt->getPtr<uint8_t>();
-            uint8_t *last_desc = data + (num_desc - 1) * 16;
-            E1000RXDescriptor *desc = (E1000RXDescriptor *)last_desc;
-            bool dd = false;
-            if (pkt->isRead()) {
-                dd = desc->status_error & E1000_RXD_STAT_DD;
-            }
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_127_159[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
-        } else {
-            printf("[LOG], %llu, %s, %s, %d, RX_DESC_127_159[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
-        }
-    }
-
-    // TX Descriptor (64-95)
-    uint64_t tx_desc_64 = tx_desc_base + 16 * 64;
-    if (pkt->getAddr() >= tx_desc_64 && pkt->getAddr() < tx_desc_64 + 512) {
-        int offset = (pkt->getAddr() - tx_desc_64) / 16;
-        int num_desc = (pkt->getSize() / 16);
-        int last_offset = offset + num_desc - 1;
-        if ((last_offset == 31) && pkt->canGetDataPtr()) {
-            // Get the last descriptor's DD bit
-            uint8_t *data = pkt->getPtr<uint8_t>();
-            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            uint8_t *last_desc = data + (num_desc - 1) * desc_size;
             E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
             bool dd = false;
             if (pkt->isRead()) {
                 dd = desc->wb.status & E1000_TXD_STAT_DD;
             }
-            printf("[LOG], %llu, %s, %s, %d, TX_DESC_64_95[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_192[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
         } else {
-            printf("[LOG], %llu, %s, %s, %d, TX_DESC_64_95[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
-        }
-    }
-    
-    // TX Descriptor (96-128)
-    uint64_t tx_desc_96 = tx_desc_base + 16 * 96;
-    if (pkt->getAddr() >= tx_desc_96 && pkt->getAddr() < tx_desc_96 + 512) {
-        int offset = (pkt->getAddr() - tx_desc_96) / 16;
-        int num_desc = (pkt->getSize() / 16);
-        int last_offset = offset + num_desc - 1;
-        if ((last_offset == 31) && pkt->canGetDataPtr()) {
-            // Get the last descriptor's DD bit
-            uint8_t *data = pkt->getPtr<uint8_t>();
-            uint8_t *last_desc = data + (num_desc - 1) * 16;
-            E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
-            bool dd = false;
-            if (pkt->isRead()) {
-                dd = desc->wb.status & E1000_TXD_STAT_DD;
-            }
-            printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
-        } else {
-            printf("[LOG], %llu, %s, %s, %d, TX_DESC_96_128[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
-        }
-    }    
-
-    // TX Descriptor (128-160)
-    uint64_t tx_desc_128 = tx_desc_base + 16 * 128;
-    if (pkt->getAddr() >= tx_desc_128 && pkt->getAddr() < tx_desc_128 + 512) {
-        int offset = (pkt->getAddr() - tx_desc_128) / 16;
-        int num_desc = (pkt->getSize() / 16);
-        int last_offset = offset + num_desc - 1;
-        if ((last_offset == 31) && pkt->canGetDataPtr()) {
-            // Get the last descriptor's DD bit
-            uint8_t *data = pkt->getPtr<uint8_t>();
-            uint8_t *last_desc = data + (num_desc - 1) * 16;
-            E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
-            bool dd = false;
-            if (pkt->isRead()) {
-                dd = desc->wb.status & E1000_TXD_STAT_DD;
-            }
-            printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_160[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
-        } else {
-            printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_160[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_128_192[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
         }
     }
 
-    // TX Descriptor (160-192)
-    uint64_t tx_desc_160 = tx_desc_base + 16 * 160;
-    if (pkt->getAddr() >= tx_desc_160 && pkt->getAddr() < tx_desc_160 + 512) {
-        int offset = (pkt->getAddr() - tx_desc_160) / 16;
-        int num_desc = (pkt->getSize() / 16);
+    // TX Descriptor (192-256)
+    uint64_t tx_desc_192 = tx_desc_base + desc_size * 192;
+    if (pkt->getAddr() >= tx_desc_192 && pkt->getAddr() < tx_desc_192 + batch_size * desc_size) {
+        int offset = (pkt->getAddr() - tx_desc_192) / desc_size;
+        int num_desc = (pkt->getSize() / desc_size);
         int last_offset = offset + num_desc - 1;
-        if ((last_offset == 31) && pkt->canGetDataPtr()) {
+        if ((last_offset == 63) && pkt->canGetDataPtr()) {
             // Get the last descriptor's DD bit
             uint8_t *data = pkt->getPtr<uint8_t>();
-            uint8_t *last_desc = data + (num_desc - 1) * 16;
+            uint8_t *last_desc = data + (num_desc - 1) * desc_size;
             E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
             bool dd = false;
             if (pkt->isRead()) {
                 dd = desc->wb.status & E1000_TXD_STAT_DD;
             }
-            printf("[LOG], %llu, %s, %s, %d, TX_DESC_160_192[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_192_256[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
+        }
+        else {
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_192_256[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+        }
+    }
+
+    // TX Descriptor (256-320)
+    uint64_t tx_desc_256 = tx_desc_base + desc_size * 256;
+    if (pkt->getAddr() >= tx_desc_256 && pkt->getAddr() < tx_desc_256 + batch_size * desc_size) {
+        int offset = (pkt->getAddr() - tx_desc_256) / desc_size;
+        int num_desc = (pkt->getSize() / desc_size);
+        int last_offset = offset + num_desc - 1;
+        if ((last_offset == 63) && pkt->canGetDataPtr()) {
+            // Get the last descriptor's DD bit
+            uint8_t *data = pkt->getPtr<uint8_t>();
+            uint8_t *last_desc = data + (num_desc - 1) * desc_size;
+            E1000TXDescriptor *desc = (E1000TXDescriptor *)last_desc;
+            bool dd = false;
+            if (pkt->isRead()) {
+                dd = desc->wb.status & E1000_TXD_STAT_DD;
+            }
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_256_320[%d]_RES_DD\n", curTick(), name().c_str(), pkt->print().c_str(), dd, last_offset);
         } else {
-            printf("[LOG], %llu, %s, %s, %d, TX_DESC_160_192[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+            printf("[LOG], %llu, %s, %s, %d, TX_DESC_256_320[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
         }
     }
 
@@ -2277,41 +2118,66 @@ BaseCache::recvTimingResp(PacketPtr pkt)
     */
 
     // sve version
-    // mbuf for TX Descriptor (64-95 current) - throught current phase's tdt 96 wr prefetch
-    // uint64_t mbuf_addr_set_96_cur[] = {
-    //     0x2012D5D80, 0x2012D6700, 0x2012D7080, 0x2012D7A00,
-    //     0x2012D8380, 0x2012D8D00, 0x2012D9680, 0x2012DA000,
-    //     0x2012DA980, 0x2012DB300, 0x2012DBC80, 0x2012DC600,
-    //     0x2012DCF80, 0x2012DD900, 0x2012DE280, 0x2012DEC00,
-    //     0x2012DF580, 0x2012DFF00, 0x2012E0880, 0x2012E1200,
-    //     0x2012E1B80, 0x2012E2500, 0x2012E2E80, 0x2012E3800,
-    //     0x2012E4180, 0x2012E4B00, 0x2012E5480, 0x2012E5E00,
-    //     0x2012E6780, 0x2012E7100, 0x2012E7A80, 0x2012E8400
-    // };
+    // mbuf for TX Descriptor (128-191 current) - throught current phase's tdt 192 wr prefetch
+    uint64_t mbuf_addr_set_192_cur[] = {
+        0x2013B9D80, 0x2013BA700, 0x2013BB080, 0x2013BBA00,
+        0x2013BC380, 0x2013BCD00, 0x2013BD680, 0x2013BE000,
+        0x2013BE980, 0x2013BF300, 0x2013BFC80, 0x2013C0600,
+        0x2013C0F80, 0x2013C1900, 0x2013C2280, 0x2013C2C00,
+        0x2013C3580, 0x2013C3F00, 0x2013C4880, 0x2013C5200,
+        0x2013C5B80, 0x2013C6500, 0x2013C6E80, 0x2013C7800,
+        0x2013C8180, 0x2013C8B00, 0x2013C9480, 0x2013C9E00,
+        0x2013CA780, 0x2013CB100, 0x2013CBA80, 0x2013CC400,
+        0x2013CCD80, 0x2013CD700, 0x2013CE080, 0x2013CEA00,
+        0x2013CF380, 0x2013CFD00, 0x2013D0680, 0x2013D1000,
+        0x2013D1980, 0x2013D2300, 0x2013D2C80, 0x2013D3600,
+        0x2013D3F80, 0x2013D4900, 0x2013D5280, 0x2013D5C00,
+        0x2013D6580, 0x2013D6F00, 0x2013D7880, 0x2013D8200,
+        0x2013D8B80, 0x2013D9500, 0x2013D9E80, 0x2013DA800,
+        0x2013DB180, 0x2013DBB00, 0x2013DC480, 0x2013DCE00,
+        0x2013DD780, 0x2013DE100, 0x2013DEA80, 0x2013DF400
+    };
 
-    // uint64_t mbuf_first_cacheline_set_96_cur[] = {
-    //     0x2012D5C80, 0x2012D6600, 0x2012D6F80, 0x2012D7900,
-    //     0x2012D8280, 0x2012D8C00, 0x2012D9580, 0x2012D9F00,
-    //     0x2012DA880, 0x2012DB200, 0x2012DBB80, 0x2012DC500,
-    //     0x2012DCE80, 0x2012DD800, 0x2012DE180, 0x2012DEB00,
-    //     0x2012DF480, 0x2012DFE00, 0x2012E0780, 0x2012E1100,
-    //     0x2012E1A80, 0x2012E2400, 0x2012E2D80, 0x2012E3700,
-    //     0x2012E4080, 0x2012E4A00, 0x2012E5380, 0x2012E5D00,
-    //     0x2012E6680, 0x2012E7000, 0x2012E7980, 0x2012E8300
-    // };
+    uint64_t mbuf_first_cacheline_set_192_cur[] = {
+        0x2013B9C80, 0x2013BA600, 0x2013BAF80, 0x2013BB900,
+        0x2013BC280, 0x2013BCC00, 0x2013BD580, 0x2013BDF00,
+        0x2013BE880, 0x2013BF200, 0x2013BFB80, 0x2013C0500,
+        0x2013C0E80, 0x2013C1800, 0x2013C2180, 0x2013C2B00,
+        0x2013C3480, 0x2013C3E00, 0x2013C4780, 0x2013C5100,
+        0x2013C5A80, 0x2013C6400, 0x2013C6D80, 0x2013C7700,
+        0x2013C8080, 0x2013C8A00, 0x2013C9380, 0x2013C9D00,
+        0x2013CA680, 0x2013CB000, 0x2013CB980, 0x2013CC300,
+        0x2013CCC80, 0x2013CD600, 0x2013CDF80, 0x2013CE900,
+        0x2013CF280, 0x2013CFC00, 0x2013D0580, 0x2013D0F00,
+        0x2013D1880, 0x2013D2200, 0x2013D2B80, 0x2013D3500,
+        0x2013D3E80, 0x2013D4800, 0x2013D5180, 0x2013D5B00,
+        0x2013D6480, 0x2013D6E00, 0x2013D7780, 0x2013D8100,
+        0x2013D8A80, 0x2013D9400, 0x2013D9D80, 0x2013DA700,
+        0x2013DB080, 0x2013DBA00, 0x2013DC380, 0x2013DCD00,
+        0x2013DD680, 0x2013DE000, 0x2013DE980, 0x2013DF300
+    };
 
-    // uint64_t mbuf_second_cacheline_set_96_cur[] = {
-    //     0x2012D5CC0, 0x2012D6640, 0x2012D6FC0, 0x2012D7940,
-    //     0x2012D82C0, 0x2012D8C40, 0x2012D95C0, 0x2012D9F40,
-    //     0x2012DA8C0, 0x2012DB240, 0x2012DBBC0, 0x2012DC540,
-    //     0x2012DCEC0, 0x2012DD840, 0x2012DE1C0, 0x2012DEB40,
-    //     0x2012DF4C0, 0x2012DFE40, 0x2012E07C0, 0x2012E1140,
-    //     0x2012E1AC0, 0x2012E2440, 0x2012E2DC0, 0x2012E3740,
-    //     0x2012E40C0, 0x2012E4A40, 0x2012E53C0, 0x2012E5D40,
-    //     0x2012E66C0, 0x2012E7040, 0x2012E79C0, 0x2012E8340
-    // };
-
-    uint64_t mbuf_addr_set_96_cur[] = {
+    uint64_t mbuf_second_cacheline_set_192_cur[] = {
+        0x2013B9CC0, 0x2013BA640, 0x2013BAFC0, 0x2013BB940,
+        0x2013BC2C0, 0x2013BCC40, 0x2013BD5C0, 0x2013BDF40,
+        0x2013BE8C0, 0x2013BF240, 0x2013BFBC0, 0x2013C0540,
+        0x2013C0EC0, 0x2013C1840, 0x2013C21C0, 0x2013C2B40,
+        0x2013C34C0, 0x2013C3E40, 0x2013C47C0, 0x2013C5140,
+        0x2013C5AC0, 0x2013C6440, 0x2013C6DC0, 0x2013C7740,
+        0x2013C80C0, 0x2013C8A40, 0x2013C93C0, 0x2013C9D40,
+        0x2013CA6C0, 0x2013CB040, 0x2013CB9C0, 0x2013CC340,
+        0x2013CCCC0, 0x2013CD640, 0x2013CDFC0, 0x2013CE940,
+        0x2013CF2C0, 0x2013CFC40, 0x2013D05C0, 0x2013D0F40,
+        0x2013D18C0, 0x2013D2240, 0x2013D2BC0, 0x2013D3540,
+        0x2013D3EC0, 0x2013D4840, 0x2013D51C0, 0x2013D5B40,
+        0x2013D64C0, 0x2013D6E40, 0x2013D77C0, 0x2013D8140,
+        0x2013D8AC0, 0x2013D9440, 0x2013D9DC0, 0x2013DA740,
+        0x2013DB0C0, 0x2013DBA40, 0x2013DC3C0, 0x2013DCD40,
+        0x2013DD6C0, 0x2013DE040, 0x2013DE9C0, 0x2013DF340
+    };
+    
+    // mbuf for RX Descriptor (64-127 new) - through next phase's tdt 128 wr prefetch
+    uint64_t mbuf_addr_set_128_new[] = {
         0x201498B00, 0x201498180, 0x201497800, 0x201496E80,
         0x201496500, 0x201495B80, 0x201495200, 0x201494880,
         0x201493F00, 0x201493580, 0x201492C00, 0x201492280,
@@ -2319,133 +2185,7 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         0x20148F300, 0x20148E980, 0x20148E000, 0x20148D680,
         0x20148CD00, 0x20148C380, 0x20148BA00, 0x20148B080,
         0x20148A700, 0x201489D80, 0x201489400, 0x201488A80,
-        0x201488100, 0x201487780, 0x201486E00, 0x201486480
-    };
-
-    uint64_t mbuf_first_cacheline_set_96_cur[] = {
-        0x201498A00, 0x201498080, 0x201497700, 0x201496D80,
-        0x201496400, 0x201495A80, 0x201495100, 0x201494780,
-        0x201493E00, 0x201493480, 0x201492B00, 0x201492180,
-        0x201491800, 0x201490E80, 0x201490500, 0x20148FB80,
-        0x20148F200, 0x20148E880, 0x20148DF00, 0x20148D580,
-        0x20148CC00, 0x20148C280, 0x20148B900, 0x20148AF80,
-        0x20148A600, 0x201489C80, 0x201489300, 0x201488980,
-        0x201488000, 0x201487680, 0x201486D00, 0x201486380
-    };
-
-    uint64_t mbuf_second_cacheline_set_96_cur[] = {
-        0x201498A40, 0x2014980C0, 0x201497740, 0x201496DC0,
-        0x201496440, 0x201495AC0, 0x201495140, 0x2014947C0,
-        0x201493E40, 0x2014934C0, 0x201492B40, 0x2014921C0,
-        0x201491840, 0x201490EC0, 0x201490540, 0x20148FBC0,
-        0x20148F240, 0x20148E8C0, 0x20148DF40, 0x20148D5C0,
-        0x20148CC40, 0x20148C2C0, 0x20148B940, 0x20148AFC0,
-        0x20148A640, 0x201489CC0, 0x201489340, 0x2014889C0,
-        0x201488040, 0x2014876C0, 0x201486D40, 0x2014863C0
-    };
-
-    // mbuf for RX Descriptor (32-63 new) - through next phase's tdt 64 wr prefetch
-    // uint64_t mbuf_addr_set_64_new[] = {
-    //     0x2017CD700, 0x2017CCD80, 0x2017CC400, 0x2017CBA80,
-    //     0x2017CB100, 0x2017CA780, 0x2017C9E00, 0x2017C9480,
-    //     0x2017C8B00, 0x2017C8180, 0x2017C7800, 0x2017C6E80,
-    //     0x2017C6500, 0x2017C5B80, 0x2017C5200, 0x2017C4880,
-    //     0x2017C3F00, 0x2017C3580, 0x2017C2C00, 0x2017C2280,
-    //     0x2017C1900, 0x2017C0F80, 0x2017C0600, 0x2017BFC80,
-    //     0x2017BF300, 0x2017BE980, 0x2017BE000, 0x2017BD680,
-    //     0x2017BCD00, 0x2017BC380, 0x2017BBA00, 0x2017BB080
-    // };
-
-    // uint64_t mbuf_first_cacheline_set_64_new[] = {
-    //     0x2017CD600, 0x2017CCC80, 0x2017CC300, 0x2017CB980,
-    //     0x2017CB000, 0x2017CA680, 0x2017C9D00, 0x2017C9380,
-    //     0x2017C8A00, 0x2017C8080, 0x2017C7700, 0x2017C6D80,
-    //     0x2017C6400, 0x2017C5A80, 0x2017C5100, 0x2017C4780,
-    //     0x2017C3E00, 0x2017C3480, 0x2017C2B00, 0x2017C2180,
-    //     0x2017C1800, 0x2017C0E80, 0x2017C0500, 0x2017BFB80,
-    //     0x2017BF200, 0x2017BE880, 0x2017BDF00, 0x2017BD580,
-    //     0x2017BCC00, 0x2017BC280, 0x2017BB900, 0x2017BAF80
-    // };
-
-    // uint64_t mbuf_second_cacheline_set_64_new[] = {
-    //     0x2017CD640, 0x2017CCCC0, 0x2017CC340, 0x2017CB9C0,
-    //     0x2017CB040, 0x2017CA6C0, 0x2017C9D40, 0x2017C93C0,
-    //     0x2017C8A40, 0x2017C80C0, 0x2017C7740, 0x2017C6DC0,
-    //     0x2017C6440, 0x2017C5AC0, 0x2017C5140, 0x2017C47C0,
-    //     0x2017C3E40, 0x2017C34C0, 0x2017C2B40, 0x2017C21C0,
-    //     0x2017C1840, 0x2017C0EC0, 0x2017C0540, 0x2017BFBC0,
-    //     0x2017BF240, 0x2017BE8C0, 0x2017BDF40, 0x2017BD5C0,
-    //     0x2017BCC40, 0x2017BC2C0, 0x2017BB940, 0x2017BAFC0
-    // };
-
-    uint64_t mbuf_addr_set_64_new[] = {
-        0x2013B5180, 0x2013B5B00, 0x2013B6480, 0x2013B6E00,
-        0x2013B7780, 0x2013B8100, 0x2013B8A80, 0x2013B9400,
-        0x2013B0580, 0x2013B0F00, 0x2013B1880, 0x2013B2200,
-        0x2013B2B80, 0x2013B3500, 0x2013B3E80, 0x2013B4800,
-        0x2013AB980, 0x2013AC300, 0x2013ACC80, 0x2013AD600,
-        0x2013ADF80, 0x2013AE900, 0x2013AF280, 0x2013AFC00,
-        0x2013A6D80, 0x2013A7700, 0x2013A8080, 0x2013A8A00,
-        0x2013A9380, 0x2013A9D00, 0x2013AA680, 0x2013AB000
-    };
-
-    uint64_t mbuf_first_cacheline_set_64_new[] = {
-        0x2013B5080, 0x2013B5A00, 0x2013B6380, 0x2013B6D00,
-        0x2013B7680, 0x2013B8000, 0x2013B8980, 0x2013B9300,
-        0x2013B0480, 0x2013B0E00, 0x2013B1780, 0x2013B2100,
-        0x2013B2A80, 0x2013B3400, 0x2013B3D80, 0x2013B4700,
-        0x2013AB880, 0x2013AC200, 0x2013ACB80, 0x2013AD500,
-        0x2013ADE80, 0x2013AE800, 0x2013AF180, 0x2013AFB00,
-        0x2013A6C80, 0x2013A7600, 0x2013A7F80, 0x2013A8900,
-        0x2013A9280, 0x2013A9C00, 0x2013AA580, 0x2013AAF00
-    };
-
-    uint64_t mbuf_second_cacheline_set_64_new[] = {
-        0x2013B50C0, 0x2013B5A40, 0x2013B63C0, 0x2013B6D40,
-        0x2013B76C0, 0x2013B8040, 0x2013B89C0, 0x2013B9340,
-        0x2013B04C0, 0x2013B0E40, 0x2013B17C0, 0x2013B2140,
-        0x2013B2AC0, 0x2013B3440, 0x2013B3DC0, 0x2013B4740,
-        0x2013AB8C0, 0x2013AC240, 0x2013ACBC0, 0x2013AD540,
-        0x2013ADEC0, 0x2013AE840, 0x2013AF1C0, 0x2013AFB40,
-        0x2013A6CC0, 0x2013A7640, 0x2013A7FC0, 0x2013A8940,
-        0x2013A92C0, 0x2013A9C40, 0x2013AA5C0, 0x2013AAF40
-    };
-
-    // mbuf for RX Descriptor (96-127 current) - through current phase's tdt 128 wr prefetch
-    // uint64_t mbuf_addr_set_128_cur[] = {
-    //     0x2012C2D80, 0x2012C3700, 0x2012C4080, 0x2012C4A00,
-    //     0x2012C5380, 0x2012C5D00, 0x2012C6680, 0x2012C7000,
-    //     0x2012C7980, 0x2012C8300, 0x2012C8C80, 0x2012C9600,
-    //     0x2012C9F80, 0x2012CA900, 0x2012CB280, 0x2012CBC00,
-    //     0x2012CC580, 0x2012CCF00, 0x2012CD880, 0x2012CE200,
-    //     0x2012CEB80, 0x2012CF500, 0x2012CFE80, 0x2012D0800,
-    //     0x2012D1180, 0x2012D1B00, 0x2012D2480, 0x2012D2E00,
-    //     0x2012D3780, 0x2012D4100, 0x2012D4A80, 0x2012D5400
-    // };
-
-    // uint64_t mbuf_first_cacheline_set_128_cur[] = {
-    //     0x2012C2C80, 0x2012C3600, 0x2012C3F80, 0x2012C4900,
-    //     0x2012C5280, 0x2012C5C00, 0x2012C6580, 0x2012C6F00,
-    //     0x2012C7880, 0x2012C8200, 0x2012C8B80, 0x2012C9500,
-    //     0x2012C9E80, 0x2012CA800, 0x2012CB180, 0x2012CBB00,
-    //     0x2012CC480, 0x2012CCE00, 0x2012CD780, 0x2012CE100,
-    //     0x2012CEA80, 0x2012CF400, 0x2012CFD80, 0x2012D0700,
-    //     0x2012D1080, 0x2012D1A00, 0x2012D2380, 0x2012D2D00,
-    //     0x2012D3680, 0x2012D4000, 0x2012D4980, 0x2012D5300
-    // };
-
-    // uint64_t mbuf_second_cacheline_set_128_cur[] = {
-    //     0x2012C2CC0, 0x2012C3640, 0x2012C3FC0, 0x2012C4940,
-    //     0x2012C52C0, 0x2012C5C40, 0x2012C65C0, 0x2012C6F40,
-    //     0x2012C78C0, 0x2012C8240, 0x2012C8BC0, 0x2012C9540,
-    //     0x2012C9EC0, 0x2012CA840, 0x2012CB1C0, 0x2012CBB40,
-    //     0x2012CC4C0, 0x2012CCE40, 0x2012CD7C0, 0x2012CE140,
-    //     0x2012CEAC0, 0x2012CF440, 0x2012CFDC0, 0x2012D0740,
-    //     0x2012D10C0, 0x2012D1A40, 0x2012D23C0, 0x2012D2D40,
-    //     0x2012D36C0, 0x2012D4040, 0x2012D49C0, 0x2012D5340
-    // };
-
-    uint64_t mbuf_addr_set_128_cur[] = {
+        0x201488100, 0x201487780, 0x201486E00, 0x201486480,
         0x201485B00, 0x201485180, 0x201484800, 0x201483E80,
         0x201483500, 0x201482B80, 0x201482200, 0x201481880,
         0x201480F00, 0x201480580, 0x20147FC00, 0x20147F280,
@@ -2456,7 +2196,15 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         0x201475100, 0x201474780, 0x201473E00, 0x201473480
     };
 
-    uint64_t mbuf_first_cacheline_set_128_cur[] = {
+    uint64_t mbuf_first_cacheline_set_128_new[] = {
+        0x201498A00, 0x201498080, 0x201497700, 0x201496D80,
+        0x201496400, 0x201495A80, 0x201495100, 0x201494780,
+        0x201493E00, 0x201493480, 0x201492B00, 0x201492180,
+        0x201491800, 0x201490E80, 0x201490500, 0x20148FB80,
+        0x20148F200, 0x20148E880, 0x20148DF00, 0x20148D580,
+        0x20148CC00, 0x20148C280, 0x20148B900, 0x20148AF80,
+        0x20148A600, 0x201489C80, 0x201489300, 0x201488980,
+        0x201488000, 0x201487680, 0x201486D00, 0x201486380,
         0x201485A00, 0x201485080, 0x201484700, 0x201483D80,
         0x201483400, 0x201482A80, 0x201482100, 0x201481780,
         0x201480E00, 0x201480480, 0x20147FB00, 0x20147F180,
@@ -2467,7 +2215,15 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         0x201475000, 0x201474680, 0x201473D00, 0x201473380
     };
 
-    uint64_t mbuf_second_cacheline_set_128_cur[] = {
+    uint64_t mbuf_second_cacheline_set_128_new[] = {
+        0x201498A40, 0x2014980C0, 0x201497740, 0x201496DC0,
+        0x201496440, 0x201495AC0, 0x201495140, 0x2014947C0,
+        0x201493E40, 0x2014934C0, 0x201492B40, 0x2014921C0,
+        0x201491840, 0x201490EC0, 0x201490540, 0x20148FBC0,
+        0x20148F240, 0x20148E8C0, 0x20148DF40, 0x20148D5C0,
+        0x20148CC40, 0x20148C2C0, 0x20148B940, 0x20148AFC0,
+        0x20148A640, 0x201489CC0, 0x201489340, 0x2014889C0,
+        0x201488040, 0x2014876C0, 0x201486D40, 0x2014863C0,
         0x201485A40, 0x2014850C0, 0x201484740, 0x201483DC0,
         0x201483440, 0x201482AC0, 0x201482140, 0x2014817C0,
         0x201480E40, 0x2014804C0, 0x20147FB40, 0x20147F1C0,
@@ -2478,41 +2234,8 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         0x201475040, 0x2014746C0, 0x201473D40, 0x2014733C0
     };
 
-    // mbuf for TX Descriptor (128-159 prev) - through previous phase's tdt 160 wr prefetch
-    // uint64_t mbuf_addr_set_160_prev[] = {
-    //     0x2017AC300, 0x2017AB980, 0x2017AB000, 0x2017AA680,
-    //     0x2017A9D00, 0x2017A9380, 0x2017A8A00, 0x2017A8080,
-    //     0x2017B0F00, 0x2017B0580, 0x2017AFC00, 0x2017AF280,
-    //     0x2017AE900, 0x2017ADF80, 0x2017AD600, 0x2017ACC80,
-    //     0x2017B5B00, 0x2017B5180, 0x2017B4800, 0x2017B3E80,
-    //     0x2017B3500, 0x2017B2B80, 0x2017B2200, 0x2017B1880,
-    //     0x2017BA700, 0x2017B9D80, 0x2017B9400, 0x2017B8A80,
-    //     0x2017B8100, 0x2017B7780, 0x2017B6E00, 0x2017B6480
-    // };
-
-    // uint64_t mbuf_first_cacheline_set_160_prev[] = {
-    //     0x2017AC200, 0x2017AB880, 0x2017AAF00, 0x2017AA580,
-    //     0x2017A9C00, 0x2017A9280, 0x2017A8900, 0x2017A7F80,
-    //     0x2017B0E00, 0x2017B0480, 0x2017AFB00, 0x2017AF180,
-    //     0x2017AE800, 0x2017ADE80, 0x2017AD500, 0x2017ACB80,
-    //     0x2017B5A00, 0x2017B5080, 0x2017B4700, 0x2017B3D80,
-    //     0x2017B3400, 0x2017B2A80, 0x2017B2100, 0x2017B1780,
-    //     0x2017BA600, 0x2017B9C80, 0x2017B9300, 0x2017B8980,
-    //     0x2017B8000, 0x2017B7680, 0x2017B6D00, 0x2017B6380
-    // };
-
-    // uint64_t mbuf_second_cacheline_set_160_prev[] = {
-    //     0x2017AC240, 0x2017AB8C0, 0x2017AAF40, 0x2017AA5C0,
-    //     0x2017A9C40, 0x2017A92C0, 0x2017A8940, 0x2017A7FC0,
-    //     0x2017B0E40, 0x2017B04C0, 0x2017AFB40, 0x2017AF1C0,
-    //     0x2017AE840, 0x2017ADEC0, 0x2017AD540, 0x2017ACBC0,
-    //     0x2017B5A40, 0x2017B50C0, 0x2017B4740, 0x2017B3DC0,
-    //     0x2017B3440, 0x2017B2AC0, 0x2017B2140, 0x2017B17C0,
-    //     0x2017BA640, 0x2017B9CC0, 0x2017B9340, 0x2017B89C0,
-    //     0x2017B8040, 0x2017B76C0, 0x2017B6D40, 0x2017B63C0
-    // };
-
-    uint64_t mbuf_addr_set_160_prev[] = {
+    // mbuf for RX Descriptor (192-255 current) - through current phase's tdt 256 wr prefetch
+    uint64_t mbuf_addr_set_256_cur[] = {
         0x201393D80, 0x201394700, 0x201395080, 0x201395A00,
         0x201396380, 0x201396D00, 0x201397680, 0x201398000,
         0x201398980, 0x201399300, 0x201399C80, 0x20139A600,
@@ -2520,10 +2243,18 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         0x20139D580, 0x20139DF00, 0x20139E880, 0x20139F200,
         0x20139FB80, 0x2013A0500, 0x2013A0E80, 0x2013A1800,
         0x2013A2180, 0x2013A2B00, 0x2013A3480, 0x2013A3E00,
-        0x2013A4780, 0x2013A5100, 0x2013A5A80, 0x2013A6400
+        0x2013A4780, 0x2013A5100, 0x2013A5A80, 0x2013A6400,
+        0x2013A6D80, 0x2013A7700, 0x2013A8080, 0x2013A8A00,
+        0x2013A9380, 0x2013A9D00, 0x2013AA680, 0x2013AB000,
+        0x2013AB980, 0x2013AC300, 0x2013ACC80, 0x2013AD600,
+        0x2013ADF80, 0x2013AE900, 0x2013AF280, 0x2013AFC00,
+        0x2013B0580, 0x2013B0F00, 0x2013B1880, 0x2013B2200,
+        0x2013B2B80, 0x2013B3500, 0x2013B3E80, 0x2013B4800,
+        0x2013B5180, 0x2013B5B00, 0x2013B6480, 0x2013B6E00,
+        0x2013B7780, 0x2013B8100, 0x2013B8A80, 0x2013B9400
     };
 
-    uint64_t mbuf_first_cacheline_set_160_prev[] = {
+    uint64_t mbuf_first_cacheline_set_256_cur[] = {
         0x201393C80, 0x201394600, 0x201394F80, 0x201395900,
         0x201396280, 0x201396C00, 0x201397580, 0x201397F00,
         0x201398880, 0x201399200, 0x201399B80, 0x20139A500,
@@ -2531,10 +2262,18 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         0x20139D480, 0x20139DE00, 0x20139E780, 0x20139F100,
         0x20139FA80, 0x2013A0400, 0x2013A0D80, 0x2013A1700,
         0x2013A2080, 0x2013A2A00, 0x2013A3380, 0x2013A3D00,
-        0x2013A4680, 0x2013A5000, 0x2013A5980, 0x2013A6300
+        0x2013A4680, 0x2013A5000, 0x2013A5980, 0x2013A6300,
+        0x2013A6C80, 0x2013A7600, 0x2013A7F80, 0x2013A8900,
+        0x2013A9280, 0x2013A9C00, 0x2013AA580, 0x2013AAF00,
+        0x2013AB880, 0x2013AC200, 0x2013ACB80, 0x2013AD500,
+        0x2013ADE80, 0x2013AE800, 0x2013AF180, 0x2013AFB00,
+        0x2013B0480, 0x2013B0E00, 0x2013B1780, 0x2013B2100,
+        0x2013B2A80, 0x2013B3400, 0x2013B3D80, 0x2013B4700,
+        0x2013B5080, 0x2013B5A00, 0x2013B6380, 0x2013B6D00,
+        0x2013B7680, 0x2013B8000, 0x2013B8980, 0x2013B9300
     };
 
-    uint64_t mbuf_second_cacheline_set_160_prev[] = {
+    uint64_t mbuf_second_cacheline_set_256_cur[] = {
         0x201393CC0, 0x201394640, 0x201394FC0, 0x201395940,
         0x2013962C0, 0x201396C40, 0x2013975C0, 0x201397F40,
         0x2013988C0, 0x201399240, 0x201399BC0, 0x20139A540,
@@ -2542,11 +2281,77 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         0x20139D4C0, 0x20139DE40, 0x20139E7C0, 0x20139F140,
         0x20139FAC0, 0x2013A0440, 0x2013A0DC0, 0x2013A1740,
         0x2013A20C0, 0x2013A2A40, 0x2013A33C0, 0x2013A3D40,
-        0x2013A46C0, 0x2013A5040, 0x2013A59C0, 0x2013A6340
+        0x2013A46C0, 0x2013A5040, 0x2013A59C0, 0x2013A6340,
+        0x2013A6CC0, 0x2013A7640, 0x2013A7FC0, 0x2013A8940,
+        0x2013A92C0, 0x2013A9C40, 0x2013AA5C0, 0x2013AAF40,
+        0x2013AB8C0, 0x2013AC240, 0x2013ACBC0, 0x2013AD540,
+        0x2013ADEC0, 0x2013AE840, 0x2013AF1C0, 0x2013AFB40,
+        0x2013B04C0, 0x2013B0E40, 0x2013B17C0, 0x2013B2140,
+        0x2013B2AC0, 0x2013B3440, 0x2013B3DC0, 0x2013B4740,
+        0x2013B50C0, 0x2013B5A40, 0x2013B63C0, 0x2013B6D40,
+        0x2013B76C0, 0x2013B8040, 0x2013B89C0, 0x2013B9340
     };
 
+    // mbuf for TX Descriptor (256-319 prev) - through previous phase's tdt 320 wr prefetch
+    uint64_t mbuf_addr_set_320_prev[] = {
+        0x201451700, 0x201450D80, 0x201450400, 0x20144FA80,
+        0x20144F100, 0x20144E780, 0x20144DE00, 0x20144D480,
+        0x201456300, 0x201455980, 0x201455000, 0x201454680,
+        0x201453D00, 0x201453380, 0x201452A00, 0x201452080,
+        0x20145AF00, 0x20145A580, 0x201459C00, 0x201459280,
+        0x201458900, 0x201457F80, 0x201457600, 0x201456C80,
+        0x20145FB00, 0x20145F180, 0x20145E800, 0x20145DE80,
+        0x20145D500, 0x20145CB80, 0x20145C200, 0x20145B880,
+        0x201464700, 0x201463D80, 0x201463400, 0x201462A80,
+        0x201462100, 0x201461780, 0x201460E00, 0x201460480,
+        0x201469300, 0x201468980, 0x201468000, 0x201467680,
+        0x201466D00, 0x201466380, 0x201465A00, 0x201465080,
+        0x20146DF00, 0x20146D580, 0x20146CC00, 0x20146C280,
+        0x20146B900, 0x20146AF80, 0x20146A600, 0x201469C80,
+        0x201472B00, 0x201472180, 0x201471800, 0x201470E80,
+        0x201470500, 0x20146FB80, 0x20146F200, 0x20146E880
+    };
+
+    uint64_t mbuf_first_cacheline_set_320_prev[] = {
+        0x201451600, 0x201450C80, 0x201450300, 0x20144F980,
+        0x20144F000, 0x20144E680, 0x20144DD00, 0x20144D380,
+        0x201456200, 0x201455880, 0x201454F00, 0x201454580,
+        0x201453C00, 0x201453280, 0x201452900, 0x201451F80,
+        0x20145AE00, 0x20145A480, 0x201459B00, 0x201459180,
+        0x201458800, 0x201457E80, 0x201457500, 0x201456B80,
+        0x20145FA00, 0x20145F080, 0x20145E700, 0x20145DD80,
+        0x20145D400, 0x20145CA80, 0x20145C100, 0x20145B780,
+        0x201464600, 0x201463C80, 0x201463300, 0x201462980,
+        0x201462000, 0x201461680, 0x201460D00, 0x201460380,
+        0x201469200, 0x201468880, 0x201467F00, 0x201467580,
+        0x201466C00, 0x201466280, 0x201465900, 0x201464F80,
+        0x20146DE00, 0x20146D480, 0x20146CB00, 0x20146C180,
+        0x20146B800, 0x20146AE80, 0x20146A500, 0x201469B80,
+        0x201472A00, 0x201472080, 0x201471700, 0x201470D80,
+        0x201470400, 0x20146FA80, 0x20146F100, 0x20146E780
+    };
+
+    uint64_t mbuf_second_cacheline_set_320_prev[] = {
+        0x201451640, 0x201450CC0, 0x201450340, 0x20144F9C0,
+        0x20144F040, 0x20144E6C0, 0x20144DD40, 0x20144D3C0,
+        0x201456240, 0x2014558C0, 0x201454F40, 0x2014545C0,
+        0x201453C40, 0x2014532C0, 0x201452940, 0x201451FC0,
+        0x20145AE40, 0x20145A4C0, 0x201459B40, 0x2014591C0,
+        0x201458840, 0x201457EC0, 0x201457540, 0x201456BC0,
+        0x20145FA40, 0x20145F0C0, 0x20145E740, 0x20145DDC0,
+        0x20145D440, 0x20145CAC0, 0x20145C140, 0x20145B7C0,
+        0x201464640, 0x201463CC0, 0x201463340, 0x2014629C0,
+        0x201462040, 0x2014616C0, 0x201460D40, 0x2014603C0,
+        0x201469240, 0x2014688C0, 0x201467F40, 0x2014675C0,
+        0x201466C40, 0x2014662C0, 0x201465940, 0x201464FC0,
+        0x20146DE40, 0x20146D4C0, 0x20146CB40, 0x20146C1C0,
+        0x20146B840, 0x20146AEC0, 0x20146A540, 0x201469BC0,
+        0x201472A40, 0x2014720C0, 0x201471740, 0x201470DC0,
+        0x201470440, 0x20146FAC0, 0x20146F140, 0x20146E7C0
+    };     
+
     // mbuf's structure part
-    for (int i = 0; i < 32; i ++) {
+    for (int i = 0; i < 64; i ++) {
         uint64_t pkt_addr = pkt->getAddr();
         uint64_t pkt_addr_end = pkt_addr + pkt->getSize();
         // Check if the packet address is in the mbuf's structure part
@@ -2578,29 +2383,29 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         */
 
         // SVE
-        if (pkt_addr >= mbuf_first_cacheline_set_96_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_96_cur[i] + 64) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_96CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt_addr >= mbuf_first_cacheline_set_192_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_192_cur[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_192CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-        if (pkt_addr >= mbuf_second_cacheline_set_96_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_96_cur[i] + 64) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_96CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt_addr >= mbuf_second_cacheline_set_192_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_192_cur[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_192CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-        if (pkt_addr >= mbuf_first_cacheline_set_64_new[i] && pkt_addr_end <= mbuf_first_cacheline_set_64_new[i] + 64) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_64NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt_addr >= mbuf_first_cacheline_set_128_new[i] && pkt_addr_end <= mbuf_first_cacheline_set_128_new[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_128NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-        if (pkt_addr >= mbuf_second_cacheline_set_64_new[i] && pkt_addr_end <= mbuf_second_cacheline_set_64_new[i] + 64) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_64NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt_addr >= mbuf_second_cacheline_set_128_new[i] && pkt_addr_end <= mbuf_second_cacheline_set_128_new[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_128NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-        if (pkt_addr >= mbuf_first_cacheline_set_128_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_128_cur[i] + 64) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_128CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt_addr >= mbuf_first_cacheline_set_256_cur[i] && pkt_addr_end <= mbuf_first_cacheline_set_256_cur[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_256CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-        if (pkt_addr >= mbuf_second_cacheline_set_128_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_128_cur[i] + 64) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_128CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt_addr >= mbuf_second_cacheline_set_256_cur[i] && pkt_addr_end <= mbuf_second_cacheline_set_256_cur[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_256CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-        if (pkt_addr >= mbuf_first_cacheline_set_160_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_160_prev[i] + 64) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_160PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt_addr >= mbuf_first_cacheline_set_320_prev[i] && pkt_addr_end <= mbuf_first_cacheline_set_320_prev[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$0_320PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-        if (pkt_addr >= mbuf_second_cacheline_set_160_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_160_prev[i] + 64) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_160PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt_addr >= mbuf_second_cacheline_set_320_prev[i] && pkt_addr_end <= mbuf_second_cacheline_set_320_prev[i] + 64) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF_$1_320PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
 
@@ -2622,17 +2427,17 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         */
 
        // SVE
-        if (pkt->getAddr() == mbuf_addr_set_96_cur[i]) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF96CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt->getAddr() == mbuf_addr_set_192_cur[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF192CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-        if (pkt->getAddr() == mbuf_addr_set_64_new[i]) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF64NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt->getAddr() == mbuf_addr_set_128_new[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF128NEW[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-        if (pkt->getAddr() == mbuf_addr_set_128_cur[i]) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF128CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt->getAddr() == mbuf_addr_set_256_cur[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF256CUR[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
-        if (pkt->getAddr() == mbuf_addr_set_160_prev[i]) {
-            printf("[LOG], %llu, %s, %s, %d, MBUF160PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
+        if (pkt->getAddr() == mbuf_addr_set_320_prev[i]) {
+            printf("[LOG], %llu, %s, %s, %d, MBUF320PREV[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, i);
         }
     }
     #endif

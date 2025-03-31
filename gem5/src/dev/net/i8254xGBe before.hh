@@ -228,50 +228,8 @@ class IGbE : public EtherDevice
 
 
     template<class T>
-    class DescCache
+    class DescCache : public Serializable
     {
-      protected:
-        virtual long descHead() const = 0;
-        virtual long descTail() const = 0;
-
-        // Pointer to the device we cache for
-        IGbE *igbe;
-
-        // Name of this  descriptor cache
-        std::string _name;
-
-        /** The packet that is currently being dmad to memory if any */
-        EthPacketPtr pktPtr;
-
-        /* Address DMA is currently at */
-        Addr dmaAddr;
-
-        // JM
-        bool isRx;
-
-        // DMA engine idx within DescCacheGlobal
-        int dmaEngineIdx;
-
-
-        /** Shortcut for DMA address translation */
-        Addr pciToDma(Addr a) { return igbe->pciToDma(a); }
-
-      public:
-
-        DescCache(IGbE *i, const std::string n, bool _isRx, int engineIdx);
-        virtual ~DescCache();
-
-        std::string name() { return _name; }
-
-        virtual bool hasOutstandingEvents() {
-            return false;
-        }
-
-    };
-
-    template<class T>
-    class DescCacheGlobal : public Serializable
-    { // Global descriptor cache - has DescCache objects inside to do DMA in a parallel way
       protected:
         virtual Addr descBase() const = 0;
         virtual long descHead() const = 0;
@@ -287,19 +245,9 @@ class IGbE : public EtherDevice
         typedef std::deque<T *> CacheType;
         CacheType usedCache;
         CacheType unusedCache;
-        uint64_t nextSeqToWriteback = 0;
-        uint64_t nextSeqToProcess = 0;
-        struct ProcessingCacheEntry {
-          T *desc;
-          uint64_t seqIdx;
-          bool done;
-        };
-        ProcessingCacheEntry processingCache[MAX_DMA_ENGINE_SIZE]; // Cache for processing descriptors, that are DMAing data to memory by DMA engines.
 
         T *fetchBuf;
         T *wbBuf;
-
-        EthPacketPtr processingPktArray[MAX_DMA_ENGINE_SIZE]; // Packet that is currently being DMAing data to memory by DMA engines.
 
         // Pointer to the device we cache for
         IGbE *igbe;
@@ -326,9 +274,11 @@ class IGbE : public EtherDevice
         // What the alignment is of the next descriptor writeback
         Addr wbAlignment;
 
+        /** The packet that is currently being dmad to memory if any */
+        EthPacketPtr pktPtr;
+
         // JM
         bool isRx;
-        int numDMAEngines = 0;
 
         /** Shortcut for DMA address translation */
         Addr pciToDma(Addr a) { return igbe->pciToDma(a); }
@@ -338,8 +288,8 @@ class IGbE : public EtherDevice
         std::string annSmFetch, annSmWb, annUnusedDescQ, annUsedCacheQ,
             annUsedDescQ, annUnusedCacheQ, annDescQ;
 
-        DescCacheGlobal(IGbE *i, const std::string n, int s, bool _isRx, int _numDMAEngines);
-        virtual ~DescCacheGlobal();
+        DescCache(IGbE *i, const std::string n, int s, bool _isRx);
+        virtual ~DescCache();
 
         std::string name() { return _name; }
 
@@ -370,25 +320,13 @@ class IGbE : public EtherDevice
         void wbComplete();
         EventFunctionWrapper wbEvent;
 
-        /* Return the number of !NULL desc in processingCache */
-        // This should be counted as unused descriptors
-        unsigned descProcessing() const {
-            unsigned processing = 0;
-            for (int i = 0; i < numDMAEngines; i++) {
-                if (processingCache[i].desc != NULL) {
-                    processing++;
-                }
-            }
-            return processing;
-        }
-
         /* Return the number of descriptors left in the ring, so the device has
          * a way to figure out if it needs to interrupt.
          */
         unsigned
         descLeft() const
         {
-            unsigned left = unusedCache.size() + descProcessing();
+            unsigned left = unusedCache.size();
             if (cachePnt > descTail())
                 left += (descLen() - cachePnt + descTail());
             else
@@ -402,9 +340,8 @@ class IGbE : public EtherDevice
         unsigned descUsed() const { return usedCache.size(); }
 
         /* Return the number of cache unused descriptors we have. */
-        unsigned descUnused() const { return unusedCache.size() + descProcessing(); }
+        unsigned descUnused() const { return unusedCache.size(); }
 
-        
         /* Get into a state where the descriptor address/head/etc colud be
          * changed */
         void reset();
@@ -420,69 +357,7 @@ class IGbE : public EtherDevice
     };
 
 
-    class RxDescCacheGlobal;
     class RxDescCache : public DescCache<igbreg::RxDesc>
-    {
-      protected:
-        long descHead() const override { 
-          // return igbe->regs.rdh(); 
-          return igbe->regs.rdh_array[queueID]();
-        }
-        long descTail() const override { 
-          // return igbe->regs.rdt(); 
-          return igbe->regs.rdt_array[queueID]();
-        }
-        
-        bool pktWaiting;
-
-        igbreg::RxDesc *correspondingDesc; // Corresponding descriptor to use during DMA
-
-        /** Variable to head with header/data completion events */
-        int splitCount;
-
-        /** Bytes of packet that have been copied, so we know when to
-            set EOP */
-        unsigned bytesCopied;
-
-        int queueID; // Queue ID for this cache
-
-        RxDescCacheGlobal *parent;
-
-      public:
-        RxDescCache(IGbE *i, std::string n, int qid, int engineIdx, RxDescCacheGlobal *_parent);
-
-        /** Write the given packet into the buffer(s) pointed to by the
-         * descriptor and update the book keeping. Should only be called when
-         * there are no dma's pending.
-         * @param packet ethernet packet to write
-         * @param pkt_offset bytes already copied from the packet to memory
-         * @param rxDesc the descriptor to write the packet into
-         * @return pkt_offset + number of bytes copied during this call
-         */
-        int writePacket(EthPacketPtr packet, int pkt_offset, igbreg::RxDesc* rxDesc);
-
-        /** Called by event when dma to write packet is completed
-         */
-        void pktComplete();
-
-        // DMA engine manage functions
-        bool packetWaiting() { return pktWaiting; }
-        unsigned getBytesCopied() { return bytesCopied; }
-        void setBytesCopied(unsigned bytes) { bytesCopied = bytes; }
-
-        EventFunctionWrapper pktEvent;
-
-        // Event to handle issuing header and data write at the same time
-        // and only callking pktComplete() when both are completed
-        void pktSplitDone();
-        EventFunctionWrapper pktHdrEvent;
-        EventFunctionWrapper pktDataEvent;
-
-        bool hasOutstandingEvents() override;
-    };
-    friend class RxDescCache;
-
-    class RxDescCacheGlobal : public DescCacheGlobal<igbreg::RxDesc>
     {
       protected:
         Addr descBase() const override { 
@@ -524,58 +399,47 @@ class IGbE : public EtherDevice
             return descStr;
         }
 
+        bool pktDone;
+
+        /** Variable to head with header/data completion events */
+        int splitCount;
+
+        /** Bytes of packet that have been copied, so we know when to
+            set EOP */
+        unsigned bytesCopied;
+
         int queueID; // Queue ID for this cache
-        RxDescCache *dmaEngineArray[MAX_DMA_ENGINE_SIZE];
-        unsigned processingPktOffsetArray[MAX_DMA_ENGINE_SIZE]; // Number of bytes copied from current RX packet for each packet
-        bool processingPktDoneArray[MAX_DMA_ENGINE_SIZE]; // Flag to indicate if the packet is done for each DMA engine
+
       public:
-        RxDescCacheGlobal(IGbE *i, std::string n, int s, int qid, int _numDMAEngines);
+        RxDescCache(IGbE *i, std::string n, int s, int qid);
 
         /** Write the given packet into the buffer(s) pointed to by the
          * descriptor and update the book keeping. Should only be called when
          * there are no dma's pending.
-         * @param success or not
+         * @param packet ethernet packet to write
+         * @param pkt_offset bytes already copied from the packet to memory
+         * @return pkt_offset + number of bytes copied during this call
          */
-        bool writePacketGlobal(EthPacketPtr packet);
+        int writePacket(EthPacketPtr packet, int pkt_offset);
 
-        // This function will get the information from the DMA engine & get the RX descriptor to write the descriptor back
-        void onDMAComplete(int engineIdx);
-        int hasReadyEthPacket();
-        void clearDoneEthPacket(int engineIdx);
+        /** Called by event when dma to write packet is completed
+         */
+        void pktComplete();
 
-        bool packetWaitingGlobal() { 
-          // Return true if any of the DMA engines has a packet waiting
-          bool waiting = false;
-          for (int i = 0; i < numDMAEngines; i++) {
-            waiting = waiting || dmaEngineArray[i]->packetWaiting();
-          }
-          return waiting;
-        }
+        /** Check if the dma on the packet has completed and RX state machine
+         * can continue
+         */
+        bool packetDone();
 
-        bool hasFreeDMAEngine() {
-          // Return true if any of the DMA engines has a free DMA engine
-          for (int i = 0; i < numDMAEngines; i++) {
-            if (!dmaEngineArray[i]->packetWaiting() && processingPktDoneArray[i] == false 
-              && processingCache[i].desc == NULL && processingPktOffsetArray[i] == 0 && processingPktArray[i] == NULL) {
-              // free DMA engine: no packet waiting and also, no packet available (if packet is available & not waiting, it is waiting for push to the txFifo)
-              return true;
-            }
-          }
-          return false;
-        }
+        void unsetPacketDone() { pktDone = false; }
 
-        int getFreeDMAEngine() {
-          for (int i = 0; i < numDMAEngines; i++) {
-            if (!dmaEngineArray[i]->packetWaiting() && processingPktDoneArray[i] == false 
-              && processingCache[i].desc == NULL && processingPktOffsetArray[i] == 0 && processingPktArray[i] == NULL) {
-              return i;
-            }
-          }
-          return -1;
-        }
+        EventFunctionWrapper pktEvent;
 
-        // manage processing descriptors in the processingCache to push to usedCache regarding the sequence index
-        void manageUsedCache();
+        // Event to handle issuing header and data write at the same time
+        // and only callking pktComplete() when both are completed
+        void pktSplitDone();
+        EventFunctionWrapper pktHdrEvent;
+        EventFunctionWrapper pktDataEvent;
 
         // Event and function to deal with RDTR timer expiring
         void _rdtrProcess() {
@@ -600,66 +464,13 @@ class IGbE : public EtherDevice
         void serialize(CheckpointOut &cp) const override;
         void unserialize(CheckpointIn &cp) override;
     };
-    friend class RxDescCacheGlobal;
+    friend class RxDescCache;
 
     // RxDescCache rxDescCache;
     //jm - this should be multiple arrays
-    RxDescCacheGlobal *rxDescCacheArray[MAX_QUEUE_SIZE];
+    RxDescCache *rxDescCacheArray[MAX_QUEUE_SIZE];
 
-    class TxDescCacheGlobal;
     class TxDescCache  : public DescCache<igbreg::TxDesc>
-    {
-      protected:
-        long descHead() const override { 
-          // return igbe->regs.tdh(); 
-          return igbe->regs.tdh_array[queueID]();
-        }
-        long descTail() const override { 
-          // return igbe->regs.tdt(); 
-          return igbe->regs.tdt_array[queueID]();
-        }
-
-        bool pktDone;
-        bool pktWaiting;
-
-        int queueID; // Queue ID for this cache
-
-        TxDescCacheGlobal *parent;
-
-      public:
-        TxDescCache(IGbE *i, std::string n, int qid, int engineIdx, TxDescCacheGlobal *_parent);
-
-        /** Tell the cache to DMA a packet from main memory into its buffer and
-         * return the size the of the packet to reserve space in tx fifo.
-         * @return size of the packet
-         */
-        unsigned getPacketSize(EthPacketPtr p);
-        void getPacketData(EthPacketPtr p, Addr addr, int size);
-        void processContextDesc();
-
-        // manage functions
-        void setPktDone(bool flag) { pktDone = flag; }
-        void setPktWaiting(bool flag) { pktWaiting = flag; }
-        void unsetPacketDone() { pktDone = false; }
-        bool packetWaiting() { return pktWaiting; }
-
-        /** Ask if the packet has been transfered so the state machine can give
-         * it to the fifo.
-         * @return packet available in descriptor cache
-         */
-        bool packetAvailable();
-
-        /** Called by event when dma to write packet is completed
-         */
-        void pktComplete();
-        EventFunctionWrapper pktEvent;
-
-        bool hasOutstandingEvents() override;           
-    };
-
-    friend class TxDescCache;
-
-    class TxDescCacheGlobal  : public DescCacheGlobal<igbreg::TxDesc>
     {
       protected:
         Addr descBase() const override { 
@@ -691,12 +502,16 @@ class IGbE : public EtherDevice
         std::string wbBufToString(int idx) override;
         std::string fetchBufToString(igbreg::TxDesc* desc) override;
 
+
+
+        bool pktDone;
         bool isTcp;
-        bool pktHdrWaiting; // If use TSO, this is used to check if the header is loading or loaded
+        bool pktWaiting;
         bool pktMultiDesc;
         Addr completionAddress;
         bool completionEnabled;
         uint32_t descEnd;
+
 
         // tso variables
         bool useTso;
@@ -712,30 +527,20 @@ class IGbE : public EtherDevice
         Addr tsoDescBytesUsed;
         Addr tsoCopyBytes;
         int tsoPkts;
-        int tsoDMAEngineIdx; // DMA engine index for doing TSO
 
         int queueID; // Queue ID for this cache
-        TxDescCache *dmaEngineArray[MAX_DMA_ENGINE_SIZE];
-
-        int roundRobinIdx; // Round-robin index for selecting DMA engine
 
       public:
-        TxDescCacheGlobal(IGbE *i, std::string n, int s, int qid, int _numDMAEngines);
+        TxDescCache(IGbE *i, std::string n, int s, int qid);
 
         /** Tell the cache to DMA a packet from main memory into its buffer and
          * return the size the of the packet to reserve space in tx fifo.
          * @return size of the packet
          */
-        unsigned getPacketSize();
-        void getPacketDataGlobal();
+        unsigned getPacketSize(EthPacketPtr p);
+        void getPacketData(EthPacketPtr p);
         void processContextDesc();
-        void onDMAComplete(int engineIdx);
-        bool hasReadyEthPacket(); // Check if there is a packet that is ready to be sent to the txFifo
-        EthPacketPtr getReadyEthPacket(); // Get the packet that is ready to be sent to the txFifo
-        
-        // manage processing descriptors in the processingCache to push to usedCache regarding the sequence index
-        void manageUsedCache();
-        
+
         /** Return the number of dsecriptors in a cache block for threshold
          * operations.
          */
@@ -745,62 +550,39 @@ class IGbE : public EtherDevice
             return num_desc / igbe->cacheBlockSize() / sizeof(igbreg::TxDesc);
         }
 
+        /** Ask if the packet has been transfered so the state machine can give
+         * it to the fifo.
+         * @return packet available in descriptor cache
+         */
+        bool packetAvailable();
+
+        /**
+         * set packetDone to false -> it is called after push the packet to the fifo
+         * 
+         */
+        void unsetPacketDone() { pktDone = false; }
+
         /** Ask if we are still waiting for the packet to be transfered.
          * @return packet still in transit.
          */
-        bool packetWaitingGlobal() { 
-          // Return true if any of the DMA engines has a packet waiting
-          bool waiting = false;
-          for (int i = 0; i < numDMAEngines; i++) {
-            waiting = waiting || dmaEngineArray[i]->packetWaiting();
-          }
-          return waiting;
-        }
+        bool packetWaiting() { return pktWaiting; }
 
-        bool packetHdrWaiting() {
-          // Return true if header DMA is waiting
-          // This is meaningful when TSO is enabled
-          return pktHdrWaiting;
-        }
+        /** Ask if this packet is composed of multiple descriptors
+         * so even if we've got data, we need to wait for more before
+         * we can send it out.
+         * @return packet can't be sent out because it's a multi-descriptor
+         * packet
+         */
+        bool packetMultiDesc() { return pktMultiDesc;}
 
-        bool hasFreeDMAEngine() {
-          // Have to check packetWaiting() && pktDone() for all DMA engines
-          if (!useTso || (useTso && tsoDMAEngineIdx == -1)) {
-            for (int i = 0; i < numDMAEngines; i++) {
-              if (!dmaEngineArray[i]->packetWaiting() && !dmaEngineArray[i]->packetAvailable() && processingCache[i].desc == NULL) {
-                // free DMA engine: no packet waiting and also, no packet available (if packet is available & not waiting, it is waiting for push to the txFifo)
-                return true;
-              }
-            }
-            return false;
-          } else {
-            // if use TSO, then check only TSO DMA engine
-            return isTSODMAEngineFree();
-          }
-        }
-
-        int getFreeDMAEngine() {
-          for (int i = 0; i < numDMAEngines; i++) {
-            if (!dmaEngineArray[i]->packetWaiting() && !dmaEngineArray[i]->packetAvailable() && processingCache[i].desc == NULL) {
-              return i;
-            }
-          }
-          return -1;
-        }
-
-        bool isTSODMAEngineFree() {
-          // if tsoDMAEngineIdx is -1, then return hasFreeDMAEngine()
-          // else, return !dmaEngineArray[tsoDMAEngineIdx]->packetWaiting()
-          if (tsoDMAEngineIdx == -1) {
-            return hasFreeDMAEngine();
-          } else {
-            assert(tsoDMAEngineIdx < numDMAEngines);
-            return !dmaEngineArray[tsoDMAEngineIdx]->packetWaiting() && processingCache[tsoDMAEngineIdx].desc == NULL;
-          }
-        }
+        /** Called by event when dma to write packet is completed
+         */
+        void pktComplete();
+        EventFunctionWrapper pktEvent;
 
         void headerComplete();
         EventFunctionWrapper headerEvent;
+
 
         void completionWriteback(Addr a, bool enabled) {
             DPRINTF(EthernetDesc,
@@ -838,11 +620,11 @@ class IGbE : public EtherDevice
         void unserialize(CheckpointIn &cp) override;
     };
 
-    friend class TxDescCacheGlobal;
+    friend class TxDescCache;
 
     // TxDescCache txDescCache;
     //jm - this should be multiple arrays
-    TxDescCacheGlobal *txDescCacheArray[MAX_QUEUE_SIZE];
+    TxDescCache *txDescCacheArray[MAX_QUEUE_SIZE];
 
     class RxM2funcContext : public Serializable
     {

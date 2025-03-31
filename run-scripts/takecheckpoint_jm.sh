@@ -13,8 +13,8 @@
 # 1 core 1 queue
 # ./l2fwd-ckp-dpdk-set-1core-1q-multi-port-4ns-m2func.sh --take-checkpoint --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz
 
-RESOURCE_DIR="resources-dpdk-m2func-dta"
-RUN_COMMAND="./l2fwd-ckp-dpdk-set-1core-1q-multi-port-4ns-m2func-dta-high-spec.sh --take-checkpoint --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz"
+RESOURCE_DIR="resources-dpdk-sve-16RXD-fastfree-B64-tbl"
+RUN_COMMAND="./l2fwd-ckp-dpdk-set-1core-1q-sve-16RXD-fastfree-B64-tbl-pDMA2-high-spec-vecreg-256-2xunit-2xq-4xmshr-4LSUnit-wait-long.sh --take-checkpoint --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz"
 
 
 # build disk image for gem5

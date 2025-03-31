@@ -79,6 +79,28 @@
 #define M2FUNC_DTA_TX_FIRST_FLIT_BATCH_SIZE ((M2FUNC_DTA_FLIT_SIZE - M2FUNC_DTA_TX_JOB_FLIT_METADATA_SIZE) / sizeof(uint64_t)) // 6 mbuf addresses in the first flit
 #define M2FUNC_DTA_TX_REST_FLIT_BATCH_SIZE (M2FUNC_DTA_FLIT_SIZE / sizeof(uint64_t)) // 8 mbuf addresses in the remaining flits
 
+#define EM_PACKET_TYPE_IPV4              0X01
+#define EM_PACKET_TYPE_IPV4_TCP          0X11
+#define EM_PACKET_TYPE_IPV4_UDP          0X21
+#define EM_PACKET_TYPE_IPV4_SCTP         0X41
+#define EM_PACKET_TYPE_IPV4_EXT          0X03
+#define EM_PACKET_TYPE_IPV4_EXT_SCTP     0X43
+#define EM_PACKET_TYPE_IPV6              0X04
+#define EM_PACKET_TYPE_IPV6_TCP          0X14
+#define EM_PACKET_TYPE_IPV6_UDP          0X24
+#define EM_PACKET_TYPE_IPV6_EXT          0X0C
+#define EM_PACKET_TYPE_IPV6_EXT_TCP      0X1C
+#define EM_PACKET_TYPE_IPV6_EXT_UDP      0X2C
+#define EM_PACKET_TYPE_IPV4_IPV6         0X05
+#define EM_PACKET_TYPE_IPV4_IPV6_TCP     0X15
+#define EM_PACKET_TYPE_IPV4_IPV6_UDP     0X25
+#define EM_PACKET_TYPE_IPV4_IPV6_EXT     0X0D
+#define EM_PACKET_TYPE_IPV4_IPV6_EXT_TCP 0X1D
+#define EM_PACKET_TYPE_IPV4_IPV6_EXT_UDP 0X2D
+#define EM_PACKET_TYPE_MAX               0X80
+#define EM_PACKET_TYPE_MASK              0X7F
+#define EM_PACKET_TYPE_SHIFT             0X04
+
 // JM
 #define E1000_PCI_REG_WRITE64B(reg, value)		\
 	rte_write64B(value, reg)
@@ -198,7 +220,8 @@ struct em_rx_queue {
 	uint16_t rxrearm_nb2; /**< number of remaining to be re-armed */
 	uint16_t rxrearm_start;	/**< the idx we start the re-arming from */
 	uint64_t mbuf_initializer; /**< value to init mbufs */
-	uint8_t offset_table[10]; /* offset_table: used for vector, to solve execute re-order problem - from hns3. maybe prevent read rxd before check valid bit.*/
+	uint32_t ptype_tbl[EM_PACKET_TYPE_MAX] __rte_cache_aligned;
+	uint8_t offset_table[32]; /* offset_table: used for vector, to solve execute re-order problem - from hns3. maybe prevent read rxd before check valid bit.*/
 };
 
 /**
@@ -329,11 +352,13 @@ struct em_tx_queue {
 #endif
 
 #ifndef DEFAULT_TX_FREE_THRESH
-#define DEFAULT_TX_FREE_THRESH  32
+// #define DEFAULT_TX_FREE_THRESH  32
+#define DEFAULT_TX_FREE_THRESH  64
 #endif /* DEFAULT_TX_FREE_THRESH */
 
 #ifndef DEFAULT_TX_RS_THRESH
-#define DEFAULT_TX_RS_THRESH  32
+// #define DEFAULT_TX_RS_THRESH  32
+#define DEFAULT_TX_RS_THRESH  64
 #endif /* DEFAULT_TX_RS_THRESH */
 
 #define EM_TSO_MAX_HDRLEN			(512)
@@ -2174,7 +2199,6 @@ eth_em_xmit_m2func_dta_double_comp_vtx_sve512(
 	}
     for (; nb_commit > 7; descriptor_buffer += 8, mbuf_addr_ptr += 8, tx_pkts += 8, nb_commit -= 8) {
 		// Utilize sve intrinsic to do the same thing as ice_vtx() that uses avx512
-		// According to GPT, sve doesn't need to flip the order of the packets as in avx-512
 		uint64_t desc_values[8] = {
 			cmd_type | ((uint64_t)tx_pkts[0]->data_len),
 			cmd_type | ((uint64_t)tx_pkts[1]->data_len),
@@ -2544,27 +2568,7 @@ eth_em_prep_pkts(__rte_unused void *tx_queue, struct rte_mbuf **tx_pkts,
  *  RX functions
  *
  **********************************************************************/
-#define EM_PACKET_TYPE_IPV4              0X01
-#define EM_PACKET_TYPE_IPV4_TCP          0X11
-#define EM_PACKET_TYPE_IPV4_UDP          0X21
-#define EM_PACKET_TYPE_IPV4_SCTP         0X41
-#define EM_PACKET_TYPE_IPV4_EXT          0X03
-#define EM_PACKET_TYPE_IPV4_EXT_SCTP     0X43
-#define EM_PACKET_TYPE_IPV6              0X04
-#define EM_PACKET_TYPE_IPV6_TCP          0X14
-#define EM_PACKET_TYPE_IPV6_UDP          0X24
-#define EM_PACKET_TYPE_IPV6_EXT          0X0C
-#define EM_PACKET_TYPE_IPV6_EXT_TCP      0X1C
-#define EM_PACKET_TYPE_IPV6_EXT_UDP      0X2C
-#define EM_PACKET_TYPE_IPV4_IPV6         0X05
-#define EM_PACKET_TYPE_IPV4_IPV6_TCP     0X15
-#define EM_PACKET_TYPE_IPV4_IPV6_UDP     0X25
-#define EM_PACKET_TYPE_IPV4_IPV6_EXT     0X0D
-#define EM_PACKET_TYPE_IPV4_IPV6_EXT_TCP 0X1D
-#define EM_PACKET_TYPE_IPV4_IPV6_EXT_UDP 0X2D
-#define EM_PACKET_TYPE_MAX               0X80
-#define EM_PACKET_TYPE_MASK              0X7F
-#define EM_PACKET_TYPE_SHIFT             0X04
+
 static inline uint32_t
 em_rxd_pkt_info_to_pkt_type(uint16_t pkt_info)
 {
@@ -2645,14 +2649,6 @@ rx_desc_status_to_pkt_flags(uint32_t rx_status)
 static inline uint64_t
 rx_desc_error_to_pkt_flags(uint32_t rx_error)
 {
-	// uint64_t pkt_flags = 0;
-
-	// if (rx_error & E1000_RXD_ERR_IPE)
-	// 	pkt_flags |= PKT_RX_IP_CKSUM_BAD;
-	// if (rx_error & E1000_RXD_ERR_TCPE)
-	// 	pkt_flags |= PKT_RX_L4_CKSUM_BAD;
-	// return pkt_flags;
-
 	/*
 	 * Bit 30: IPE, IPv4 checksum error
 	 * Bit 29: L4I, L4I integrity error
@@ -2875,11 +2871,15 @@ eth_em_recv_pkts(void *rx_queue, struct rte_mbuf **rx_pkts,
 }
 
 #define EM_DESCS_PER_LOOP_SVE512 8
-#define EM_RXQ_REARM_THRESH 32
+// #define EM_RXQ_REARM_THRESH 32
+#define EM_RXQ_REARM_THRESH 64
 
+#define PG8_ALLBIT        svptrue_b8()
 #define PG16_128BIT		svwhilelt_b16(0, 8)
 #define PG16_256BIT		svwhilelt_b16(0, 16)
+#define PG16_ALLBIT		svptrue_b16()
 #define PG32_256BIT		svwhilelt_b32(0, 8)
+#define PG32_ALLBIT		svptrue_b32()
 #define PG64_64BIT		svwhilelt_b64(0, 1)
 #define PG64_128BIT		svwhilelt_b64(0, 2)
 #define PG64_256BIT		svwhilelt_b64(0, 4)
@@ -2918,14 +2918,18 @@ static inline uint16_t
 _eth_em_recv_raw_pkts_vec_sve512(struct em_rx_queue *rxq, 
 	struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 {
-#define XLEN_ADJUST_LEN		32
-#define RSS_ADJUST_LEN		16
-#define GEN_VLD_U8_ZIP_INDEX	svindex_s8(28, -4)
+// #define XLEN_ADJUST_LEN		32
+// #define RSS_ADJUST_LEN		16
+// #define GEN_VLD_U8_ZIP_INDEX	svindex_s8(28, -4)
+#define XLEN_ADJUST_LEN		64
+#define RSS_ADJUST_LEN		32
+#define GEN_VLD_U8_ZIP_INDEX	svindex_s8(60, -4)
 	uint16_t rx_id = rxq->rx_tail;
 	struct em_rx_entry *sw_ring = &rxq->sw_ring[rx_id];
 	volatile union e1000_adv_rx_desc *rxdp = &rxq->rx_ring[rx_id];
 	volatile union e1000_adv_rx_desc *rxdp2;
 	EM_SVE_KEY_FIELD_S key_field;
+	uint64_t desc_valid_num_arr[2];
 	uint64_t desc_valid_num;
 	uint16_t nb_rx = 0;
 	int pos, offset;
@@ -2939,6 +2943,14 @@ _eth_em_recv_raw_pkts_vec_sve512(struct em_rx_queue *rxq,
 		10, 0xffff, 11, 0xffff,    /* 6st mbuf: xlen */
 		12, 0xffff, 13, 0xffff,    /* 7st mbuf: xlen */
 		14, 0xffff, 15, 0xffff,    /* 8st mbuf: xlen */
+		16, 0xffff, 17, 0xffff,    /* 9st mbuf: xlen */
+		18, 0xffff, 19, 0xffff,    /* 10st mbuf: xlen */
+		20, 0xffff, 21, 0xffff,    /* 11st mbuf: xlen */
+		22, 0xffff, 23, 0xffff,    /* 12st mbuf: xlen */
+		24, 0xffff, 25, 0xffff,    /* 13st mbuf: xlen */
+		26, 0xffff, 27, 0xffff,    /* 14st mbuf: xlen */
+		28, 0xffff, 29, 0xffff,    /* 15st mbuf: xlen */
+		30, 0xffff, 31, 0xffff     /* 16st mbuf: xlen */
 	};
 
 	uint32_t rss_adjust[RSS_ADJUST_LEN] = {
@@ -2950,13 +2962,20 @@ _eth_em_recv_raw_pkts_vec_sve512(struct em_rx_queue *rxq,
 		5, 0xffff,        /* 6st mbuf: rss */
 		6, 0xffff,        /* 7st mbuf: rss */
 		7, 0xffff,        /* 8st mbuf: rss */
+		8, 0xffff,        /* 9st mbuf: rss */
+		9, 0xffff,        /* 10st mbuf: rss */
+		10, 0xffff,       /* 11st mbuf: rss */
+		11, 0xffff,       /* 12st mbuf: rss */
+		12, 0xffff,       /* 13st mbuf: rss */
+		13, 0xffff,       /* 14st mbuf: rss */
+		14, 0xffff,       /* 15st mbuf: rss */
+		15, 0xffff        /* 16st mbuf: rss */
 	};
 
-	svbool_t pg32 = svwhilelt_b32(0, EM_DESCS_PER_LOOP_SVE512); // To load data only for 8 mbufs
-	svuint16_t xlen_tbl1 = svld1_u16(PG16_256BIT, xlen_adjust);
-	svuint16_t xlen_tbl2 = svld1_u16(PG16_256BIT, &xlen_adjust[16]);
-	svuint32_t rss_tbl1 = svld1_u32(PG32_256BIT, rss_adjust);
-	svuint32_t rss_tbl2 = svld1_u32(PG32_256BIT, &rss_adjust[8]);
+	svuint16_t xlen_tbl1 = svld1_u16(PG16_ALLBIT, xlen_adjust);
+	svuint16_t xlen_tbl2 = svld1_u16(PG16_ALLBIT, &xlen_adjust[32]);
+	svuint32_t rss_tbl1 = svld1_u32(PG32_ALLBIT, rss_adjust);
+	svuint32_t rss_tbl2 = svld1_u32(PG32_ALLBIT, &rss_adjust[16]);
 
 	for (pos = 0; pos < nb_pkts; pos += EM_DESCS_PER_LOOP_SVE512,
 					rxdp += EM_DESCS_PER_LOOP_SVE512) {
@@ -2966,102 +2985,103 @@ _eth_em_recv_raw_pkts_vec_sve512(struct em_rx_queue *rxq,
 		svuint8_t  vld_u8;
 
 		/* Calculate how many desc. valid: part 1*/
-		vld = svld1_gather_u32offset_u32(pg32, (uint32_t *)rxdp,
-			svindex_u32(DESC_FIELD_STATERR, DESC_SIZE)); // 8 status_error
-		// Have to get only DD bit from status_error. DD bit offset from staterr is 0x1
-		vld2 = svlsl_n_u32_z(pg32, vld,
-				    32 - 1 - 1); //32-bit staterr, 1-bit DD bit, 1-bit offset 
-		vld2 = svreinterpret_u32_s32(svasr_n_s32_z(pg32,
-			svreinterpret_s32_u32(vld2), 32 - 1)); // Again shift to get only DD-bit
-		
-		/* load 4 mbuf pointer */
-		mbp1st = svld1_u64(PG64_256BIT, (uint64_t *)&sw_ring[pos]);
+		vld = svld1_gather_u32offset_u32(PG32_ALLBIT,
+			(uint32_t *)rxdp,
+			svindex_u32(DESC_FIELD_STATERR, DESC_SIZE)); //16 status_error
+
+		vld2 = svlsl_n_u32_z(PG32_ALLBIT, vld, 30); // << (32-1-1), 32-bit staterr, 1-bit DD bit, 1-bif offset
+		vld2 = svreinterpret_u32_s32(svasr_n_s32_z(PG32_ALLBIT, svreinterpret_s32_u32(vld2), 31)); // >> (32-1). Shift to get only DD-bit
+
+		/* load 8 mbuf pointer */
+		mbp1st = svld1_u64(PG64_ALLBIT, (uint64_t *)&sw_ring[pos]);
 
 		/* Calculate how many desc. valid: part 2*/
 		vld_u8 = svtbl_u8(svreinterpret_u8_u32(vld2),
-				  svreinterpret_u8_s8(GEN_VLD_U8_ZIP_INDEX));
-		vld_clz = svnot_u64_z(PG64_64BIT, svreinterpret_u64_u8(vld_u8));
-		vld_clz = svclz_u64_z(PG64_64BIT, vld_clz);
-		svst1_u64(PG64_64BIT, &desc_valid_num, vld_clz);
+					svreinterpret_u8_s8(GEN_VLD_U8_ZIP_INDEX));
+		vld_clz = svnot_u64_z(PG64_128BIT, svreinterpret_u64_u8(vld_u8));
+		vld_clz = svclz_u64_z(PG64_128BIT, vld_clz);
+		svst1_u64(PG64_128BIT, (uint64_t*)&desc_valid_num_arr, vld_clz);
+		desc_valid_num = desc_valid_num_arr[0] + desc_valid_num_arr[1];
 		desc_valid_num /= 8; //8-bits
 
-		/* load 4 more mbuf pointer */
-		mbp2st = svld1_u64(PG64_256BIT, (uint64_t *)&sw_ring[pos + 4]);
+		/* load 8 more mbuf pointer */
+		mbp2st = svld1_u64(PG64_ALLBIT, (uint64_t *)&sw_ring[pos + 8]);
 
 		/* use offset to control below data load oper ordering */
 		offset = rxq->offset_table[desc_valid_num];
 		rxdp2 = rxdp + offset;
 
-		/* store 4 mbuf pointer into rx_pkts */
-		svst1_u64(PG64_256BIT, (uint64_t *)&rx_pkts[pos], mbp1st);
+		/* store 8 mbuf pointer into rx_pkts */
+		svst1_u64(PG64_ALLBIT, (uint64_t *)&rx_pkts[pos], mbp1st);
 
 		/* load key field to vector reg */
-		hlen_type_rss = svld1_gather_u32offset_u32(pg32, (uint32_t *)rxdp2,
-				svindex_u32(DESC_FIELD_HLEN_TYPE_RSS, DESC_SIZE));
-		rss = svld1_gather_u32offset_u32(pg32, (uint32_t *)rxdp2,
-				svindex_u32(DESC_FIELD_RSS, DESC_SIZE));
+		hlen_type_rss = svld1_gather_u32offset_u32(PG32_ALLBIT, (uint32_t *)rxdp2,
+				svindex_u32(DESC_FIELD_HLEN_TYPE_RSS, DESC_SIZE)); // 16 hlen_type_rss
+		rss = svld1_gather_u32offset_u32(PG32_ALLBIT, (uint32_t *)rxdp2,
+				svindex_u32(DESC_FIELD_RSS, DESC_SIZE)); // 16 hlen_type_rss
 		
-		/* store 4 mbuf pointer into rx_pkts again */
-		svst1_u64(PG64_256BIT, (uint64_t *)&rx_pkts[pos + 4], mbp2st);
+		/* store 8 mbuf pointer into rx_pkts again */
+		svst1_u64(PG64_ALLBIT, (uint64_t *)&rx_pkts[pos + 8], mbp2st);
 		
 		/* load xlen_vlan to extract datalen, pktlen and vlan*/
-		xlen_vlan = svld1_gather_u32offset_u32(pg32, (uint32_t *)rxdp2,
-                          svindex_u32(DESC_FIELD_XLEN, DESC_SIZE));
-		xlen = svand_n_u32_z(PG32_256BIT, xlen_vlan, 0x0000FFFF); // extract lower 16 bits
-		vlan = svlsr_n_u32_z(PG32_256BIT, xlen_vlan, 16); // extract upper 16 bits
+		xlen_vlan = svld1_gather_u32offset_u32(PG32_ALLBIT, (uint32_t *)rxdp2,
+							svindex_u32(DESC_FIELD_XLEN, DESC_SIZE)); // 16 xlen_vlan
+		xlen = svand_n_u32_z(PG32_ALLBIT, xlen_vlan, 0x0000FFFF); // extract lower 16 bits
+		vlan = svlsr_n_u32_z(PG32_ALLBIT, xlen_vlan, 16); // extract upper 16 bits
 
 		/* store key field to stash buffer */
-		svst1_u32(pg32, (uint32_t *)key_field.hlen_type_rss, hlen_type_rss);
-		svst1_u32(pg32, (uint32_t *)key_field.staterr, vld);
+		svst1_u32(PG32_ALLBIT, (uint32_t *)key_field.hlen_type_rss, hlen_type_rss);
+		svst1_u32(PG32_ALLBIT, (uint32_t *)key_field.staterr, vld);
 
 		/* sub crc_len for xlen */
-		xlen = svsub_n_u32_z(PG32_256BIT, xlen, rxq->crc_len);
+		xlen = svsub_n_u32_z(PG32_ALLBIT, xlen, rxq->crc_len);
 
 		/* init mbuf_initializer */
 		mbuf_init = svdup_n_u64((uint64_t)rxq->mbuf_initializer);
 
-		/* Make datalen, pktlen, vlan and rss */
+		/* Make datalen, pktlen, vlan and rss */    
 		rss1st = svreinterpret_u64_u32(
-			svtbl_u32(svreinterpret_u32_u32(rss), rss_tbl1));
+			svtbl_u32(svreinterpret_u32_u32(rss), rss_tbl1)); // 8 64-bit
 		rss2st = svreinterpret_u64_u32(
-			svtbl_u32(svreinterpret_u32_u32(rss), rss_tbl2));
-        
-        xlen1st = svreinterpret_u64_u16(
-			svtbl_u16(svreinterpret_u16_u32(xlen), xlen_tbl1));
-        xlen2st = svreinterpret_u64_u16(
-                svtbl_u16(svreinterpret_u16_u32(xlen), xlen_tbl2));
-        vlan1st = svreinterpret_u64_u16(
-                svtbl_u16(svreinterpret_u16_u32(vlan), xlen_tbl1));
-        vlan2st = svreinterpret_u64_u16(
-                svtbl_u16(svreinterpret_u16_u32(vlan), xlen_tbl2));
-        
-        /* Make 64-bit pktlen_datalen_vlantci */
-        xlen_vlan_1st = svorr_u64_z(PG64_256BIT,
-            svlsl_n_u64_z(PG64_256BIT, vlan1st, 48), // VLAN_TCI MSB 16 bit
-            svorr_u64_z(PG64_256BIT,
-                svlsl_n_u64_z(PG64_256BIT, xlen1st, 32), // DATA_LEN Next MSB 16bit
-                xlen1st)); // PKT_LEN LSB 32bit
-        xlen_vlan_2st = svorr_u64_z(PG64_256BIT,
-            svlsl_n_u64_z(PG64_256BIT, vlan2st, 48), // VLAN_TCI MSB 16 bit
-            svorr_u64_z(PG64_256BIT,
-                svlsl_n_u64_z(PG64_256BIT, xlen2st, 32), // DATA_LEN Next MSB 16bit
-                xlen2st)); // PKT_LEN LSB 32bit
+			svtbl_u32(svreinterpret_u32_u32(rss), rss_tbl2)); // 8 64-bit
+		
+		xlen1st = svreinterpret_u64_u16(
+			svtbl_u16(svreinterpret_u16_u32(xlen), xlen_tbl1)); // 8 64-bit
+		xlen2st = svreinterpret_u64_u16(
+			svtbl_u16(svreinterpret_u16_u32(xlen), xlen_tbl2)); // 8 64-bit
+
+		vlan1st = svreinterpret_u64_u16(
+				svtbl_u16(svreinterpret_u16_u32(vlan), xlen_tbl1));
+		vlan2st = svreinterpret_u64_u16(
+				svtbl_u16(svreinterpret_u16_u32(vlan), xlen_tbl2));
+
+		/* Make 64-bit pktlen_datalen_vlantci */
+		xlen_vlan_1st = svorr_u64_z(PG64_ALLBIT,
+			svlsl_n_u64_z(PG64_ALLBIT, vlan1st, 48), // VLAN_TCI MSB 16 bit
+			svorr_u64_z(PG64_ALLBIT,
+				svlsl_n_u64_z(PG64_ALLBIT, xlen1st, 32), // DATA_LEN Next MSB 16bit
+				xlen1st)); // PKT_LEN LSB 32bit
+		xlen_vlan_2st = svorr_u64_z(PG64_ALLBIT,
+			svlsl_n_u64_z(PG64_ALLBIT, vlan2st, 48), // VLAN_TCI MSB 16 bit
+			svorr_u64_z(PG64_ALLBIT,
+				svlsl_n_u64_z(PG64_ALLBIT, xlen2st, 32), // DATA_LEN Next MSB 16bit
+				xlen2st)); // PKT_LEN LSB 32bit
 
 		/* save mbuf_initializer */
-		svst1_scatter_u64base_offset_u64(PG64_256BIT, mbp1st,
+		svst1_scatter_u64base_offset_u64(PG64_ALLBIT, mbp1st,
 			offsetof(struct rte_mbuf, rearm_data), mbuf_init);
-		svst1_scatter_u64base_offset_u64(PG64_256BIT, mbp2st,
+		svst1_scatter_u64base_offset_u64(PG64_ALLBIT, mbp2st,
 			offsetof(struct rte_mbuf, rearm_data), mbuf_init);
 		
 		/* save datalen,pktlen,vlan and rss */
-		svst1_scatter_u64base_offset_u64(PG64_256BIT, mbp1st,
-            offsetof(struct rte_mbuf, pkt_len), xlen_vlan_1st);
-        svst1_scatter_u64base_offset_u64(PG64_256BIT, mbp1st,
-            offsetof(struct rte_mbuf, hash.rss), rss1st);
-        svst1_scatter_u64base_offset_u64(PG64_256BIT, mbp2st,
-            offsetof(struct rte_mbuf, pkt_len), xlen_vlan_2st);
-        svst1_scatter_u64base_offset_u64(PG64_256BIT, mbp2st,
-            offsetof(struct rte_mbuf, hash.rss), rss2st);   
+		svst1_scatter_u64base_offset_u64(PG64_ALLBIT, mbp1st,
+			offsetof(struct rte_mbuf, pkt_len), xlen_vlan_1st);
+		svst1_scatter_u64base_offset_u64(PG64_ALLBIT, mbp1st,
+			offsetof(struct rte_mbuf, hash.rss), rss1st);
+		svst1_scatter_u64base_offset_u64(PG64_ALLBIT, mbp2st,
+			offsetof(struct rte_mbuf, pkt_len), xlen_vlan_2st);
+		svst1_scatter_u64base_offset_u64(PG64_ALLBIT, mbp2st,
+			offsetof(struct rte_mbuf, hash.rss), rss2st);   
 		
 		rte_prefetch_non_temporal(rxdp +
 					  EM_DESCS_PER_LOOP_SVE512);
@@ -3077,6 +3097,368 @@ _eth_em_recv_raw_pkts_vec_sve512(struct em_rx_queue *rxq,
 		eth_em_rx_prefetch_mbuf_sve(&sw_ring[pos +
 					EM_DESCS_PER_LOOP_SVE512]);
 
+		nb_rx += desc_valid_num;
+		if (unlikely(desc_valid_num < EM_DESCS_PER_LOOP_SVE512))
+			break;
+	}
+
+	rxq->rx_tail += nb_rx;
+	rxq->rxrearm_nb += nb_rx;
+	if (rxq->rx_tail >= rxq->nb_rx_desc)
+		rxq->rx_tail = 0;
+
+	return nb_rx;
+}
+
+static inline uint16_t 
+_eth_em_recv_raw_pkts_vec_sve512_eff(struct em_rx_queue *rxq, 
+	struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
+{
+	// To use the style used in ice driver.
+	// Tend to use less scatter/gather load/store instructions
+	// and instead use more svtbl instructions
+#define GEN_VLD_U8_ZIP_INDEX	svindex_s8(56, -8)
+#define MBUF_REARM_OFFSET offsetof(struct rte_mbuf, data_off)
+    uint16_t rx_id = rxq->rx_tail;
+	struct em_rx_entry *sw_ring = &rxq->sw_ring[rx_id];
+	volatile union e1000_adv_rx_desc *rxdp = &rxq->rx_ring[rx_id];
+	const uint32_t *ptype_tbl = rxq->ptype_tbl;
+	uint64_t desc_valid_num;
+	uint16_t nb_rx = 0;
+	int pos, offset;
+
+	uint8_t shuffle_idx[64];
+    for (int i = 0; i < 4; i++) {
+        int base = i * 16;      // descriptor i's starting byte offset
+
+        int dst = i * 16;       // mbuf i's starting byte offset (0, 16, 32, 48)
+
+        // packet_type: 4B → Not now (0xFF)
+        shuffle_idx[dst + 0] = 0xFF;
+        shuffle_idx[dst + 1] = 0xFF;
+        shuffle_idx[dst + 2] = 0xFF;
+        shuffle_idx[dst + 3] = 0xFF;
+
+        // pkt_len: 2B (desc offset 12–13)
+        shuffle_idx[dst + 4] = base + 12;
+        shuffle_idx[dst + 5] = base + 13;
+
+        // padding or skip
+        shuffle_idx[dst + 6] = 0xFF;
+        shuffle_idx[dst + 7] = 0xFF;
+
+        // data_len: 2B (same as pkt_len)
+        shuffle_idx[dst + 8] = base + 12;
+        shuffle_idx[dst + 9] = base + 13;
+
+        // vlan_tci: 2B (offset 14–15)
+        shuffle_idx[dst + 10] = base + 14;
+        shuffle_idx[dst + 11] = base + 15;
+
+        // rss: 4B - Not now (0xFF)
+        shuffle_idx[dst + 12] = base + 4;
+        shuffle_idx[dst + 13] = base + 5;
+        shuffle_idx[dst + 14] = base + 6;
+        shuffle_idx[dst + 15] = base + 7;
+    }
+    svuint8_t desc_to_mbuf_vec = svld1(PG8_ALLBIT, shuffle_idx);
+
+    // 2. extract each uint64_t element from svuint64_t vector
+    svuint64_t indices = svindex_u64(0, 1); // [0, 1, 2, 3, 4, 5, 6, 7, ...]
+    svbool_t pg_64_p0_64 = svcmpeq_n_u64(PG64_ALLBIT, indices, 0);
+    svbool_t pg_64_p1_64 = svcmpeq_n_u64(PG64_ALLBIT, indices, 1);
+    svbool_t pg_64_p2_64 = svcmpeq_n_u64(PG64_ALLBIT, indices, 2);
+    svbool_t pg_64_p3_64 = svcmpeq_n_u64(PG64_ALLBIT, indices, 3);
+    svbool_t pg_64_p4_64 = svcmpeq_n_u64(PG64_ALLBIT, indices, 4);
+    svbool_t pg_64_p5_64 = svcmpeq_n_u64(PG64_ALLBIT, indices, 5);
+    svbool_t pg_64_p6_64 = svcmpeq_n_u64(PG64_ALLBIT, indices, 6);
+    svbool_t pg_64_p7_64 = svcmpeq_n_u64(PG64_ALLBIT, indices, 7);
+
+    // extract 16-bit pkt_info from svuint16_t vector
+    svuint16_t indices16 = svindex_u16(0, 1);
+    svbool_t pg_pktinfo_0 = svcmpeq_n_u16(PG16_ALLBIT, indices16, 0);
+    svbool_t pg_pktinfo_1 = svcmpeq_n_u16(PG16_ALLBIT, indices16, 8);
+    svbool_t pg_pktinfo_2 = svcmpeq_n_u16(PG16_ALLBIT, indices16, 16);
+    svbool_t pg_pktinfo_3 = svcmpeq_n_u16(PG16_ALLBIT, indices16, 24);
+
+	// 4. to sub crc from pkt_len & data_len
+    int32_t crc_pattern[16] = {
+        0, -rxq->crc_len, -rxq->crc_len, 0,
+        0, -rxq->crc_len, -rxq->crc_len, 0,
+        0, -rxq->crc_len, -rxq->crc_len, 0,
+        0, -rxq->crc_len, -rxq->crc_len, 0
+    };
+    svint32_t crc_adjust = svld1_s32(PG32_ALLBIT, crc_pattern);
+	// 5. to extract pkt_info (4:10) from 128-bit (16B) descriptor
+    const uint16_t pktinfo_mask_arr[32] = {
+        0x07F0, 0, 0, 0, 0, 0, 0, 0,
+        0x07F0, 0, 0, 0, 0, 0, 0, 0,
+        0x07F0, 0, 0, 0, 0, 0, 0, 0,
+        0x07F0, 0, 0, 0, 0, 0, 0, 0,
+    };
+    svuint16_t pktinfo_mask = svld1_u16(PG16_ALLBIT, pktinfo_mask_arr);
+
+    // To insert pkt_type into mbuf
+    // Activate only (0~3, 16~19, 32~35, 48~51)
+    uint8_t pkt_mask_bytes[64] = {0};
+    for (int i = 0; i < 4; i++) {
+        int base = i * 16;
+        pkt_mask_bytes[base + 0] = 0xFF;
+        pkt_mask_bytes[base + 1] = 0xFF;
+        pkt_mask_bytes[base + 2] = 0xFF;
+        pkt_mask_bytes[base + 3] = 0xFF;
+    }
+    svbool_t blend_pred = svcmpeq_u8(PG8_ALLBIT, svld1_u8(PG8_ALLBIT, pkt_mask_bytes), svdup_u8(0xFF));
+
+    uint32_t tbl_idx0_3_1st[16] = {
+        0, 0xFFFF,
+        4, 0xFFFF,
+        8, 0xFFFF,
+        12, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF
+    };
+    svuint32_t desc_0_3_tbl_idx_1st = svld1_u32(PG32_ALLBIT, tbl_idx0_3_1st);
+    uint32_t tbl_idx4_7_1st[16] = {
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0, 0xFFFF,
+        4, 0xFFFF,
+        8, 0xFFFF,
+        12, 0xFFFF
+    };
+    svuint32_t desc_4_7_tbl_idx_1st = svld1_u32(PG32_ALLBIT, tbl_idx4_7_1st);
+
+    uint32_t tbl_idx0_3_2nd[16] = {// 2,6,10,14
+        2, 0xFFFF,
+        6, 0xFFFF,
+        10, 0xFFFF,
+        14, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF
+    };
+    svuint32_t desc_0_3_tbl_idx_2nd = svld1_u32(PG32_ALLBIT, tbl_idx0_3_2nd);
+    uint32_t tbl_idx4_7_2nd[16] = {
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        0xFFFF, 0xFFFF,
+        2, 0xFFFF,
+        6, 0xFFFF,
+        10, 0xFFFF,
+        14, 0xFFFF
+    };
+    svuint32_t desc_4_7_tbl_idx_2nd = svld1_u32(PG32_ALLBIT, tbl_idx4_7_2nd);
+
+    // 3-bit index table: bit 0 = vlan, bit 1-2 = checksum error
+    static const uint64_t vlan_cksum_flags_tbl[8] = {
+        PKT_RX_IP_CKSUM_GOOD | PKT_RX_L4_CKSUM_GOOD,                           // 000
+        PKT_RX_IP_CKSUM_GOOD | PKT_RX_L4_CKSUM_BAD,                            // 001
+        PKT_RX_IP_CKSUM_BAD  | PKT_RX_L4_CKSUM_GOOD,                           // 010
+        PKT_RX_IP_CKSUM_BAD  | PKT_RX_L4_CKSUM_BAD,                            // 011
+        (PKT_RX_VLAN | PKT_RX_VLAN_STRIPPED) |
+            PKT_RX_IP_CKSUM_GOOD | PKT_RX_L4_CKSUM_GOOD,                       // 100
+        (PKT_RX_VLAN | PKT_RX_VLAN_STRIPPED) |
+            PKT_RX_IP_CKSUM_GOOD | PKT_RX_L4_CKSUM_BAD,                        // 101
+        (PKT_RX_VLAN | PKT_RX_VLAN_STRIPPED) |
+            PKT_RX_IP_CKSUM_BAD  | PKT_RX_L4_CKSUM_GOOD,                       // 110
+        (PKT_RX_VLAN | PKT_RX_VLAN_STRIPPED) |
+            PKT_RX_IP_CKSUM_BAD  | PKT_RX_L4_CKSUM_BAD                         // 111
+    };
+    svuint64_t vlan_cksum_tbl_vec = svld1_u64(PG64_ALLBIT, vlan_cksum_flags_tbl);
+
+    static const uint64_t rss_flags_tbl[2] = {
+        0,
+        PKT_RX_RSS_HASH
+    };
+    svuint64_t rss_tbl_vec = svld1_u64(PG64_128BIT, rss_flags_tbl);
+
+    // mbuf initializer - 256-bit
+    static uint64_t mbuf_initializer[4] = { 
+        0, 0, 0, 0
+    };
+    mbuf_initializer[0] = rxq->mbuf_initializer;
+    svuint64_t mbuf_init_vec = svld1_u64(PG64_256BIT, mbuf_initializer);
+
+    svbool_t blend_pred_1st_lane = svcmpeq_n_u64(PG64_256BIT, svindex_u64(0, 1), 1); //Active lane[1]
+    svbool_t blend_pred_2_3_lane = svcmpgt_n_u64(PG64_256BIT, svindex_u64(0, 1), 1); //Active lane[2,3]
+	// initialization end
+	for (pos = 0; pos < nb_pkts; pos += EM_DESCS_PER_LOOP_SVE512,
+				rxdp += EM_DESCS_PER_LOOP_SVE512) {
+		svuint64_t dd_clz, mbp1st;
+		svuint8_t  dd_0_7_u8;
+		svuint64_t desc_data0_3, desc_data4_7, rearm0, rearm1, rearm2, rearm3, rearm4, rearm5, rearm6, rearm7;
+		svuint64_t ptype0, ptype1, ptype2, ptype3, ptype4, ptype5, ptype6, ptype7;
+		svuint8_t mbuf_ptype_0_3, mbuf_ptype_4_7;
+		svuint16_t pktinfo_0_3, pktinfo_4_7;
+		uint16_t pktinfo0, pktinfo1, pktinfo2, pktinfo3, pktinfo4, pktinfo5, pktinfo6, pktinfo7;
+
+		// Load 64B aligned data for 4 descriptors
+		desc_data0_3 = svld1_u64(PG64_ALLBIT, (uint64_t *)&rxdp[0]);
+		desc_data4_7 = svld1_u64(PG64_ALLBIT, (uint64_t *)&rxdp[4]);
+		
+		/* load 8 mbuf pointer */
+		mbp1st = svld1_u64(PG64_ALLBIT, (uint64_t *)&sw_ring[pos]);
+
+		/* store 8 mbuf pointer into rx_pkts */
+		svst1_u64(PG64_ALLBIT, (uint64_t *)&rx_pkts[pos], mbp1st);
+
+		// convert descriptors 0-7 into mbufs, re-arrange fields.
+		mbuf_ptype_0_3 = svtbl_u8(svreinterpret_u8_u64(desc_data0_3), desc_to_mbuf_vec);
+		mbuf_ptype_4_7 = svtbl_u8(svreinterpret_u8_u64(desc_data4_7), desc_to_mbuf_vec);
+
+		// sub crc_len
+		mbuf_ptype_0_3 = svreinterpret_u8_s32(svadd_s32_x(PG32_ALLBIT, svreinterpret_s32_u8(mbuf_ptype_0_3), crc_adjust));
+		mbuf_ptype_4_7 = svreinterpret_u8_s32(svadd_s32_x(PG32_ALLBIT, svreinterpret_s32_u8(mbuf_ptype_4_7), crc_adjust));
+
+		// extract pkt_info (4:10) from 128-bit (16B) descriptor svuint16_t
+		pktinfo_0_3 = svlsr_n_u16_z(PG16_ALLBIT, svand_u16_z(PG16_ALLBIT, 
+			svreinterpret_u16_u64(desc_data0_3), pktinfo_mask), 4);
+		pktinfo_4_7 = svlsr_n_u16_z(PG16_ALLBIT, svand_u16_z(PG16_ALLBIT,
+			svreinterpret_u16_u64(desc_data4_7), pktinfo_mask), 4);
+		
+		pktinfo0 = svlastb_u16(pg_pktinfo_0, pktinfo_0_3);
+		pktinfo1 = svlastb_u16(pg_pktinfo_1, pktinfo_0_3);
+		pktinfo2 = svlastb_u16(pg_pktinfo_2, pktinfo_0_3);
+		pktinfo3 = svlastb_u16(pg_pktinfo_3, pktinfo_0_3);
+		pktinfo4 = svlastb_u16(pg_pktinfo_0, pktinfo_4_7);
+		pktinfo5 = svlastb_u16(pg_pktinfo_1, pktinfo_4_7);
+		pktinfo6 = svlastb_u16(pg_pktinfo_2, pktinfo_4_7);
+		pktinfo7 = svlastb_u16(pg_pktinfo_3, pktinfo_4_7);
+
+		uint32_t ptypes_scalar0_3[16] = {
+			ptype_tbl[pktinfo0], 0, 0, 0,
+			ptype_tbl[pktinfo1], 0, 0, 0,
+			ptype_tbl[pktinfo2], 0, 0, 0,
+			ptype_tbl[pktinfo3], 0, 0, 0
+		};
+		uint32_t ptypes_scalar4_7[16] = {
+			ptype_tbl[pktinfo4], 0, 0, 0,
+			ptype_tbl[pktinfo5], 0, 0, 0,
+			ptype_tbl[pktinfo6], 0, 0, 0,
+			ptype_tbl[pktinfo7], 0, 0, 0
+		};
+
+		svuint8_t ptype_vec0_3 = svld1_u8(PG8_ALLBIT, (uint8_t*)ptypes_scalar0_3);
+		svuint8_t ptype_vec4_7 = svld1_u8(PG8_ALLBIT, (uint8_t*)ptypes_scalar4_7);
+
+		// blend ptype into mbuf_ptype
+		mbuf_ptype_0_3 = svsel_u8(blend_pred, ptype_vec0_3, mbuf_ptype_0_3);
+		mbuf_ptype_4_7 = svsel_u8(blend_pred, ptype_vec4_7, mbuf_ptype_4_7);
+
+		// mbuf_ptype_0_3
+		svuint64_t mbuf_ptype_0_3_u64 = svreinterpret_u64_u8(mbuf_ptype_0_3);
+		ptype0 = svext_u64(mbuf_ptype_0_3_u64, mbuf_ptype_0_3_u64, 6); //rotate ptype0 to be located at lane[2:3]
+		ptype1 = mbuf_ptype_0_3_u64;
+		ptype2 = svext_u64(mbuf_ptype_0_3_u64, mbuf_ptype_0_3_u64, 2);
+		ptype3 = svext_u64(mbuf_ptype_0_3_u64, mbuf_ptype_0_3_u64, 4);
+
+		// mbuf_ptype_4_7
+		svuint64_t mbuf_ptype_4_7_u64 = svreinterpret_u64_u8(mbuf_ptype_4_7);
+		ptype4 = svext_u64(mbuf_ptype_4_7_u64, mbuf_ptype_4_7_u64, 6);
+		ptype5 = mbuf_ptype_4_7_u64;
+		ptype6 = svext_u64(mbuf_ptype_4_7_u64, mbuf_ptype_4_7_u64, 2);
+		ptype7 = svext_u64(mbuf_ptype_4_7_u64, mbuf_ptype_4_7_u64, 4);
+
+		// To extract bit 15 from pkt_info & bit 8, 29, 30 from status_error
+		// 1. reinterpret to 32-bit view
+		svuint32_t desc_data0_3_u32 = svreinterpret_u32_u64(desc_data0_3);
+		svuint32_t desc_data4_7_u32 = svreinterpret_u32_u64(desc_data4_7);
+
+		// 2. bit 15 from lo_dword.data
+		svuint32_t rss_mask = svdup_n_u32(1 << 15);
+		svbool_t sel_pred = svwhilelt_b32(0, 8);
+		// extract .data from index 0, 4, 8, 12 (desc 0, 1, 2, 3)
+		svuint32_t data_fields_0_3 = svtbl_u32(desc_data0_3_u32, desc_0_3_tbl_idx_1st); // 0, 4, 8, 12
+		svuint32_t data_fields_4_7 = svtbl_u32(desc_data4_7_u32, desc_4_7_tbl_idx_1st); // 0, 4, 8, 12
+		svuint32_t data_fields_0_7 = svsel_u32(sel_pred, data_fields_0_3, data_fields_4_7); //concatenate desc0-7 data
+		
+		// 3. bit 8, 29, 30 from status_error (index 2, 6, 10, 14)
+		svuint32_t status_0_3 = svtbl_u32(desc_data0_3_u32, desc_0_3_tbl_idx_2nd); // 2, 6, 10, 14
+		svuint32_t status_4_7 = svtbl_u32(desc_data4_7_u32, desc_4_7_tbl_idx_2nd); // 2, 6, 10, 14
+		svuint32_t status_0_7 = svsel_u32(sel_pred, status_0_3, status_4_7); //concatenate desc0-7 status
+
+		// 1. merge mbuf_init & mbuf_ptype
+		rearm0 = svsel_u64(blend_pred_2_3_lane, ptype0, mbuf_init_vec);
+		rearm1 = svsel_u64(blend_pred_2_3_lane, ptype1, mbuf_init_vec);
+		rearm2 = svsel_u64(blend_pred_2_3_lane, ptype2, mbuf_init_vec);
+		rearm3 = svsel_u64(blend_pred_2_3_lane, ptype3, mbuf_init_vec);
+		rearm4 = svsel_u64(blend_pred_2_3_lane, ptype4, mbuf_init_vec);
+		rearm5 = svsel_u64(blend_pred_2_3_lane, ptype5, mbuf_init_vec);
+		rearm6 = svsel_u64(blend_pred_2_3_lane, ptype6, mbuf_init_vec);
+		rearm7 = svsel_u64(blend_pred_2_3_lane, ptype7, mbuf_init_vec);
+
+		// extract bit 15 and mask to 1-bit
+		svuint32_t rss_0_7 = svlsr_n_u32_x(PG32_ALLBIT, svand_u32_x(PG32_ALLBIT, data_fields_0_7, rss_mask), 15);
+		// VLAN bit 8
+		svuint32_t vlan_0_7 = svlsr_n_u32_x(PG32_ALLBIT, svand_u32_x(PG32_ALLBIT, status_0_7, svdup_n_u32(1 << 8)), 8);
+		// IP/L4 checksum 29, 30 -> shift 29, mask 0b11
+		svuint32_t ip_l4_cksum_0_7 = svlsr_n_u32_x(PG32_ALLBIT, status_0_7, 29);
+		ip_l4_cksum_0_7 = svand_u32_x(PG32_ALLBIT, ip_l4_cksum_0_7, svdup_n_u32(0b11));
+
+		// 4. extract rss flag from rss field
+		svuint64_t rss_flags = svtbl_u64(rss_tbl_vec, svreinterpret_u64_u32(rss_0_7));
+
+		// 5. merge vlan, ip_l4_cksum into one 32-bit vector // 0-1 bit: ip_l4_cksum, 2 bit: vlan 
+		svuint32_t vlan_ip_l4_cksum_0_7 = svorr_u32_x(PG32_ALLBIT,
+											svlsl_n_u32_x(PG32_ALLBIT, vlan_0_7, 2),
+											ip_l4_cksum_0_7);
+		svuint64_t vlan_cksum_flags = svtbl_u64(vlan_cksum_tbl_vec, svreinterpret_u64_u32(vlan_ip_l4_cksum_0_7));
+
+		// 6. merge vlan_cksum_flags, rss_flags into one 64-bit vector
+		svuint64_t ol_flags_0_7 = svorr_u64_x(PG64_ALLBIT, rss_flags, vlan_cksum_flags);
+
+		// merge 0-63bit:rearm data (rxq->mbuf_initializer), 64-127bit:ol_flags, 128-255bit:mbuf_ptype
+		// 1. rearm & ol_flags_0_7 merge
+		rearm0 = svsel_u64(blend_pred_1st_lane, svext_u64(ol_flags_0_7, ol_flags_0_7, 7), rearm0);
+		rearm1 = svsel_u64(blend_pred_1st_lane, ol_flags_0_7, rearm1);
+		rearm2 = svsel_u64(blend_pred_1st_lane, svext_u64(ol_flags_0_7, ol_flags_0_7, 1), rearm2);
+		rearm3 = svsel_u64(blend_pred_1st_lane, svext_u64(ol_flags_0_7, ol_flags_0_7, 2), rearm3);
+		rearm4 = svsel_u64(blend_pred_1st_lane, svext_u64(ol_flags_0_7, ol_flags_0_7, 3), rearm4);
+		rearm5 = svsel_u64(blend_pred_1st_lane, svext_u64(ol_flags_0_7, ol_flags_0_7, 4), rearm5);
+		rearm6 = svsel_u64(blend_pred_1st_lane, svext_u64(ol_flags_0_7, ol_flags_0_7, 5), rearm6);
+		rearm7 = svsel_u64(blend_pred_1st_lane, svext_u64(ol_flags_0_7, ol_flags_0_7, 6), rearm7);
+
+		// Store to mbuf
+		svuint64_t mbuf_rearm_ptr_1st = svadd_u64_x(PG64_ALLBIT, mbp1st, svdup_n_u64(MBUF_REARM_OFFSET));
+		uint64_t dst_ptr0 = svlastb_u64(pg_64_p0_64, mbuf_rearm_ptr_1st);
+		uint64_t dst_ptr1 = svlastb_u64(pg_64_p1_64, mbuf_rearm_ptr_1st);
+		uint64_t dst_ptr2 = svlastb_u64(pg_64_p2_64, mbuf_rearm_ptr_1st);
+		uint64_t dst_ptr3 = svlastb_u64(pg_64_p3_64, mbuf_rearm_ptr_1st);
+		uint64_t dst_ptr4 = svlastb_u64(pg_64_p4_64, mbuf_rearm_ptr_1st);
+		uint64_t dst_ptr5 = svlastb_u64(pg_64_p5_64, mbuf_rearm_ptr_1st);
+		uint64_t dst_ptr6 = svlastb_u64(pg_64_p6_64, mbuf_rearm_ptr_1st);
+		uint64_t dst_ptr7 = svlastb_u64(pg_64_p7_64, mbuf_rearm_ptr_1st);
+		svst1(PG64_256BIT, (void*)dst_ptr0, rearm0);
+		svst1(PG64_256BIT, (void*)dst_ptr1, rearm1);
+		svst1(PG64_256BIT, (void*)dst_ptr2, rearm2);
+		svst1(PG64_256BIT, (void*)dst_ptr3, rearm3);
+		svst1(PG64_256BIT, (void*)dst_ptr4, rearm4);
+		svst1(PG64_256BIT, (void*)dst_ptr5, rearm5);
+		svst1(PG64_256BIT, (void*)dst_ptr6, rearm6);
+		svst1(PG64_256BIT, (void*)dst_ptr7, rearm7);
+
+		rte_prefetch_non_temporal(rxdp +
+					  EM_DESCS_PER_LOOP_SVE512);
+
+		// Check DD bits at bit 1 of status_error
+		svuint32_t dd_0_7 = svlsl_n_u32_z(PG32_ALLBIT, status_0_7, 31);
+		dd_0_7 = svreinterpret_u32_s32(svasr_n_s32_z(PG32_ALLBIT, svreinterpret_s32_u32(dd_0_7), 31));
+		dd_0_7_u8 = svtbl_u8(svreinterpret_u8_u32(dd_0_7), svreinterpret_u8_s8(GEN_VLD_U8_ZIP_INDEX));
+		dd_clz = svnot_u64_z(PG64_64BIT, svreinterpret_u64_u8(dd_0_7_u8));
+		dd_clz = svclz_u64_z(PG64_64BIT, dd_clz);
+		svst1_u64(PG64_64BIT, &desc_valid_num, dd_clz);
+		desc_valid_num /= 8; // 8-bits
+
+		eth_em_rx_prefetch_mbuf_sve(&sw_ring[pos +
+					EM_DESCS_PER_LOOP_SVE512]);
+		
 		nb_rx += desc_valid_num;
 		if (unlikely(desc_valid_num < EM_DESCS_PER_LOOP_SVE512))
 			break;
@@ -3215,7 +3597,15 @@ eth_em_rxq_rearm(struct em_rx_queue *rxq)
 	}
 
 	/* fill up the rxd in vector, process 8 mbufs in one loop */
-	svuint64_t hdr_addr0 = svdup_n_u64(0);
+	uint64_t shuffle_idx_desc_0_3[8] = {
+        0, 0xFFFF, 1, 0xFFFF, 2, 0xFFFF, 3, 0xFFFF
+    };
+    uint64_t shuffle_idx_desc_4_7[8] = {
+        4, 0xFFFF, 5, 0xFFFF, 6, 0xFFFF, 7, 0xFFFF
+    };
+    svuint64_t desc_0_3_tbl_idx = svld1_u64(PG64_ALLBIT, shuffle_idx_desc_0_3);
+    svuint64_t desc_4_7_tbl_idx = svld1_u64(PG64_ALLBIT, shuffle_idx_desc_4_7);
+	// svuint64_t hdr_addr0 = svdup_n_u64(0);
 	for (i = 0; i < EM_RXQ_REARM_THRESH; i += 8) {
 		svuint64_t mbuf_ptrs = svld1_u64(PG64_ALLBIT, (uint64_t *)(&cache->objs[cache->len - 8]));
 		svst1_u64(PG64_ALLBIT, (uint64_t *)&rxep[0], mbuf_ptrs);
@@ -3223,13 +3613,21 @@ eth_em_rxq_rearm(struct em_rx_queue *rxq)
 			mbuf_ptrs, offsetof(struct rte_mbuf, buf_iova));
 		svuint64_t iova_addrs = svadd_n_u64_z(PG64_ALLBIT, iova_base_addrs,
 			RTE_PKTMBUF_HEADROOM);
-		svst1_scatter_u64offset_u64(PG64_ALLBIT,
-			(uint64_t *)&rxdp[0].read.pkt_addr,
-			svindex_u64(DESC_FIELD_PKTADDR, DESC_SIZE), iova_addrs);
-		svst1_scatter_u64offset_u64(PG64_ALLBIT,
-			(uint64_t *)&rxdp[0].read.pkt_addr,
-			svindex_u64(DESC_FIELD_HDRADDR, DESC_SIZE), 
-			hdr_addr0);
+		// svst1_scatter_u64offset_u64(PG64_ALLBIT,
+		// 	(uint64_t *)&rxdp[0].read.pkt_addr,
+		// 	svindex_u64(DESC_FIELD_PKTADDR, DESC_SIZE), iova_addrs);
+		// svst1_scatter_u64offset_u64(PG64_ALLBIT,
+		// 	(uint64_t *)&rxdp[0].read.pkt_addr,
+		// 	svindex_u64(DESC_FIELD_HDRADDR, DESC_SIZE), 
+		// 	hdr_addr0);
+
+		// Use 512-bit store instead of scatter store
+		// Make 512-bit descriptor vector (4 descriptor per vector)
+        svuint64_t desc_data0_3 = svtbl_u64(iova_addrs, desc_0_3_tbl_idx);
+        svuint64_t desc_data4_7 = svtbl_u64(iova_addrs, desc_4_7_tbl_idx);
+        // Store to descriptor
+        svst1_u64(PG64_ALLBIT, (uint64_t *)&rxdp[0], desc_data0_3);
+        svst1_u64(PG64_ALLBIT, (uint64_t *)&rxdp[4], desc_data4_7);
 		
 		rxep += 8, rxdp += 8, cache->len -= 8;
 	}
@@ -3257,12 +3655,12 @@ eth_em_recv_pkts_sve512(void *rx_queue, struct rte_mbuf **rx_pkts,
 	struct em_rx_queue *rxq = rx_queue;
 	struct em_rx_entry *sw_ring = &rxq->sw_ring[rxq->rx_tail];
 	volatile union e1000_adv_rx_desc *rxdp = rxq->rx_ring + rxq->rx_tail;
-	// Check the last descriptor within the EM_RXQ_REARM_THRESH (32 batch)
+	// Check the last descriptor within the EM_RXQ_REARM_THRESH
 	uint16_t last_rx_id_within_batch_32 = rxq->rx_tail + EM_RXQ_REARM_THRESH - 1;
 	// Have to check it's within the ring boundary
 	if (last_rx_id_within_batch_32 >= rxq->nb_rx_desc)
 		last_rx_id_within_batch_32 -= rxq->nb_rx_desc;
-	// Check the last descriptor within the EM_RXQ_REARM_THRESH (32 batch)
+	// Check the last descriptor within the EM_RXQ_REARM_THRESH
 	volatile union e1000_adv_rx_desc *last_rxdp_within_batch_32 = rxq->rx_ring + last_rx_id_within_batch_32;
 	uint16_t nb_rx;
 
@@ -3292,7 +3690,7 @@ eth_em_recv_pkts_sve512(void *rx_queue, struct rte_mbuf **rx_pkts,
 	eth_em_rx_prefetch_mbuf_sve(sw_ring);
 
 	if (likely(nb_pkts <= EM_RXQ_REARM_THRESH)) {
-		nb_rx = _eth_em_recv_raw_pkts_vec_sve512(rxq, rx_pkts, nb_pkts);
+		nb_rx = _eth_em_recv_raw_pkts_vec_sve512_eff(rxq, rx_pkts, nb_pkts);
 		return nb_rx;
 	}
 
@@ -3301,7 +3699,7 @@ eth_em_recv_pkts_sve512(void *rx_queue, struct rte_mbuf **rx_pkts,
 		uint16_t ret, n;
 
 		n = RTE_MIN(nb_pkts, EM_RXQ_REARM_THRESH);
-		ret = _eth_em_recv_raw_pkts_vec_sve512(rxq, &rx_pkts[nb_rx], n);
+		ret = _eth_em_recv_raw_pkts_vec_sve512_eff(rxq, &rx_pkts[nb_rx], n);
 		nb_pkts -= ret;
 		nb_rx += ret;
 
@@ -4499,13 +4897,10 @@ _eth_em_recv_raw_pkts_m2func_dta_double_comp_sve512(struct em_rx_queue *rxq, str
 		/* Load 8 status_error */	
 		staterr = svld1_gather_u32offset_u32(pg32, (uint32_t *)rxdp,
 			svindex_u32(DESC_FIELD_STATERR, DESC_SIZE));
-		
 		/* load 4 mbuf pointer */
 		mbp1st = svld1_u64(PG64_256BIT, (uint64_t *)&sw_ring[pos]);
-
 		/* load 4 more mbuf pointer */
 		mbp2st = svld1_u64(PG64_256BIT, (uint64_t *)&sw_ring[pos + 4]);
-
 		/* store 4 mbuf pointer into rx_pkts */
 		svst1_u64(PG64_256BIT, (uint64_t *)&rx_pkts[pos], mbp1st);
 
@@ -5506,7 +5901,10 @@ eth_em_tx_queue_setup(struct rte_eth_dev *dev,
 	if (txq->offloads & DEV_TX_OFFLOAD_MBUF_FAST_FREE) {
 		printf("========== txq[%d] enable DEV_TX_OFFLOAD_MBUF_FAST_FREE ==========\n", queue_idx);
 	} else {
+		// Try to enable DEV_TX_OFFLOAD_MBUF_FAST_FREE by default
+		txq->offloads |= DEV_TX_OFFLOAD_MBUF_FAST_FREE;
 		printf("========== txq[%d] disable DEV_TX_OFFLOAD_MBUF_FAST_FREE ==========\n", queue_idx);
+		printf("========== But, we set DEV_TX_OFFLOAD_MBUF_FAST_FREE by default. txq->offlads: 0x%x\n", txq->offloads);
 	}
 	return 0;
 }
@@ -5566,6 +5964,57 @@ em_reset_rx_queue(struct em_rx_queue *rxq)
 	rxq->rxrearm_nb2 = 0;
 
 	memset(rxq->offset_table, 0, sizeof(rxq->offset_table));
+
+	// Initialize ptype_tbl
+	// ptype_tbl initialization
+    static const uint32_t
+		ptype_table[EM_PACKET_TYPE_MAX] __rte_cache_aligned = {
+		[EM_PACKET_TYPE_IPV4] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4,
+		[EM_PACKET_TYPE_IPV4_EXT] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4_EXT,
+		[EM_PACKET_TYPE_IPV6] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV6,
+		[EM_PACKET_TYPE_IPV4_IPV6] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4 | RTE_PTYPE_TUNNEL_IP |
+			RTE_PTYPE_INNER_L3_IPV6,
+		[EM_PACKET_TYPE_IPV6_EXT] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV6_EXT,
+		[EM_PACKET_TYPE_IPV4_IPV6_EXT] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4 | RTE_PTYPE_TUNNEL_IP |
+			RTE_PTYPE_INNER_L3_IPV6_EXT,
+		[EM_PACKET_TYPE_IPV4_TCP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4 | RTE_PTYPE_L4_TCP,
+		[EM_PACKET_TYPE_IPV6_TCP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV6 | RTE_PTYPE_L4_TCP,
+		[EM_PACKET_TYPE_IPV4_IPV6_TCP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4 | RTE_PTYPE_TUNNEL_IP |
+			RTE_PTYPE_INNER_L3_IPV6 | RTE_PTYPE_INNER_L4_TCP,
+		[EM_PACKET_TYPE_IPV6_EXT_TCP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV6_EXT | RTE_PTYPE_L4_TCP,
+		[EM_PACKET_TYPE_IPV4_IPV6_EXT_TCP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4 | RTE_PTYPE_TUNNEL_IP |
+			RTE_PTYPE_INNER_L3_IPV6_EXT | RTE_PTYPE_INNER_L4_TCP,
+		[EM_PACKET_TYPE_IPV4_UDP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4 | RTE_PTYPE_L4_UDP,
+		[EM_PACKET_TYPE_IPV6_UDP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV6 | RTE_PTYPE_L4_UDP,
+		[EM_PACKET_TYPE_IPV4_IPV6_UDP] =  RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4 | RTE_PTYPE_TUNNEL_IP |
+			RTE_PTYPE_INNER_L3_IPV6 | RTE_PTYPE_INNER_L4_UDP,
+		[EM_PACKET_TYPE_IPV6_EXT_UDP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV6_EXT | RTE_PTYPE_L4_UDP,
+		[EM_PACKET_TYPE_IPV4_IPV6_EXT_UDP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4 | RTE_PTYPE_TUNNEL_IP |
+			RTE_PTYPE_INNER_L3_IPV6_EXT | RTE_PTYPE_INNER_L4_UDP,
+		[EM_PACKET_TYPE_IPV4_SCTP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4 | RTE_PTYPE_L4_SCTP,
+		[EM_PACKET_TYPE_IPV4_EXT_SCTP] = RTE_PTYPE_L2_ETHER |
+			RTE_PTYPE_L3_IPV4_EXT | RTE_PTYPE_L4_SCTP,
+	};
+    for (int i = 0; i < EM_PACKET_TYPE_MAX; i++) {
+        rxq->ptype_tbl[i] = ptype_table[i];
+    }
 
 	// Make mbuf_initializer
 	uintptr_t p;
@@ -5721,6 +6170,8 @@ eth_em_rx_queue_setup(struct rte_eth_dev *dev,
 	printf("======== rxq[%d]->rx_m2func_reg_addr: 0x%lx ========\n", queue_idx, rxq->rx_m2func_reg_addr);
 	printf("======== rxq[%d]->dta_job_submit_reg_addr: 0x%lx ========\n", queue_idx, rxq->dta_job_submit_reg_addr);
 	printf("======== rxq[%d]->sw_ring phys addr: 0x%lx ========\n", queue_idx, rte_malloc_virt2iova(rxq->sw_ring));
+	printf("======== rxq[%d]->rx_free_thresh: %u ========\n", queue_idx, rxq->rx_free_thresh);
+	printf("============EM_RXQ_REARM_THRESH: %u============\n", EM_RXQ_REARM_THRESH);
 	printf("======== em_rx_entry size: %ld ========\n", sizeof(struct em_rx_entry));
 	fflush(stdout);
 	rxq->rx_ring_phys_addr = rz->iova;

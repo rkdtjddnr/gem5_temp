@@ -106,6 +106,7 @@ def build_test_system(np):
                 m2func=args.is_m2func,
                 dpdk_setup=args.is_dpdk_setup_step,
                 _enable_dta=args.enable_dta,
+                _num_dma_engines=args.num_dma_engines,
                 # Loadgens.
                 num_loadgens=args.num_loadgens,
                 load_generator_type="Simple",
@@ -134,6 +135,7 @@ def build_test_system(np):
                 m2func=args.is_m2func,
                 dpdk_setup=args.is_dpdk_setup_step,
                 _enable_dta=args.enable_dta,
+                _num_dma_engines=args.num_dma_engines,
                 # Loadgens.
                 num_loadgens=args.num_loadgens,
                 loadgen_stack_mode=args.loadgen_stack,

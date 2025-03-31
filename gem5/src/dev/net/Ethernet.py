@@ -202,6 +202,9 @@ class IGbE(EtherDevice):
     cxl_req_buf_size = Param.UInt32(1024, "CXL request buffer size")
     # JM - for DTA
     m2func_port = ResponsePort("M2Func port. Receive CXL.mem request from DTA")
+    
+    # JM - for multiple DMA engines at RingBuffer
+    num_dma_engines = Param.UInt32(1, "Number of DMA engines")
 
 class IGbE_e1000(IGbE):
     # Older Intel 8254x based gigabit ethernet adapter
@@ -224,6 +227,8 @@ class IGbE_e1000(IGbE):
     enable_dta = False
     cxl_mem_delay = "0ns"
     cxl_req_buf_size = 1024
+    
+    num_dma_engines = 1
 
 class IGbE_igb(IGbE):
     # Newer Intel 8257x based gigabit ethernet adapter

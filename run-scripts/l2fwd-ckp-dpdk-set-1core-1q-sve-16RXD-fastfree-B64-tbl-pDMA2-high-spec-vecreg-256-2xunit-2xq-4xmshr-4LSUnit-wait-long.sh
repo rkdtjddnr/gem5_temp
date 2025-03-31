@@ -2,13 +2,13 @@
 #wbWidth=4 causes error when you run
 CACHE_CONFIG="--caches --l2cache --l3cache --l3_multiport --l3_size 16MB --l3_assoc 16 --ddio-enabled --l1i_size=64kB --l1i_assoc=8 \
 --l1d_size=64kB --l1d_assoc=8 --l2_size=1MB --l2_assoc=8 --cacheline_size=64 --l3_cpu_side_ports_connection_count 2" 
-CPU_CONFIG="--param=system.l3.mshrs=256 --param=system.cpu[0:4].l2cache.mshrs=46 --param=system.cpu[0:4].dcache.mshrs=20 --param=system.cpu[0:4].icache.mshrs=20 \
-  --param=system.l3.tgts_per_mshr=12 --param=system.cpu[0:4].l2cache.tgts_per_mshr=12 --param=system.cpu[0:4].dcache.tgts_per_mshr=20 --param=system.cpu[0:4].icache.tgts_per_mshr=20 \
+CPU_CONFIG="--param=system.l3.mshrs=256 --param=system.cpu[0:4].l2cache.mshrs=92 --param=system.cpu[0:4].dcache.mshrs=80 --param=system.cpu[0:4].icache.mshrs=20 \
+  --param=system.l3.tgts_per_mshr=12 --param=system.cpu[0:4].l2cache.tgts_per_mshr=12 --param=system.cpu[0:4].dcache.tgts_per_mshr=40 --param=system.cpu[0:4].icache.tgts_per_mshr=20 \
   --param=system.l3.data_latency=30 --param=system.l3.response_latency=30 --param=system.l3.tag_latency=30 --param=system.l3.ddio_way_part=4 \
   --param=system.switch_cpus[0:4].decodeWidth=8 --param=system.l3.is_llc=True \
-  --param=system.switch_cpus[0:4].numROBEntries=512 --param=system.switch_cpus[0:4].numIQEntries=120 \
-  --param=system.switch_cpus[0:4].LQEntries=248 --param=system.switch_cpus[0:4].SQEntries=122 \
-  --param=system.switch_cpus[0:4].numPhysIntRegs=256 --param=system.switch_cpus[0:4].numPhysFloatRegs=256 \
+  --param=system.switch_cpus[0:4].numROBEntries=512 --param=system.switch_cpus[0:4].numIQEntries=496 \
+  --param=system.switch_cpus[0:4].LQEntries=248 --param=system.switch_cpus[0:4].SQEntries=248 \
+  --param=system.switch_cpus[0:4].numPhysIntRegs=256 --param=system.switch_cpus[0:4].numPhysFloatRegs=256 --param=system.switch_cpus[0:4].numPhysVecRegs=256 \
   --param=system.switch_cpus[0:4].branchPred.BTBEntries=16384 --param=system.switch_cpus[0:4].issueWidth=8 \
   --param=system.switch_cpus[0:4].commitWidth=8 --param=system.switch_cpus[0:4].dispatchWidth=8 \
   --param=system.switch_cpus[0:4].fetchWidth=8 --param=system.switch_cpus[0:4].wbWidth=8 \
@@ -40,14 +40,14 @@ function run_simulation {
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
   --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
-  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues"\
+  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=2 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 
   "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
   --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
-  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues"\
+  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=2 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 }
 
@@ -58,7 +58,7 @@ fi
 
 GEM5_DIR=${GIT_ROOT}/gem5
 # RESOURCES=${GIT_ROOT}/resources
-RESOURCES=${GIT_ROOT}/resources-dpdk-sve
+RESOURCES=${GIT_ROOT}/resources-dpdk-sve-16RXD-fastfree-B64-tbl
 GUEST_SCRIPT_DIR=${GIT_ROOT}/guest-scripts
 
 # parse command line arguments
@@ -117,7 +117,7 @@ while true; do
   esac
 done
 
-CKPT_DIR=${GIT_ROOT}/ckpts/"250309-"$num_nics"NIC"-$num_queues"Qs-SVE"-$GUEST_SCRIPT
+CKPT_DIR=${GIT_ROOT}/ckpts/"250331-"$num_nics"NIC"-$num_queues"Qs-SVE-16RXD-FF-B64-tbl-parallel"-$GUEST_SCRIPT
 if [[ -z "$num_nics" ]]; then
   echo "Error: missing argument --num-nics" >&2
   usage
@@ -129,7 +129,7 @@ fi
 
 if [[ -n "$checkpoint" ]]; then
   # RUNDIR=${GIT_ROOT}/rundir/$num_nics"NIC-ckp"-$GUEST_SCRIPT
-  RUNDIR=${GIT_ROOT}/rundir/250309-SVE-SingleQueue/$num_nics"NIC-"$num_queues"Qs-1core-ckp-"$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/250331-SVE-16RXD-FF-B64-tbl-parallel-SingleQueue/$num_nics"NIC-"$num_queues"Qs-1core-ckp-"$GUEST_SCRIPT
   setup_dirs
   echo "Taking Checkpoint for NICs=$num_nics Queues=$num_queues" >&2
   GEM5TYPE="fast"
@@ -151,7 +151,7 @@ else
     usage
   fi
   ((RATE = PACKET_RATE * PACKET_SIZE * 8 / 1024 / 1024 / 1024))
-  RUNDIR=${GIT_ROOT}/rundir/$(date +%Y%m%d)-dpdk-set-1core-l3-2port-4ns-sve-high-spec-long-log/$num_nics"NIC-"$num_queues"Qs-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/$(date +%Y%m%d)-dpdk-set-1core-l3-2port-4ns-sve-16RXD-FF-B64-tbl-pDMA2-high-spec-vecreg-256-2xunit-2xq-4xmshr-4LSU-wait-long-log/$num_nics"NIC-"$num_queues"Qs-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
   setup_dirs
 # /dpdk-testpmd-freq-scaling-test
   echo "Running NICs=$num_nics at $RATE GBPS" >&2
@@ -161,10 +161,10 @@ else
   LOADGENMODE=${LOADGENMODE:-"Static"}
   # DEBUG_FLAGS="--debug-flags=LoadgenDebug,EthernetDesc,EthernetDpdk" #--debug-start=33952834348" #EthernetAll,EthernetDesc,LoadgenDebug
 
-  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4511434192068 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=8467427108865 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   --warmup-dpdk 200000000000"
 
-  # CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4311454192068 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  # CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=8267447108865 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   # --warmup-dpdk 20000000"
   run_simulation > ${RUNDIR}/simout
   exit

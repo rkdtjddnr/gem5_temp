@@ -250,6 +250,7 @@ inline uint32_t E1000_RSSRK(int _n) { return (REG_RSSKEY + ((_n) * 4)); }
 
 
 #define MAX_QUEUE_SIZE 16
+#define MAX_DMA_ENGINE_SIZE 4
 #define RETA_SIZE 128
 
 // Interrupt types

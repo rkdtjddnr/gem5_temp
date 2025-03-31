@@ -54,7 +54,8 @@
 #define MBUF_POOL_NAME_PFX "mb_pool"
 
 #define MAX_PKT_BURST 512
-#define DEF_PKT_BURST 32
+// #define DEF_PKT_BURST 32
+#define DEF_PKT_BURST 64
 
 #define DEF_MBUF_CACHE 250
 
