@@ -185,6 +185,42 @@ let {{
     decoder_output += BasicConstructor64.subst(dmbIop)
     exec_output += BasicExecute.subst(dmbIop)
 
+    dmboshIop = ArmInstObjParams("dmbosh", "Dmb64Osh", "ArmStaticInst", "",
+                                 ['IsReadBarrier', 'IsWriteBarrier'])
+    header_output += BasicDeclare.subst(dmboshIop)
+    decoder_output += BasicConstructor64.subst(dmboshIop)
+    exec_output += BasicExecute.subst(dmboshIop)
+
+    dmboshstIop = ArmInstObjParams("dmboshst", "Dmb64Oshst", "ArmStaticInst", "",
+                                 ['IsWriteBarrier'])
+    header_output += BasicDeclare.subst(dmboshstIop)
+    decoder_output += BasicConstructor64.subst(dmboshstIop)
+    exec_output += BasicExecute.subst(dmboshstIop)
+
+    dmboshldIop = ArmInstObjParams("dmboshld", "Dmb64Oshld", "ArmStaticInst", "",
+                                 ['IsReadBarrier'])
+    header_output += BasicDeclare.subst(dmboshldIop)
+    decoder_output += BasicConstructor64.subst(dmboshldIop)
+    exec_output += BasicExecute.subst(dmboshldIop)
+
+    dmbishIop = ArmInstObjParams("dmbish", "Dmb64Ish", "ArmStaticInst", "",
+                                 ['IsReadBarrier', 'IsWriteBarrier'])
+    header_output += BasicDeclare.subst(dmbishIop)
+    decoder_output += BasicConstructor64.subst(dmbishIop)
+    exec_output += BasicExecute.subst(dmbishIop)
+
+    dmbishstIop = ArmInstObjParams("dmbishst", "Dmb64Ishst", "ArmStaticInst", "",
+                                 ['IsWriteBarrier'])
+    header_output += BasicDeclare.subst(dmbishstIop)
+    decoder_output += BasicConstructor64.subst(dmbishstIop)
+    exec_output += BasicExecute.subst(dmbishstIop)
+
+    dmbishldIop = ArmInstObjParams("dmbishld", "Dmb64Ishld", "ArmStaticInst", "",
+                                 ['IsReadBarrier'])
+    header_output += BasicDeclare.subst(dmbishldIop)
+    decoder_output += BasicConstructor64.subst(dmbishldIop)
+    exec_output += BasicExecute.subst(dmbishldIop)
+
     clrexIop = ArmInstObjParams("clrex", "Clrex64", "ArmStaticInst",
                                 "LLSCLock = 0;")
     header_output += BasicDeclare.subst(clrexIop)

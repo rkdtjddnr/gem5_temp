@@ -6100,6 +6100,7 @@ eth_em_rx_queue_setup(struct rte_eth_dev *dev,
 			(nb_desc < E1000_MIN_RING_DESC)) {
 		return -EINVAL;
 	}
+	printf("=========RX queue nb_desc: %d=========\n", nb_desc);
 
 	/*
 	 * EM devices don't support drop_en functionality.

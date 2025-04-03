@@ -1548,6 +1548,7 @@ init_config(void)
 			RTE_TEST_TX_DESC_MAX + MAX_PKT_BURST;
 		nb_mbuf_per_pool *= RTE_MAX_ETHPORTS;
 	}
+	printf("=================number of mbufs in mempool: %u\n", nb_mbuf_per_pool);
 
 	if (numa_support) {
 		uint8_t i, j;

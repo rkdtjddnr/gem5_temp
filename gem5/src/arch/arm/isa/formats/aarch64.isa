@@ -281,13 +281,13 @@ namespace Aarch64
                 }
             } else if (bits(machInst, 25, 22) == 0x4) {
                 // bit 31:22=1101010100
-                bool l = bits(machInst, 21);
-                uint8_t op0 = bits(machInst, 20, 19);
-                uint8_t op1 = bits(machInst, 18, 16);
-                uint8_t crn = bits(machInst, 15, 12);
-                uint8_t crm = bits(machInst, 11, 8);
-                uint8_t op2 = bits(machInst, 7, 5);
-                IntRegIndex rt = (IntRegIndex)(uint8_t)bits(machInst, 4, 0);
+                bool l = bits(machInst, 21); // 0
+                uint8_t op0 = bits(machInst, 20, 19); // 0
+                uint8_t op1 = bits(machInst, 18, 16); // 0b011 (0x3)
+                uint8_t crn = bits(machInst, 15, 12); // 0b0011 (0x3)
+                uint8_t crm = bits(machInst, 11, 8); //  has option for dmb
+                uint8_t op2 = bits(machInst, 7, 5); // 0b101 (0x5)
+                IntRegIndex rt = (IntRegIndex)(uint8_t)bits(machInst, 4, 0); // 0x1f
                 switch (op0) {
                   case 0x0:
                     // early out for TME
@@ -403,7 +403,24 @@ namespace Aarch64
                           case 0x4:
                             return new Dsb64(machInst);
                           case 0x5:
-                            return new Dmb64(machInst);
+                            // Use crm to determine the type of DSB
+                            switch (crm) {
+                              case 0x3: //osh
+                                return new Dmb64Osh(machInst);
+                              case 0x2: //oshst
+                                return new Dmb64Oshst(machInst);
+                              case 0x1: //oshld
+                                return new Dmb64Oshld(machInst);
+                              case 0xb: //ish
+                                return new Dmb64Ish(machInst);
+                              case 0xa: //ishst
+                                return new Dmb64Ishst(machInst);
+                              case 0x9: //ishld
+                                return new Dmb64Ishld(machInst);
+                              default: // Use Dmb64
+                                return new Dmb64(machInst);
+                            }
+                            // return new Dmb64(machInst);
                           case 0x6:
                             return new Isb64(machInst);
                           default:
