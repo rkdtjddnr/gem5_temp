@@ -132,45 +132,6 @@ class IGbE : public EtherDevice
     // JM - delay for CXL access
     Tick cxlMemDelay;
 
-    // Event and function to deal with RDTR timer expiring
-    // void rdtrProcess() {
-    //     rxDescCache.writeback(0);
-    //     DPRINTF(EthernetIntr,
-    //             "Posting RXT interrupt because RDTR timer expired\n");
-    //     postInterrupt(igbreg::IT_RXT);
-    // }
-
-    // EventFunctionWrapper rdtrEvent;
-
-    // Event and function to deal with RADV timer expiring
-    // void radvProcess() {
-    //     rxDescCache.writeback(0);
-    //     DPRINTF(EthernetIntr,
-    //             "Posting RXT interrupt because RADV timer expired\n");
-    //     postInterrupt(igbreg::IT_RXT);
-    // }
-
-    // EventFunctionWrapper radvEvent;
-
-    // Event and function to deal with TADV timer expiring
-    // void tadvProcess() {
-    //     txDescCache.writeback(0);
-    //     DPRINTF(EthernetIntr,
-    //             "Posting TXDW interrupt because TADV timer expired\n");
-    //     postInterrupt(igbreg::IT_TXDW);
-    // }
-
-    // EventFunctionWrapper tadvEvent;
-
-    // Event and function to deal with TIDV timer expiring
-    // void tidvProcess() {
-    //     txDescCache.writeback(0);
-    //     DPRINTF(EthernetIntr,
-    //             "Posting TXDW interrupt because TIDV timer expired\n");
-    //     postInterrupt(igbreg::IT_TXDW);
-    // }
-    // EventFunctionWrapper tidvEvent;
-
     // Main event to tick the device
     void tick();
     EventFunctionWrapper tickEvent;
@@ -269,6 +230,66 @@ class IGbE : public EtherDevice
 
     };
 
+    class DescDMAEngine
+    {
+      private:
+        // Parent DescCacheGlobal
+        void *parent;
+        // Desc DMA engine idx
+        int descDMAEngineIdx;
+        // name
+        std::string _name;
+        // Pointer to the device we cache for
+        IGbE *igbe;
+        // Start of the address
+        Addr descBase;
+        // Length of the DMA
+        Addr descLen;
+        // rd or wr
+        bool isRead;
+        // number of descriptors currently being processed
+        int numDescDMAing;
+
+        void *fetchBuf;
+        void *wbBuf;
+        
+        bool isRx;
+
+        bool isDescFetchEngine;
+        bool isDescWbEngine;
+        
+      public:
+        DescDMAEngine(void *p, const std::string n, int idx, IGbE *i, bool _isRx,
+                      bool _isDescFetchEngine, bool _isDescWbEngine);
+        ~DescDMAEngine();
+        bool isDescFetch() { return isDescFetchEngine; }
+        bool isDescWb() { return isDescWbEngine; }
+        bool isWorking() { return numDescDMAing > 0; }
+        Addr getDescBase() { return descBase; }
+        Addr getDescLen() { return descLen; }
+        int getDescDMAEngineIdx() { return descDMAEngineIdx; }
+
+        void writebackRegister(Addr _descBase, Addr _descLen, int numDesc, void *_wbBuf);
+        void writebackRegister1();
+        EventFunctionWrapper wbDelayEvent;
+        void writebackComplete();
+        EventFunctionWrapper wbDMAEvent;
+
+        void fetchRegister(Addr _descBase, Addr _descLen, int numDesc, void *_wbBuf);
+        void fetchRegister1();
+        EventFunctionWrapper fetchDelayEvent;
+        void fetchComplete();
+        EventFunctionWrapper fetchDMAEvent;
+
+        void parentsPrinter(std::string printStr);
+
+        bool hasOutstandingEvents() {
+            return wbDMAEvent.scheduled() || fetchDMAEvent.scheduled();
+        }
+        
+
+    };
+
     template<class T>
     class DescCacheGlobal : public Serializable
     { // Global descriptor cache - has DescCache objects inside to do DMA in a parallel way
@@ -282,6 +303,7 @@ class IGbE : public EtherDevice
         virtual void actionAfterWb() {}
         virtual void fetchAfterWb() = 0;
         virtual std::string wbBufToString(int idx) = 0;
+        virtual std::string wbBufArrayToString(int engineIdx, int idx) = 0;
         virtual std::string fetchBufToString(T* desc) = 0;
 
         typedef std::deque<T *> CacheType;
@@ -328,7 +350,33 @@ class IGbE : public EtherDevice
 
         // JM
         bool isRx;
-        int numDMAEngines = 0;
+        int numDMAEngines = 0; // Number of mbuf DMA engines
+        int numDescDMAEngines = 0; // Number of desc DMA engines
+        // for desc dma engines
+        DescDMAEngine *descFetchDMAEngines[MAX_DMA_ENGINE_SIZE];
+        DescDMAEngine *descWbDMAEngines[MAX_DMA_ENGINE_SIZE];
+        bool descFetchDMAEngineWorking[MAX_DMA_ENGINE_SIZE]; // true if the desc DMA engine is working, false if it is idle
+        bool descWbDMAEngineWorking[MAX_DMA_ENGINE_SIZE]; // true if the desc DMA engine is working, false if it is idle
+        bool descFetchDMAEngineDone[MAX_DMA_ENGINE_SIZE]; // true if the desc DMA engine has completed the fetch, false if it is still working
+        bool descWbDMAEngineDone[MAX_DMA_ENGINE_SIZE]; // true if the desc DMA engine has completed the writeback, false if it is still working
+        // for fetch dma tracking
+        std::deque<int> fetchDMAJobQueue; // check this queue when fetchCompleteGlobal is called. // use this queue to update in-order completion
+        int curFetchDMAPnt; //it is the pointer of the ring buffer, considering in-flight fetch requests
+        int curFetchingNum; // the number of descriptors that are currently being fetched
+        int descFetchBaseIdx[MAX_DMA_ENGINE_SIZE]; // the base index of the descriptor ring for each desc DMA engine
+        int descFetchNum[MAX_DMA_ENGINE_SIZE]; // the number of descriptors for each desc DMA engine
+        // array of fetch buffers for each desc DMA engine
+        typedef T * FetchBufPtr;
+        FetchBufPtr fetchBufArray[MAX_DMA_ENGINE_SIZE];
+
+        std::deque<int> wbDMAJobQueue; // check this queue when wbCompleteGlobal is called. // use this queue to update in-order completion
+        int curWbDMAPnt; //it is the pointer of the ring buffer, considering in-flight writeback requests
+        int curWbingNum; // the number of descriptors that are currently being written back
+        int descWbBaseIdx[MAX_DMA_ENGINE_SIZE]; // the base index of the descriptor ring for each desc DMA engine
+        int descWbNum[MAX_DMA_ENGINE_SIZE]; // the number of descriptors for each desc DMA engine
+        // array of writeback buffers for each desc DMA engine
+        typedef T * WbBufPtr;
+        WbBufPtr wbBufArray[MAX_DMA_ENGINE_SIZE];
 
         /** Shortcut for DMA address translation */
         Addr pciToDma(Addr a) { return igbe->pciToDma(a); }
@@ -338,7 +386,7 @@ class IGbE : public EtherDevice
         std::string annSmFetch, annSmWb, annUnusedDescQ, annUsedCacheQ,
             annUsedDescQ, annUnusedCacheQ, annDescQ;
 
-        DescCacheGlobal(IGbE *i, const std::string n, int s, bool _isRx, int _numDMAEngines);
+        DescCacheGlobal(IGbE *i, const std::string n, int s, bool _isRx, int _numDMAEngines, int _numDescDMAEngines);
         virtual ~DescCacheGlobal();
 
         std::string name() { return _name; }
@@ -349,26 +397,71 @@ class IGbE : public EtherDevice
          */
         void areaChanged();
 
-        void writeback(Addr aMask);
-        void writeback1();
-        EventFunctionWrapper wbDelayEvent;
+        bool hasFreeWbDMAEngine();
+        int getFreeWbDMAEngine();
+        bool hasFreeFetchDMAEngine();
+        int getFreeFetchDMAEngine();
 
-        /** Fetch a chunk of descriptors into the descriptor cache.
-         * Calls fetchComplete when the memory system returns the data
-         */
-        void fetchDescriptors();
-        void fetchDescriptors1();
-        EventFunctionWrapper fetchDelayEvent;
+        void allocFetchDMAEngineWorking(int idx) {
+            assert(idx < numDescDMAEngines);
+            assert(!descFetchDMAEngineWorking[idx]);
+            descFetchDMAEngineWorking[idx] = true;
+        }
+        void allocWbDMAEngineWorking(int idx) {
+            assert(idx < numDescDMAEngines);
+            assert(!descWbDMAEngineWorking[idx]);
+            descWbDMAEngineWorking[idx] = true;
+        }
+        void freeFetchDMAEngineWorking(int idx) {
+            assert(idx < numDescDMAEngines);
+            assert(descFetchDMAEngineWorking[idx]);
+            descFetchDMAEngineWorking[idx] = false;
+        }
+        void freeWbDMAEngineWorking(int idx) {
+            assert(idx < numDescDMAEngines);
+            assert(descWbDMAEngineWorking[idx]);
+            descWbDMAEngineWorking[idx] = false;
+        }
+        void setFetchDMAEngineDone(int idx) {
+            assert(idx < numDescDMAEngines);
+            assert(descFetchDMAEngineWorking[idx]);
+            assert(!descFetchDMAEngineDone[idx]);
+            descFetchDMAEngineDone[idx] = true;
+        }
+        void setWbDMAEngineDone(int idx) {
+            assert(idx < numDescDMAEngines);
+            assert(descWbDMAEngineWorking[idx]);
+            assert(!descWbDMAEngineDone[idx]);
+            descWbDMAEngineDone[idx] = true;
+        }
+        void clearFetchDMAEngineDone(int idx) {
+            assert(idx < numDescDMAEngines);
+            descFetchDMAEngineDone[idx] = false;
+        }
+        void clearWbDMAEngineDone(int idx) {
+            assert(idx < numDescDMAEngines);
+            descWbDMAEngineDone[idx] = false;
+        }
+        bool isFetchDMAEngineDone(int idx) {
+            assert(idx < numDescDMAEngines);
+            assert(descFetchDMAEngineWorking[idx]);
+            return descFetchDMAEngineDone[idx];
+        }
+        bool isWbDMAEngineDone(int idx) {
+            assert(idx < numDescDMAEngines);
+            assert(descWbDMAEngineWorking[idx]);
+            return descWbDMAEngineDone[idx];
+        }
 
-        /** Called by event when dma to read descriptors is completed
-         */
-        void fetchComplete();
-        EventFunctionWrapper fetchEvent;
+        void printer(std::string str) {
+          DPRINTF(EthernetDesc, "%s\n", str);
+        }
 
-        /** Called by event when dma to writeback descriptors is completed
-         */
-        void wbComplete();
-        EventFunctionWrapper wbEvent;
+        void writebackGlobal(Addr aMask);
+        void fetchDescriptorsGlobal();
+        // This is called by the DMA engine when it has completed a descriptor
+        void wbCompleteGlobal(int dmaEngineIdx);
+        void fetchCompleteGlobal(int dmaEngineIdx);
 
         /* Return the number of !NULL desc in processingCache */
         // This should be counted as unused descriptors
@@ -414,7 +507,7 @@ class IGbE : public EtherDevice
         void unserialize(CheckpointIn &cp) override;
 
         virtual bool hasOutstandingEvents() {
-            return wbEvent.scheduled() || fetchEvent.scheduled();
+            return false;
         }
 
     };
@@ -508,12 +601,20 @@ class IGbE : public EtherDevice
         void enableSm() override;
         void fetchAfterWb() override {
             if (!igbe->rxTick && igbe->drainState() == DrainState::Running)
-                fetchDescriptors();
+                fetchDescriptorsGlobal();
         }
         std::string wbBufToString(int idx) override {
             // return the string of the wbBuf[idx] with igbreg::RxDesc format
             igbreg::RxDesc *desc;
             desc = wbBuf + idx;
+            std::string descStr = "RxDescWb_pktlen: ";
+            descStr += csprintf("%u", desc->adv_wb.pkt_len);
+            return descStr;
+        }
+        std::string wbBufArrayToString(int engineIdx, int idx) override {
+            // return the string of the wbBufArray[engineIdx][idx] with igbreg::RxDesc format
+            igbreg::RxDesc *desc;
+            desc = wbBufArray[engineIdx] + idx;
             std::string descStr = "RxDescWb_pktlen: ";
             descStr += csprintf("%u", desc->adv_wb.pkt_len);
             return descStr;
@@ -529,7 +630,7 @@ class IGbE : public EtherDevice
         unsigned processingPktOffsetArray[MAX_DMA_ENGINE_SIZE]; // Number of bytes copied from current RX packet for each packet
         bool processingPktDoneArray[MAX_DMA_ENGINE_SIZE]; // Flag to indicate if the packet is done for each DMA engine
       public:
-        RxDescCacheGlobal(IGbE *i, std::string n, int s, int qid, int _numDMAEngines);
+        RxDescCacheGlobal(IGbE *i, std::string n, int s, int qid, int _numDMAEngines, int _numDescDMAEngines);
 
         /** Write the given packet into the buffer(s) pointed to by the
          * descriptor and update the book keeping. Should only be called when
@@ -579,7 +680,7 @@ class IGbE : public EtherDevice
 
         // Event and function to deal with RDTR timer expiring
         void _rdtrProcess() {
-            writeback(0);
+            writebackGlobal(0);
             DPRINTF(EthernetIntr,
                     "At RX[%d] Posting RXT interrupt because RDTR timer expired\n", queueID);
             igbe->postInterrupt(igbreg::IT_RXT);
@@ -588,7 +689,7 @@ class IGbE : public EtherDevice
 
         // Event and function to deal with RADV timer expiring
         void _radvProcess() {
-            writeback(0);
+            writebackGlobal(0);
             DPRINTF(EthernetIntr,
                     "At RX[%d] Posting RXT interrupt because RADV timer expired\n", queueID);
             igbe->postInterrupt(igbreg::IT_RXT);
@@ -686,9 +787,10 @@ class IGbE : public EtherDevice
         void actionAfterWb() override;
         void fetchAfterWb() override {
             if (!igbe->txTick && igbe->drainState() == DrainState::Running)
-                fetchDescriptors();
+                fetchDescriptorsGlobal();
         }
         std::string wbBufToString(int idx) override;
+        std::string wbBufArrayToString(int engineIdx, int idx) override;
         std::string fetchBufToString(igbreg::TxDesc* desc) override;
 
         bool isTcp;
@@ -720,7 +822,7 @@ class IGbE : public EtherDevice
         int roundRobinIdx; // Round-robin index for selecting DMA engine
 
       public:
-        TxDescCacheGlobal(IGbE *i, std::string n, int s, int qid, int _numDMAEngines);
+        TxDescCacheGlobal(IGbE *i, std::string n, int s, int qid, int _numDMAEngines, int _numDescDMAEngines);
 
         /** Tell the cache to DMA a packet from main memory into its buffer and
          * return the size the of the packet to reserve space in tx fifo.
@@ -819,7 +921,7 @@ class IGbE : public EtherDevice
         EventFunctionWrapper nullEvent;
 
         void _tadvProcess() {
-            writeback(0);
+            writebackGlobal(0);
             DPRINTF(EthernetIntr,
                     "At TX[%d] Posting TXDW interrupt because TADV timer expired\n", queueID);
             igbe->postInterrupt(igbreg::IT_TXDW);
@@ -827,7 +929,7 @@ class IGbE : public EtherDevice
         EventFunctionWrapper _tadvEvent;
 
         void _tidvProcess() {
-            writeback(0);
+            writebackGlobal(0);
             DPRINTF(EthernetIntr,
                     "At TX[%d] Posting TXDW interrupt because TIDV timer expired\n", queueID);
             igbe->postInterrupt(igbreg::IT_TXDW);

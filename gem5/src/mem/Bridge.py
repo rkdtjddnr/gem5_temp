@@ -58,3 +58,5 @@ class Bridge(ClockedObject):
     delay = Param.Latency('0ns', "The latency of this bridge")
     ranges = VectorParam.AddrRange([AllMemory],
                                    "Address ranges to pass through the bridge")
+    # JM - for model PCIe 1us latency
+    model_pcie_1us = Param.Bool(False, "Model PCIe 1us latency")

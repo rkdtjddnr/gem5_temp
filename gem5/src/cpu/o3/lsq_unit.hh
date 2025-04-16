@@ -65,6 +65,8 @@
 #include "mem/packet.hh"
 #include "mem/port.hh"
 
+#define SQ_RELEASE_TEST 2 // if 0: use original, 1: use release test (pop after cache accept for all store) 2: use release test 2 (only consider for uncacheable type store)
+
 namespace gem5
 {
 
@@ -374,6 +376,12 @@ class LSQUnit
     /** Completes the store at the specified index. */
     void completeStore(typename StoreQueue::iterator store_idx);
 
+    /** Pop from StoreQueue with index */
+    void popStoreQueue(typename StoreQueue::iterator store_idx);
+
+    /** Completes the store with DynInstPtr - JM */
+    void completeStoreDynInstPtr(const DynInstPtr &inst);
+
     /** Handles completing the send of a store to memory. */
     void storePostSend();
 
@@ -430,10 +438,19 @@ class LSQUnit
     {
         using LSQSenderState::alive;
       public:
-        SQSenderState(typename StoreQueue::iterator idx_)
-            : LSQSenderState(idx_->request(), false), idx(idx_) { }
-        /** The SQ index of the instruction. */
-        typename StoreQueue::iterator idx;
+        #if SQ_RELEASE_TEST == 0 || SQ_RELEASE_TEST == 2
+          SQSenderState(typename StoreQueue::iterator idx_)
+              : LSQSenderState(idx_->request(), false), idx(idx_) { }
+          /** The SQ index of the instruction. */
+          typename StoreQueue::iterator idx;
+        #elif SQ_RELEASE_TEST == 1
+          SQSenderState(typename StoreQueue::iterator idx_)
+              : LSQSenderState(idx_->request(), false), idx(idx_) { }
+            SQSenderState(LSQRequest *request)
+              : LSQSenderState(request, false) {}
+          /** The SQ index of the instruction. */
+          typename StoreQueue::iterator idx;
+        #endif
         //virtual LSQRequest* request() { return idx->request(); }
         virtual void
         complete()

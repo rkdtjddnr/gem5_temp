@@ -316,6 +316,9 @@ class Bridge : public ClockedObject
     /** Request port of the bridge. */
     BridgeRequestPort memSidePort;
 
+    // JM
+    bool modelPCIe1us;
+
   public:
 
     Port &getPort(const std::string &if_name,
@@ -326,6 +329,11 @@ class Bridge : public ClockedObject
     typedef BridgeParams Params;
 
     Bridge(const Params &p);
+
+    bool isPCIe1us() const
+    {
+        return modelPCIe1us;
+    }
 };
 
 } // namespace gem5

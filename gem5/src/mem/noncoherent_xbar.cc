@@ -91,7 +91,7 @@ NoncoherentXBar::NoncoherentXBar(const NoncoherentXBarParams &p)
                                            csprintf("respLayer%d", i)));
     }
 
-    printf("XBar %s isIOXBar: %d, width: %d\n", name().c_str(), isIOXBar, width);
+    printf("XBar %s isIOXBar: %d, width: %d, modelPCIe1us: %d\n", name().c_str(), isIOXBar, width, modelPCIe1us);
 }
 
 NoncoherentXBar::~NoncoherentXBar()
@@ -133,32 +133,83 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     PortID mem_side_port_id = findPort(pkt->getAddrRange());
     PortID pcie_req_side_port_id = mem_side_port_id;
     // JM - to make pio and dma use the same reqLayer for PCIe model
-    if (isIOXBar && !enableDTA && mem_side_port_id == 17) {
-        // Do this only when not using DTA
-        // PCIe reqLayer only uses 18 layer
-        pcie_req_side_port_id = 18;
+    if (!modelPCIe1us) {
+        if (isIOXBar && !enableDTA && mem_side_port_id == 17) {
+            // Do this only when not using DTA
+            // PCIe reqLayer only uses 18 layer
+            pcie_req_side_port_id = 18;
+        }
     }
+
+    uint64_t rx_desc_base = 8624134784;
+    uint64_t tx_desc_base = 8624237824;
+    uint64_t rx_ring_len = 1024;
+    uint64_t tx_ring_len = 1024;
+    uint64_t desc_size = 16;
 
     // test if the layer should be considered occupied for the current
     // port
     if (!reqLayers[pcie_req_side_port_id]->tryTiming(src_port)) {
         DPRINTF(NoncoherentXBar, "recvTimingReq: src %s %s 0x%x BUSY\n",
                 src_port->name(), pkt->cmdString(), pkt->getAddr());
-        // if (cpu_side_port_id == 2 && pkt->getSize() == 64 && pkt->cmd == MemCmd::WriteReq) {
-        //     // packet is coming from NIC
-        //     printf("XBar %s isDDIO: %d, recvTimingReq BUSY At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s\n", 
-        //     name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str());
-        // }
+        #if LOG_LEVEL == 1
+        // For Ring Buffer LOG
+        if (cpu_side_port_id == 2) {
+            if (pkt->getAddr() >= rx_desc_base && pkt->getAddr() < (rx_desc_base + desc_size * rx_ring_len)) {
+                printf("[LOG], %llu, IOXBAR_REQ_BUSY, %s, 0, size: %d, NIC_DMA_RXDESC\n", curTick(), pkt->print().c_str(), pkt->getSize());
+            } else if (pkt->getAddr() >= tx_desc_base && pkt->getAddr() < (tx_desc_base + desc_size * tx_ring_len)) {
+                printf("[LOG], %llu, IOXBAR_REQ_BUSY, %s, 0, size: %d, NIC_DMA_TXDESC\n", curTick(), pkt->print().c_str(), pkt->getSize());
+            } else {
+                printf("[LOG], %llu, IOXBAR_REQ_BUSY, %s, 0, size: %d, NIC_DMA_MBUF\n", curTick(), pkt->print().c_str(), pkt->getSize());
+            }
+        }
+        if (cpu_side_port_id == 0) {
+            printf("[LOG], %llu, IOXBAR_REQ_BUSY, %s, 0, size: %d, NIC_PIO\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        }
+        #endif
         return false;
     }
 
     DPRINTF(NoncoherentXBar, "recvTimingReq: src %s %s 0x%x\n",
             src_port->name(), pkt->cmdString(), pkt->getAddr());
+    
+
+    // store size and command as they might be modified when
+    // forwarding the packet
+    unsigned int pkt_size = pkt->hasData() ? pkt->getSize() : 0;
+    unsigned int pkt_cmd = pkt->cmdToIndex();
+
+    // store the old header delay so we can restore it if needed
+    Tick old_header_delay = pkt->headerDelay;
+
+    // a request sees the frontend and forward latency
+    Tick xbar_delay = (frontendLatency + forwardLatency) * clockPeriod();
+
+    if (modelPCIe1us) {
+        if (isIOXBar && !enableDTA && mem_side_port_id == 18 ){
+            xbar_delay = 400 * clockPeriod(); // 400 cycles for PCIe - DMA
+        } 
+    }
+
+    // set the packet header and payload delay
+    calcPacketTiming(pkt, xbar_delay);
+
+    // determine how long to be crossbar layer is busy
+    Tick packetFinishTime = clockEdge(Cycles(1)) + pkt->payloadDelay;
+    if (isIOXBar && pkt->payloadDelay != 0) {
+        packetFinishTime = clockEdge(Cycles(0)) + pkt->payloadDelay; // just apply the payload delay in the layer
+    }
 
     #if LOG_LEVEL == 1
     // For Ring Buffer LOG
     if (cpu_side_port_id == 2) {
-        printf("[LOG], %llu, IOXBAR_REQ, %s, 0, size: %d, NIC_DMA\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        if (pkt->getAddr() >= rx_desc_base && pkt->getAddr() < (rx_desc_base + desc_size * rx_ring_len)) {
+            printf("[LOG], %llu, IOXBAR_REQ, %s, 0, size: %d, NIC_DMA_RXDESC\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        } else if (pkt->getAddr() >= tx_desc_base && pkt->getAddr() < (tx_desc_base + desc_size * tx_ring_len)) {
+            printf("[LOG], %llu, IOXBAR_REQ, %s, 0, size: %d, NIC_DMA_TXDESC\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        } else {
+            printf("[LOG], %llu, IOXBAR_REQ, %s, 0, size: %d, NIC_DMA\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        }
     }
     if (cpu_side_port_id == 0) {
         printf("[LOG], %llu, IOXBAR_REQ, %s, 0, size: %d, NIC_PIO\n", curTick(), pkt->print().c_str(), pkt->getSize());
@@ -173,41 +224,11 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
         printf("[LOG], %llu, IOXBAR, %s, 0, TX_WR_REQ\n", curTick(), pkt->print().c_str());
     }
     #endif
-    
-
-    // store size and command as they might be modified when
-    // forwarding the packet
-    unsigned int pkt_size = pkt->hasData() ? pkt->getSize() : 0;
-    unsigned int pkt_cmd = pkt->cmdToIndex();
-
-    // store the old header delay so we can restore it if needed
-    Tick old_header_delay = pkt->headerDelay;
-
-    // a request sees the frontend and forward latency
-    Tick xbar_delay = (frontendLatency + forwardLatency) * clockPeriod();
-
-    // set the packet header and payload delay
-    calcPacketTiming(pkt, xbar_delay);
-
-    // determine how long to be crossbar layer is busy
-    Tick packetFinishTime = clockEdge(Cycles(1)) + pkt->payloadDelay;
-    if (isIOXBar && pkt->payloadDelay != 0) {
-        packetFinishTime = clockEdge(Cycles(0)) + pkt->payloadDelay; // just apply the payload delay in the layer
-    }
-    // if (width == 16 && pkt->payloadDelay != 0) {
-    //     packetFinishTime = clockEdge(Cycles(0)) + pkt->payloadDelay; // just apply the payload delay in the layer
-    // }
 
     // before forwarding the packet (and possibly altering it),
     // remember if we are expecting a response
     const bool expect_response = pkt->needsResponse() &&
         !pkt->cacheResponding();
-    
-    // if (cpu_side_port_id == 2 && pkt->getSize() == 64 && pkt->cmd == MemCmd::WriteReq) {
-    //     // packet is coming from NIC
-    //     printf("XBar %s isDDIO: %d, recvTimingReq At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s, headerDelay: %ld, packetFinishTime: %ld\n", 
-    //     name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str(), pkt->headerDelay, packetFinishTime);
-    // }
 
     // since it is a normal request, attempt to send the packet
     bool success = memSidePorts[mem_side_port_id]->sendTimingReq(pkt);
@@ -250,6 +271,31 @@ NoncoherentXBar::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
             reqLayers[pcie_req_side_port_id]->elseHeaderOccupancy += packetFinishTime - curTick();
         }   
     }
+    
+    bool target = false;
+    if (cpu_side_port_id == 2) {
+        if ((pkt->getAddr() >= rx_desc_base && pkt->getAddr() < (rx_desc_base + desc_size * rx_ring_len)) ||
+            (pkt->getAddr() >= tx_desc_base && pkt->getAddr() < (tx_desc_base + desc_size * tx_ring_len))) {
+            reqLayers[pcie_req_side_port_id]->descOccupancy += packetFinishTime - curTick();
+        } else {
+            reqLayers[pcie_req_side_port_id]->mbufOccupancy += packetFinishTime - curTick();
+        }
+        target = true;
+    }
+    if (cpu_side_port_id == 0) {
+        reqLayers[pcie_req_side_port_id]->mmioOccupancy += packetFinishTime - curTick();
+        target = true;
+    }
+    #if LOG_LEVEL == 1
+    if (target) {
+        printf("[LOG], %llu, IOXBAR_REQ[%d]_OCCUPANCY, %f, %f, %f, %f, %f\n", curTick(), pcie_req_side_port_id, 
+        reqLayers[pcie_req_side_port_id]->failOccupancy.value(),
+        reqLayers[pcie_req_side_port_id]->occupancy.value(), 
+        reqLayers[pcie_req_side_port_id]->descOccupancy.value(),
+        reqLayers[pcie_req_side_port_id]->mbufOccupancy.value(),
+        reqLayers[pcie_req_side_port_id]->mmioOccupancy.value());
+    }
+    #endif
 
     // stats updates
     pktCount[cpu_side_port_id][mem_side_port_id]++;
@@ -274,32 +320,83 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
 
     PortID pcie_resp_side_port_id = cpu_side_port_id;
     // JM - to make pio and dma use the same respLayer for PCIe model
-    if (isIOXBar && !enableDTA && cpu_side_port_id == 0) {
-        // Do this only when not using DTA
-        // PCIe respLayer only uses layer 2
-        pcie_resp_side_port_id = 2;
+    if (!modelPCIe1us) {
+        if (isIOXBar && !enableDTA && cpu_side_port_id == 0) {
+            // Do this only when not using DTA
+            // PCIe respLayer only uses layer 2
+            pcie_resp_side_port_id = 2;
+        }
     }
+
+    uint64_t rx_desc_base = 8624134784;
+    uint64_t tx_desc_base = 8624237824;
+    uint64_t rx_ring_len = 1024;
+    uint64_t tx_ring_len = 1024;
+    uint64_t desc_size = 16;
 
     // test if the layer should be considered occupied for the current
     // port
     if (!respLayers[pcie_resp_side_port_id]->tryTiming(src_port)) {
         DPRINTF(NoncoherentXBar, "recvTimingResp: src %s %s 0x%x BUSY\n",
                 src_port->name(), pkt->cmdString(), pkt->getAddr());
-        // if (cpu_side_port_id == 2 && pkt->getSize() == 64 && pkt->cmd == MemCmd::WriteResp) {
-        //     // packet is going to NIC
-        //     printf("XBar %s isDDIO: %d, recvTimingResp BUSY At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s\n", 
-        //     name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str());
-        // }
+        #if LOG_LEVEL == 1
+        // For Ring Buffer LOG
+        if (cpu_side_port_id == 2) {
+            if (pkt->getAddr() >= rx_desc_base && pkt->getAddr() < (rx_desc_base + desc_size * rx_ring_len)) {
+                printf("[LOG], %llu, IOXBAR_RESP_BUSY, %s, 0, size: %d, NIC_DMA_RXDESC\n", curTick(), pkt->print().c_str(), pkt->getSize());
+            } else if (pkt->getAddr() >= tx_desc_base && pkt->getAddr() < (tx_desc_base + desc_size * tx_ring_len)) {
+                printf("[LOG], %llu, IOXBAR_RESP_BUSY, %s, 0, size: %d, NIC_DMA_TXDESC\n", curTick(), pkt->print().c_str(), pkt->getSize());
+            } else {
+                printf("[LOG], %llu, IOXBAR_RESP_BUSY, %s, 0, size: %d, NIC_DMA_MBUF\n", curTick(), pkt->print().c_str(), pkt->getSize());
+            }
+        }
+        if (cpu_side_port_id == 0) {
+            printf("[LOG], %llu, IOXBAR_RESP_BUSY, %s, 0, size: %d, NIC_PIO\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        }
+        #endif
         return false;
     }
 
     DPRINTF(NoncoherentXBar, "recvTimingResp: src %s %s 0x%x\n",
             src_port->name(), pkt->cmdString(), pkt->getAddr());
 
+
+    // store size and command as they might be modified when
+    // forwarding the packet
+    unsigned int pkt_size = pkt->hasData() ? pkt->getSize() : 0;
+    unsigned int pkt_cmd = pkt->cmdToIndex();
+
+    // a response sees the response latency
+    Tick xbar_delay = responseLatency * clockPeriod();
+
+    if (modelPCIe1us) {
+      if (isIOXBar && !enableDTA && cpu_side_port_id == 0) {
+            xbar_delay = 400 * clockPeriod(); // 400 cycles for PCIe
+        }
+        if (isIOXBar && !enableDTA && cpu_side_port_id == 2) {
+            xbar_delay = 400 * clockPeriod(); // 400 cycles for PCIe
+        }  
+    }
+
+    // set the packet header and payload delay
+    calcPacketTiming(pkt, xbar_delay);
+
+    // determine how long to be crossbar layer is busy
+    Tick packetFinishTime = clockEdge(Cycles(1)) + pkt->payloadDelay;
+    if (isIOXBar && pkt->payloadDelay != 0) {
+        packetFinishTime = clockEdge(Cycles(0)) + pkt->payloadDelay; // just apply the payload delay in the layer
+    }
+
     #if LOG_LEVEL == 1
     // For Ring Buffer LOG
     if (cpu_side_port_id == 2) {
-        printf("[LOG], %llu, IOXBAR_RESP, %s, 0, size: %d, NIC_DMA\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        if (pkt->getAddr() >= rx_desc_base && pkt->getAddr() < (rx_desc_base + desc_size * rx_ring_len)) {
+            printf("[LOG], %llu, IOXBAR_RESP, %s, 0, size: %d, NIC_DMA_RXDESC\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        } else if (pkt->getAddr() >= tx_desc_base && pkt->getAddr() < (tx_desc_base + desc_size * tx_ring_len)) {
+            printf("[LOG], %llu, IOXBAR_RESP, %s, 0, size: %d, NIC_DMA_TXDESC\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        } else {
+            printf("[LOG], %llu, IOXBAR_RESP, %s, 0, size: %d, NIC_DMA\n", curTick(), pkt->print().c_str(), pkt->getSize());
+        }
     }
     if (cpu_side_port_id == 0) {
         printf("[LOG], %llu, IOXBAR_RESP, %s, 0, size: %d, NIC_PIO\n", curTick(), pkt->print().c_str(), pkt->getSize());
@@ -315,36 +412,11 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
     }
     #endif    
 
-
-    // store size and command as they might be modified when
-    // forwarding the packet
-    unsigned int pkt_size = pkt->hasData() ? pkt->getSize() : 0;
-    unsigned int pkt_cmd = pkt->cmdToIndex();
-
-    // a response sees the response latency
-    Tick xbar_delay = responseLatency * clockPeriod();
-
-    // set the packet header and payload delay
-    calcPacketTiming(pkt, xbar_delay);
-
-    // determine how long to be crossbar layer is busy
-    Tick packetFinishTime = clockEdge(Cycles(1)) + pkt->payloadDelay;
-    if (isIOXBar && pkt->payloadDelay != 0) {
-        packetFinishTime = clockEdge(Cycles(0)) + pkt->payloadDelay; // just apply the payload delay in the layer
-    }
-    // if (width == 16 && pkt->payloadDelay != 0) {
-    //     packetFinishTime = clockEdge(Cycles(0)) + pkt->payloadDelay; // just apply the payload delay in the layer
-    // }
-
     // send the packet through the destination CPU-side port, and pay for
     // any outstanding latency
     Tick latency = pkt->headerDelay;
     pkt->headerDelay = 0;
-    // if (cpu_side_port_id == 2 && pkt->getSize() == 64 && pkt->cmd == MemCmd::WriteResp) {
-    //     // packet is going to NIC
-    //     printf("XBar %s isDDIO: %d, recvTimingResp At clk: %ld, srcPrt: %s, addr: %lx, size: %d, cmd: %s, headerDelay: %ld, packetFinishTime: %ld\n", 
-    //     name().c_str(), pkt->isDdioPkt(), curTick(), src_port->name().c_str(), pkt->getAddr(), pkt->getSize(), pkt->cmdString().c_str(), latency, packetFinishTime);
-    // }
+
     cpuSidePorts[cpu_side_port_id]->schedTimingResp(pkt,
                                         curTick() + latency);
 
@@ -366,6 +438,31 @@ NoncoherentXBar::recvTimingResp(PacketPtr pkt, PortID mem_side_port_id)
             respLayers[pcie_resp_side_port_id]->elseHeaderOccupancy += packetFinishTime - curTick();
         }
     }
+    
+    bool target = false;
+    if (cpu_side_port_id == 2) {
+        if ((pkt->getAddr() >= rx_desc_base && pkt->getAddr() < (rx_desc_base + desc_size * rx_ring_len)) ||
+            (pkt->getAddr() >= tx_desc_base && pkt->getAddr() < (tx_desc_base + desc_size * tx_ring_len))) {
+            respLayers[pcie_resp_side_port_id]->descOccupancy += packetFinishTime - curTick();
+        } else {
+            respLayers[pcie_resp_side_port_id]->mbufOccupancy += packetFinishTime - curTick();
+        }
+        target = true;
+    }
+    if (cpu_side_port_id == 0) {
+        respLayers[pcie_resp_side_port_id]->mmioOccupancy += packetFinishTime - curTick();
+        target = true;
+    }
+    #if LOG_LEVEL == 1
+    if (target) {
+        printf("[LOG], %llu, IOXBAR_RESP[%d]_OCCUPANCY, %f, %f, %f, %f, %f\n", curTick(), pcie_resp_side_port_id, 
+        respLayers[pcie_resp_side_port_id]->failOccupancy.value(),
+        respLayers[pcie_resp_side_port_id]->occupancy.value(), 
+        respLayers[pcie_resp_side_port_id]->descOccupancy.value(),
+        respLayers[pcie_resp_side_port_id]->mbufOccupancy.value(),
+        respLayers[pcie_resp_side_port_id]->mmioOccupancy.value());
+    }
+    #endif
 
     // stats updates
     pktCount[cpu_side_port_id][mem_side_port_id]++;

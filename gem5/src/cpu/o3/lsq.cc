@@ -417,6 +417,9 @@ LSQ::recvTimingResp(PacketPtr pkt)
     auto senderState = dynamic_cast<LSQSenderState*>(pkt->senderState);
     panic_if(!senderState, "Got packet back with unknown sender state\n");
 
+    DPRINTF(LSQ, "received pkt for addr:%#x %s, sn:%lli\n",
+            pkt->getAddr(), pkt->cmdString(), senderState->inst->seqNum);
+
     thread[cpu->contextToThread(senderState->contextId())].recvTimingResp(pkt);
 
     if (pkt->isInvalidate()) {
@@ -1128,6 +1131,8 @@ LSQ::SingleDataRequest::recvTimingResp(PacketPtr pkt)
     flags.set(Flag::Complete);
     state->outstanding--;
     assert(pkt == _packets.front());
+    DPRINTF(LSQ, "SingleDataRequest::recvTimingResp for sn:%lli\n",
+            state->inst->seqNum);
     _port.completeDataAccess(pkt);
     return true;
 }
@@ -1153,6 +1158,8 @@ LSQ::SplitDataRequest::recvTimingResp(PacketPtr pkt)
         else
             resp->dataStatic(_data);
         resp->senderState = _senderState;
+        DPRINTF(LSQ, "SplitDataRequest::recvTimingResp for sn:%lli\n",
+            state->inst->seqNum);
         _port.completeDataAccess(resp);
         delete resp;
     }

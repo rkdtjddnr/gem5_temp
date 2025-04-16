@@ -165,7 +165,8 @@ class BaseXBar : public ClockedObject
          * before calling retryWaiting.
          */
         void recvRetry();
-
+        
+        statistics::Scalar occupancy;
         statistics::Scalar dataOccupancy; // occupancy for packets with data - that is really sent
         statistics::Scalar headerOccupancy; // occupancy for packets without data - that is really sent
         statistics::Scalar writeReqHeaderOccupancy; // occupancy for write requests without data - that is really sent
@@ -174,6 +175,9 @@ class BaseXBar : public ClockedObject
         statistics::Scalar writeRespHeaderOccupancy; // occupancy for write responses without data - that is really sent
         statistics::Scalar readRespHeaderOccupancy; // occupancy for read responses without data - that is really sent
         statistics::Scalar failOccupancy; // occupancy for packets that failed to send
+        statistics::Scalar descOccupancy; // Occupancy for packets that include descriptors
+        statistics::Scalar mbufOccupancy; // Occupancy for packets that include mbufs
+        statistics::Scalar mmioOccupancy; // Occupancy for packets that include MMIO
 
 
       protected:
@@ -241,7 +245,7 @@ class BaseXBar : public ClockedObject
          * the time the layer spends in the busy state and are thus only
          * relevant when the memory system is in timing mode.
          */
-        statistics::Scalar occupancy;
+        
         statistics::Formula utilization;
 
     };
@@ -425,6 +429,7 @@ class BaseXBar : public ClockedObject
     // JM - for ioxbar (model pcie xbar)
     bool isIOXBar;
     bool enableDTA;
+    bool modelPCIe1us;
     // JM
     /** Is this crossbar L3XBar? */
     bool isL3XBar;

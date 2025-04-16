@@ -190,12 +190,40 @@ LSQUnit::completeDataAccess(PacketPtr pkt)
             if (inst->isStore() || inst->isAtomic()) {
                 auto ss = dynamic_cast<SQSenderState*>(state);
                 ss->writebackDone();
+                DPRINTF(LSQUnit, "complete store access for sn:%lli, needWB\n",
+                        inst->seqNum);  
                 completeStore(ss->idx);
             }
         } else if (inst->isStore()) {
             // This is a regular store (i.e., not store conditionals and
             // atomics), so it can complete without writing back
-            completeStore(dynamic_cast<SQSenderState*>(state)->idx);
+            DPRINTF(LSQUnit, "complete store access for sn:%lli\n",
+                    inst->seqNum);
+            #if SQ_RELEASE_TEST == 0
+                completeStore(dynamic_cast<SQSenderState*>(state)->idx);
+            #elif SQ_RELEASE_TEST == 1
+                // This is already poped out from SQ. So just complete inst
+                completeStoreDynInstPtr(dynamic_cast<SQSenderState*>(state)->inst);
+            #elif SQ_RELEASE_TEST == 2
+                if (state->request()->isUncacheableReq()) {
+                    state->request()->setUCReceived();
+                    // This can already poped out from SQ. So just complete inst 
+                    if (state->request()->isSQPopped()) {
+                        DPRINTF(LSQUnit, "complete store UC sn:%lli is SQ popped already. So just call completeInst\n",
+                                inst->seqNum);
+                        completeStoreDynInstPtr(inst);
+                    } else {
+                        // This type should pop out from SQ at here
+                        DPRINTF(LSQUnit, "complete store UC sn:%lli is SQ not popped yet. So call completeStore\n",
+                                inst->seqNum);
+                        completeStore(dynamic_cast<SQSenderState*>(state)->idx);
+                    }
+                } else {
+                    // This type should pop out from SQ at here
+                    completeStore(dynamic_cast<SQSenderState*>(state)->idx);
+                }
+            #endif
+
         }
     }
 }
@@ -816,7 +844,13 @@ LSQUnit::writebackStores()
             /* It is important that the preincrement happens at (or before)
              * the call, as the the code of completeStore checks
              * storeWBIt. */
-            completeStore(storeWBIt++);
+            #if SQ_RELEASE_TEST == 0 || SQ_RELEASE_TEST == 2
+                completeStore(storeWBIt++);
+            #elif SQ_RELEASE_TEST == 1
+                DynInstPtr store_inst = storeWBIt->instruction();
+                popStoreQueue(storeWBIt++);
+                completeStoreDynInstPtr(store_inst);
+            #endif
             continue;
         }
 
@@ -857,7 +891,16 @@ LSQUnit::writebackStores()
 
 
         if (req->senderState() == nullptr) {
-            SQSenderState *state = new SQSenderState(storeWBIt);
+            #if SQ_RELEASE_TEST == 0 || SQ_RELEASE_TEST == 2
+                SQSenderState *state = new SQSenderState(storeWBIt);
+            #elif SQ_RELEASE_TEST == 1
+                SQSenderState *state;
+                if (inst->isStoreConditional() || inst->isAtomic()) {
+                    state = new SQSenderState(storeWBIt);
+                } else {
+                    state = new SQSenderState(req);
+                }
+            #endif
             state->isLoad = false;
             state->needWB = false;
             state->inst = inst;
@@ -869,6 +912,16 @@ LSQUnit::writebackStores()
             }
         }
         req->buildPackets();
+        
+        #if SQ_RELEASE_TEST == 2
+            if (req->request()->isUncacheable()) {
+                // This is a uncacheable request
+                // This packet can be popped out from SQ even if it's response is not received
+                DPRINTF(LSQUnit, "Store to UC request sn:%lli, so set the LSQRequest uncacheable\n",
+                        inst->seqNum);
+                req->setUncacheableReq();
+            }
+        #endif
 
         DPRINTF(LSQUnit, "D-Cache: Writing back store idx:%i PC:%s "
                 "to Addr:%#x, data:%#x [sn:%lli]\n",
@@ -897,7 +950,12 @@ LSQUnit::writebackStores()
                 WritebackEvent *wb = new WritebackEvent(inst,
                         new_pkt, this);
                 cpu->schedule(wb, curTick() + 1);
-                completeStore(storeWBIt);
+                #if SQ_RELEASE_TEST == 0 || SQ_RELEASE_TEST == 2
+                    completeStore(storeWBIt);
+                #elif SQ_RELEASE_TEST == 1
+                    popStoreQueue(storeWBIt);
+                    completeStoreDynInstPtr(inst);
+                #endif
                 if (!storeQueue.empty())
                     storeWBIt++;
                 else
@@ -915,7 +973,12 @@ LSQUnit::writebackStores()
             main_pkt->dataStatic(inst->memData);
             req->request()->localAccessor(thread, main_pkt);
             delete main_pkt;
-            completeStore(storeWBIt);
+            #if SQ_RELEASE_TEST == 0 || SQ_RELEASE_TEST == 2
+                completeStore(storeWBIt);
+            #elif SQ_RELEASE_TEST == 1
+                popStoreQueue(storeWBIt);
+                completeStoreDynInstPtr(inst);
+            #endif
             storeWBIt++;
             continue;
         }
@@ -924,7 +987,15 @@ LSQUnit::writebackStores()
 
         /* If successful, do the post send */
         if (req->isSent()) {
-            storePostSend();
+            #if SQ_RELEASE_TEST == 2
+                if (req->isUncacheableReq()) {
+                    // Set cache sent
+                    DPRINTF(LSQUnit, "Store to UC request sent sn:%lli, so set the LSQRequest cache sent\n",
+                            inst->seqNum);
+                    req->setCacheSent();
+                }
+            #endif
+            storePostSend(); // this internally call popStoreQueue
         } else {
             DPRINTF(LSQUnit, "D-Cache became blocked when writing [sn:%lli], "
                     "will retry later\n",
@@ -1080,7 +1151,25 @@ LSQUnit::storePostSend()
         if (cpu->checker) {
             cpu->checker->verify(storeWBIt->instruction());
         }
+
+        DPRINTF(LSQUnit, "Store request sent to cache, !storeConditional [sn:%lli]\n",
+                storeWBIt->instruction()->seqNum);
+    } else {
+        DPRINTF(LSQUnit, "Store request sent to cache, storeConditional [sn:%lli]\n",
+                    storeWBIt->instruction()->seqNum);
     }
+    #if SQ_RELEASE_TEST == 1
+    if (!storeWBIt->instruction()->isStoreConditional() &&
+        !storeWBIt->instruction()->isAtomic()) {
+        // If this is not a store conditional or atomic, then we can pop storeWBIt
+        DPRINTF(LSQUnit, "Store request sent to cache, !storeConditional && !atomic, pop from storeQueue [sn:%lli]\n",
+                storeWBIt->instruction()->seqNum);
+        popStoreQueue(storeWBIt);
+    } else {
+        DPRINTF(LSQUnit, "Store request sent to cache, storeConditional || atomic [sn:%lli], not pop from storeQueue\n",
+                storeWBIt->instruction()->seqNum);
+    }
+    #endif
 
     if (needsTSO) {
         storeInFlight = true;
@@ -1175,11 +1264,41 @@ LSQUnit::completeStore(typename StoreQueue::iterator store_idx)
                  !storeQueue.empty());
 
         iewStage->updateLSQNextCycle = true;
-    }
 
-    DPRINTF(LSQUnit, "Completing store [sn:%lli], idx:%i, store head "
+        DPRINTF(LSQUnit, "Completing store [sn:%lli], idx:%i, store head "
             "idx:%i\n",
             store_inst->seqNum, store_idx.idx() - 1, storeQueue.head() - 1);
+    } else {
+        DPRINTF(LSQUnit, "Completing store [sn:%lli], idx:%i, store_idx !=StoreQueue.begin() store head "
+            "idx:%i\n",
+            store_inst->seqNum, store_idx.idx() - 1, storeQueue.head() - 1);
+        #if SQ_RELEASE_TEST == 2
+            // Check the head of storeQueue's request is uncacheable & not completed.
+            // If so, we can pop that storeQueue entry. And indicate it's LSQRequest about the pop.
+            // Check this condition for while loop
+            if (storeQueue.front().request()->isUncacheableCanSQPop()) {
+                do {
+                    if (storeQueue.front().request()->isUncacheableCanSQPop()) {
+                        storeQueue.front().request()->setSQPopped();
+                        assert(storeQueue.front().completed() == false);
+                        storeQueue.front().completed() = true;
+                        --storesToWB;
+                        DPRINTF(LSQUnit, "Completing store [sn:%lli], idx:%i, store head "
+                        "idx:%i, Head is uncacheable & not completed. So can pop from SQ. popped sn:%lli\n",
+                        store_inst->seqNum, store_idx.idx() - 1, storeQueue.head() - 1, 
+                        storeQueue.front().instruction()->seqNum);
+                    }
+                    storeQueue.front().clear();
+                    storeQueue.pop_front();
+                    --stores;
+                } while ((storeQueue.front().completed() ||
+                          ((storeQueue.front().request() != nullptr) && storeQueue.front().request()->isUncacheableCanSQPop())) &&
+                         !storeQueue.empty());
+            }
+        #endif
+    }
+
+    
 
 #if TRACING_ON
     if (debug::O3PipeView) {
@@ -1213,6 +1332,74 @@ LSQUnit::completeStore(typename StoreQueue::iterator store_idx)
     if (cpu->checker &&  !store_inst->isStoreConditional()) {
         cpu->checker->verify(store_inst);
     }
+}
+
+void
+LSQUnit::popStoreQueue(typename StoreQueue::iterator store_idx)
+{
+    assert(store_idx->valid());
+    store_idx->completed() = true;
+    --storesToWB;
+
+    cpu->wakeCPU();
+    cpu->activityThisCycle();
+
+    DynInstPtr store_inst = store_idx->instruction();
+    if (store_idx == storeQueue.begin()) {
+        do {
+            storeQueue.front().clear();
+            storeQueue.pop_front();
+            --stores;
+        } while (storeQueue.front().completed() &&
+                 !storeQueue.empty());
+
+        iewStage->updateLSQNextCycle = true;
+
+        DPRINTF(LSQUnit, "Send store to memory success, so release SQ [sn:%lli], idx:%i, store head "
+            "idx:%i\n",
+            store_inst->seqNum, store_idx.idx() - 1, storeQueue.head() - 1);
+    } else {
+        DPRINTF(LSQUnit, "Send store to memory success, but cannot release SQ [sn:%lli], idx:%i, store head "
+            "idx:%i\n",
+            store_inst->seqNum, store_idx.idx() - 1, storeQueue.head() - 1);
+    }
+}
+
+void
+LSQUnit::completeStoreDynInstPtr(const DynInstPtr &inst)
+{
+    // JM - this function will be called instead of completeStore, to just deal with inst itself, not the storeQueue
+    cpu->wakeCPU();
+    cpu->activityThisCycle();
+
+    DPRINTF(LSQUnit, "Receiving store response [sn: %lli]\n", inst->seqNum);
+
+#if TRACING_ON
+    if (debug::O3PipeView) {
+        inst->storeTick = curTick() - inst->fetchTick;
+    }
+#endif
+
+    if (isStalled() &&
+        inst->seqNum == stallingStoreIsn) {
+        DPRINTF(LSQUnit, "Unstalling, stalling store [sn:%lli] "
+                "load idx:%i\n",
+                stallingStoreIsn, stallingLoadIdx);
+        stalled = false;
+        stallingStoreIsn = 0;
+        iewStage->replayMemInst(loadQueue[stallingLoadIdx].instruction());
+    }
+
+    inst->setCompleted();
+
+    if (needsTSO) {
+        storeInFlight = false;
+    }
+
+    if (cpu->checker && !inst->isStoreConditional()) {
+        cpu->checker->verify(inst);
+    }
+
 }
 
 bool

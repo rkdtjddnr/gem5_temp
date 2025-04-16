@@ -193,10 +193,8 @@ class O3_ARM_v7aWalkCache(Cache):
 class O3_ARM_v7aL2(Cache):
     tag_latency = 12
     data_latency = 12
-    response_latency = 12
-    # tag_latency = 2
-    # data_latency = 2
-    # response_latency = 2
+    # response_latency = 12
+    response_latency = 5
     mshrs = 16
     tgts_per_mshr = 8
     size = '1MB'

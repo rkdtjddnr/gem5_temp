@@ -100,6 +100,9 @@ class BaseXBar(ClockedObject):
     
     # JM. for DTA
     enable_dta = Param.Bool(False, "Enable DTA")
+    
+    # JM - for model PCIe 1us latency
+    model_pcie_1us = Param.Bool(False, "Model PCIe 1us latency")
 
 class NoncoherentXBar(BaseXBar):
     type = 'NoncoherentXBar'

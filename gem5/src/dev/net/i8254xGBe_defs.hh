@@ -250,7 +250,7 @@ inline uint32_t E1000_RSSRK(int _n) { return (REG_RSSKEY + ((_n) * 4)); }
 
 
 #define MAX_QUEUE_SIZE 16
-#define MAX_DMA_ENGINE_SIZE 4
+#define MAX_DMA_ENGINE_SIZE 512
 #define RETA_SIZE 128
 
 // Interrupt types
@@ -1228,6 +1228,10 @@ struct Regs : public Serializable
         paramIn(cp, "fcrtl", fcrtl._data);
         paramIn(cp, "fcrth", fcrth._data);
 
+        // Set rctl's rdmts to 0b1
+        rctl.rdmts(1);
+        printf("Set RCTL's rdmts as %d\n", rctl.rdmts());
+
         paramIn(cp, "mrqc", mrqc._data);
         // paramIn(cp, "rdba", rdba._data);
         //unserialize array of rdba registers
@@ -1252,8 +1256,14 @@ struct Regs : public Serializable
         paramIn(cp, "rdtr", rdtr._data);
         // paramIn(cp, "rxdctl", rxdctl._data);
         //unserialize array of rxdctl registers 
-        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++) {
             paramIn(cp, csprintf("rxdctl_array%d", i), rxdctl_array[i]._data);
+            if (rxdctl_array[i]._data != 0) {
+                printf("Set RXDCTL for queue %d to WTHRESH as 1\n", i);
+                rxdctl_array[i].wthresh(1);
+                printf("RXDCTL WTHRESH: %d, gran: %d\n", rxdctl_array[i].wthresh(), rxdctl_array[i].gran());
+            }
+        }
         paramIn(cp, "radv", radv._data);
         paramIn(cp, "rsrpd", rsrpd._data);
         // paramIn(cp, "tdba", tdba._data);
@@ -1279,8 +1289,14 @@ struct Regs : public Serializable
         paramIn(cp, "tidv", tidv._data);
         // paramIn(cp, "txdctl", txdctl._data);
         //unserialize array of txdctl registers
-        for (int i = 0; i < MAX_QUEUE_SIZE; i++)
+        for (int i = 0; i < MAX_QUEUE_SIZE; i++) {
             paramIn(cp, csprintf("txdctl_array%d", i), txdctl_array[i]._data);
+            if (txdctl_array[i]._data != 0) {
+                printf("Set TXDCTL for queue %d to WTHRESH as 1\n", i);
+                txdctl_array[i].wthresh(1);
+                printf("TXDCTL WTHRESH: %d, gran: %d\n", txdctl_array[i].wthresh(), txdctl_array[i].gran());
+            }
+        }
         paramIn(cp, "tadv", tadv._data);
         // UNSERIALIZE_SCALAR(tdwba);
         //unserialize array of tdwba registers

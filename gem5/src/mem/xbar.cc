@@ -68,6 +68,7 @@ BaseXBar::BaseXBar(const BaseXBarParams &p)
       isIOXBar(p.is_ioxbar),
       isL3XBar(false),
       enableDTA(p.enable_dta),
+      modelPCIe1us(p.model_pcie_1us),
 
       ADD_STAT(transDist, statistics::units::Count::get(),
                "Transaction distribution"),
@@ -157,7 +158,10 @@ BaseXBar::Layer<SrcType, DstType>::Layer(DstType& _port, BaseXBar& _xbar,
     ADD_STAT(readReqHeaderOccupancy, statistics::units::Tick::get(), "Layer read request header-only occupancy (ticks)"),
     ADD_STAT(elseHeaderOccupancy, statistics::units::Tick::get(), "Layer other request header-only occupancy (ticks)"),
     ADD_STAT(writeRespHeaderOccupancy, statistics::units::Tick::get(), "Layer write response header-only occupancy (ticks)"),
-    ADD_STAT(readRespHeaderOccupancy, statistics::units::Tick::get(), "Layer read response header-only occupancy (ticks)")
+    ADD_STAT(readRespHeaderOccupancy, statistics::units::Tick::get(), "Layer read response header-only occupancy (ticks)"),
+    ADD_STAT(descOccupancy, statistics::units::Tick::get(), "Layer descriptor occupancy (ticks)"),
+    ADD_STAT(mbufOccupancy, statistics::units::Tick::get(), "Layer mbuf occupancy (ticks)"),
+    ADD_STAT(mmioOccupancy, statistics::units::Tick::get(), "Layer mmio occupancy (ticks)")
 {
     occupancy
         .flags(statistics::nozero);
@@ -190,6 +194,15 @@ BaseXBar::Layer<SrcType, DstType>::Layer(DstType& _port, BaseXBar& _xbar,
         .flags(statistics::nozero);
 
     readRespHeaderOccupancy
+        .flags(statistics::nozero);
+    
+    descOccupancy
+        .flags(statistics::nozero);
+    
+    mbufOccupancy
+        .flags(statistics::nozero);
+    
+    mmioOccupancy
         .flags(statistics::nozero);
 }
 

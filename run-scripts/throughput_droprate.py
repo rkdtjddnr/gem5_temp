@@ -7,7 +7,10 @@ num_queues = 1
 script = "dpdk-testpmd"
 # num_queues = 2
 # script = "dpdk-set" # have to set
-base_folder = "/home/jmhhh/Documents/CXL_network/gem5_dpdk_multiqueue/gem5-dpdk-setup/rundir/20250218-dpdk-set-1core-l3-2port-4ns-high-spec-fast-l3"  # have to set
+base_dir="/home/jmhhh/Documents/CXL_network/gem5_dpdk_multiqueue/gem5-dpdk-setup/rundir"
+base_folder = "20250415-dpdk-set-1core-l3-2port-4ns-sve-FF-B64-pDMA128-descDMA32-cxlmem-long-log"  # have to set
+#"20250414-dpdk-set-1core-l3-2port-4ns-sve-16RXD-FF-B64-tbl-lcore-pDMA128-descDMA32-dmbfix-mmio-dma-1us-normal-spec-vecreg-256-2xunit-4LSU-predreg-sqfix-iocache-wait-long-log"
+base_folder = os.path.join(base_dir, base_folder)
 
 def parse_stats(file_path):
     with open(file_path, 'r') as file:
@@ -48,14 +51,17 @@ def get_drop_rate(folder_path):
             drop_rate = (total_drops / total_rx_packets) * 100
             return drop_rate
         else:
+            print(f"for {folder_path}, total_rx_packets is 0")
             return None
     return None
 
 def main(base_folder):
     data = {}
     # for packet_size in ["64", "128", "256", "512", "1024", "1518"]:
-    for packet_size in ["48"]:
+    # for packet_size in ["48", "64"]:
+    for packet_size in ["64"]:
         data[packet_size] = {}
+        print(f"base_folder: {base_folder}")
 
         for folder in os.listdir(base_folder):
             match = re.match(rf"1NIC-{num_queues}Qs-{packet_size}SIZE-(\d+)RATE-(\d+)Gbps-ddio-enabled-{script}.sh", folder)
@@ -67,7 +73,7 @@ def main(base_folder):
                 drop_rate = get_drop_rate(folder_path)
                 if drop_rate is not None:
                     data[packet_size][throughput] = drop_rate
-                    print(f"Packet Size: {packet_size} | Throughput: {throughput} Gbps | Drop Rate: {drop_rate:.2f}%")
+                    print(f"Packet Size: {packet_size} | PPS: {pps} | Throughput: {throughput} Gbps | Drop Rate: {drop_rate:.2f}%")
     
     # data["256"][32] = 0.0
     

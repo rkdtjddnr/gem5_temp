@@ -1330,8 +1330,9 @@ eth_em_tx_free_bufs_sve512(struct em_tx_queue *txq)
 		// TODO: have to check TX_OFFLOAD_MBUF_FAST_FREE is enabled or not!
 		struct rte_mempool *mp = txep[0].mbuf->pool;
 		void **cache_objs;
-		struct rte_mempool_cache *cache = rte_mempool_default_cache(mp,
-				rte_lcore_id());
+		unsigned lcore = txq->queue_id + 1; // Test
+		struct rte_mempool_cache *cache = rte_mempool_default_cache(mp, lcore);
+				// rte_lcore_id());
 		
 		if (!cache || cache->len == 0)
 			goto normal;
@@ -3554,8 +3555,9 @@ eth_em_rxq_rearm(struct em_rx_queue *rxq)
 #define REARM_LOOP_STEP_NUM	4
 	struct em_rx_entry *rxep = &rxq->sw_ring[rxq->rxrearm_start];
 	volatile union e1000_adv_rx_desc *rxdp = rxq->rx_ring + rxq->rxrearm_start;
-	struct rte_mempool_cache *cache = rte_mempool_default_cache(rxq->mb_pool,
-			rte_lcore_id());
+	unsigned lcore = rxq->queue_id + 1; // Test
+	struct rte_mempool_cache *cache = rte_mempool_default_cache(rxq->mb_pool, lcore);
+			// rte_lcore_id());
 	int i;
 	uint16_t rx_id;
 
@@ -4772,6 +4774,12 @@ eth_em_rxq_rearm_m2func_dta_double_comp_sve512(struct em_rx_queue *rxq,
 		}
 	}
 
+	// TODO - send Job here
+	// job should include
+	// 1. the cache->objs[cache->len - 64] address
+	// 2. number of packets
+	// 3. sw_ring address - this really needed? - when offloading?
+	// 4. 
 	/* fill up the rxd in vector, process 8 mbufs in one loop */
 	for (i = 0; i < EM_RXQ_REARM_THRESH; i += 8) {
 		svuint64_t mbuf_ptrs = svld1_u64(PG64_ALLBIT, (uint64_t *)(&cache->objs[cache->len - 8]));

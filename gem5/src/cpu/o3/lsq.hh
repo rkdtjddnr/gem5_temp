@@ -60,6 +60,8 @@
 #include "mem/port.hh"
 #include "sim/sim_object.hh"
 
+#define SQ_RELEASE_TEST 2 // if 0: use original, 1: use release test
+
 namespace gem5
 {
 
@@ -259,7 +261,9 @@ class LSQ
             WritebackScheduled  = 0x00001000,
             WritebackDone       = 0x00002000,
             /** True if this is an atomic request */
-            IsAtomic            = 0x00004000
+            IsAtomic            = 0x00004000,
+            /** True if this is an uncacheable write */
+            IsUncheableWrite    = 0x00008000
         };
         FlagsType flags;
 
@@ -280,6 +284,11 @@ class LSQ
 
         /** LQ/SQ entry idx. */
         uint32_t _entryIdx;
+
+        /** SQ related variables */
+        bool _isSQPopped = false;
+        bool _isCacheSent = false;
+        bool _isUCReceived = false;
 
         void markDelayed() override { flags.set(Flag::Delayed); }
         bool isDelayed() { return flags.isSet(Flag::Delayed); }
@@ -352,9 +361,28 @@ class LSQ
             if (!isAnyOutstandingRequest()) {
                 delete this;
             } else {
-                if (_senderState) {
-                    _senderState->deleteRequest();
-                }
+                #if SQ_RELEASE_TEST == 0
+                    if (_senderState) {
+                        _senderState->deleteRequest();
+                    }
+                #elif SQ_RELEASE_TEST == 1
+                    if (reason == Flag::Discarded) {
+                        if (_senderState) {
+                            _senderState->deleteRequest();
+                        }
+                    }
+                #elif SQ_RELEASE_TEST == 2
+                    if (_senderState) {
+                        if (isUncacheableReq()) {
+                            if (isUCReceived() || 
+                                (reason == Flag::Discarded)) {
+                            _senderState->deleteRequest();
+                            }
+                        } else {
+                            _senderState->deleteRequest();
+                        }
+                    }                
+                #endif
                 flags.set(reason);
             }
         }
@@ -601,9 +629,15 @@ class LSQ
         {
             flags.set(Flag::WritebackDone);
             /* If the lsq resources are already free */
-            if (isReleased()) {
-                delete this;
-            }
+            #if SQ_RELEASE_TEST == 0  || SQ_RELEASE_TEST == 2
+                if (isReleased()) {
+                    delete this;
+                }
+            #elif SQ_RELEASE_TEST == 1
+                if (_numOutstandingPackets == 0 && isReleased()) {
+                    delete this;
+                }
+            #endif
         }
 
         void
@@ -621,6 +655,58 @@ class LSQ
         complete()
         {
             flags.set(Flag::Complete);
+        }
+
+        /** Uncacheable write or not */
+        bool
+        isUncacheableReq() const
+        {
+            return flags.isSet(Flag::IsUncheableWrite);
+        }
+        void
+        setUncacheableReq()
+        {
+            flags.set(Flag::IsUncheableWrite);
+        }
+
+        bool
+        isSQPopped() const
+        {
+            return _isSQPopped;
+        }
+        void
+        setSQPopped()
+        {
+            _isSQPopped = true;
+        }
+
+        bool
+        isCacheSent() const
+        {
+            return _isCacheSent;
+        }
+        void
+        setCacheSent()
+        {
+            _isCacheSent = true;
+        }
+
+        bool
+        isUCReceived() const
+        {
+            return _isUCReceived;
+        }
+        void
+        setUCReceived()
+        {
+            _isUCReceived = true;
+        }
+
+        bool
+        isUncacheableCanSQPop() const
+        {
+            // return true if uncacheable && cache sent && !SQ popped yet
+            return isUncacheableReq() && isCacheSent() && !isSQPopped();
         }
 
         virtual std::string name() const { return "LSQRequest"; }

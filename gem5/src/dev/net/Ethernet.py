@@ -163,9 +163,9 @@ class IGbE(EtherDevice):
     rx_fifo_size = Param.MemorySize('4096KiB', "Size of the rx FIFO")
     tx_fifo_size = Param.MemorySize('4096KiB', "Size of the tx FIFO")
     flit_size = Param.Int(64, "Size of the PCIe flit")
-    rx_desc_cache_size = Param.Int(64,
+    rx_desc_cache_size = Param.Int(1024,
         "Number of enteries in the rx descriptor cache")
-    tx_desc_cache_size = Param.Int(64,
+    tx_desc_cache_size = Param.Int(1024,
         "Number of enteries in the rx descriptor cache")
     VendorID = 0x8086
     SubsystemID = 0x1008
@@ -205,6 +205,7 @@ class IGbE(EtherDevice):
     
     # JM - for multiple DMA engines at RingBuffer
     num_dma_engines = Param.UInt32(1, "Number of DMA engines")
+    num_desc_dma_engines = Param.UInt32(1, "Number of desc DMA engines")
 
 class IGbE_e1000(IGbE):
     # Older Intel 8254x based gigabit ethernet adapter
@@ -229,6 +230,7 @@ class IGbE_e1000(IGbE):
     cxl_req_buf_size = 1024
     
     num_dma_engines = 1
+    num_desc_dma_engines = 1
 
 class IGbE_igb(IGbE):
     # Newer Intel 8257x based gigabit ethernet adapter

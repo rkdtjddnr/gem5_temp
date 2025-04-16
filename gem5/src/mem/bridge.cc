@@ -82,8 +82,10 @@ Bridge::Bridge(const Params &p)
       cpuSidePort(p.name + ".cpu_side_port", *this, memSidePort,
                 ticksToCycles(p.delay), p.resp_size, p.ranges),
       memSidePort(p.name + ".mem_side_port", *this, cpuSidePort,
-                 ticksToCycles(p.delay), p.req_size)
+                 ticksToCycles(p.delay), p.req_size),
+      modelPCIe1us(p.model_pcie_1us)
 {
+    printf("Bridge modelPCIe1us: %d\n", modelPCIe1us);
 }
 
 Port &
@@ -136,10 +138,10 @@ Bridge::BridgeRequestPort::recvTimingResp(PacketPtr pkt)
     // the two sides of the bridge are synchronous)
     Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
     pkt->headerDelay = pkt->payloadDelay = 0;
+    Tick bridge_delay = bridge.clockEdge(delay);
 
-    // printf("Bridge::BridgeRequestPort::recvTimingResp isDDIO: %d, At clk: %d, addr: %lx, size: %d, receive_delay: %d\n", pkt->isDdioPkt(), curTick(), pkt->getAddr(), pkt->getSize(), receive_delay);
-
-    cpuSidePort.schedTimingResp(pkt, bridge.clockEdge(delay) +
+    // printf("[LOG], %llu, Bridge_RESP, %s, bridge_delay: %llu, receive_delay: %llu, sn:%lli\n", curTick(), pkt->print().c_str(), bridge_delay, receive_delay, (pkt->req->hasInstSeqNum())?pkt->req->getReqInstSeqNum():0);
+    cpuSidePort.schedTimingResp(pkt, bridge_delay +
                               receive_delay);
 
     return true;
@@ -194,10 +196,19 @@ Bridge::BridgeResponsePort::recvTimingReq(PacketPtr pkt)
             // synchronous)
             Tick receive_delay = pkt->headerDelay + pkt->payloadDelay;
             pkt->headerDelay = pkt->payloadDelay = 0;
+            Tick bridge_delay = bridge.clockEdge(delay);
+            if (bridge.isPCIe1us()) {
+                Cycles pcie_delay = Cycles(400); //400ns
+                Addr nic_tdt_addr = 0x40003818;
+                Addr nic_rdt_addr = 0x40002818;
+                if (pkt->getAddr() == nic_rdt_addr ||
+                    pkt->getAddr() == nic_tdt_addr) {
+                    bridge_delay = bridge.clockEdge(pcie_delay);
+                }
+            }
 
-            // printf("Bridge::BridgeResponsePort::recvTimingReq At clk: %ld, addr: %lx, size: %d, receive_delay: %ld\n", curTick(), pkt->getAddr(), pkt->getSize(), receive_delay);
-
-            memSidePort.schedTimingReq(pkt, bridge.clockEdge(delay) +
+            // printf("[LOG], %llu, Bridge_REQ, %s, bridge_delay: %llu, receive_delay: %llu, sn:%lli\n", curTick(), pkt->print().c_str(), bridge_delay, receive_delay, (pkt->req->hasInstSeqNum())?pkt->req->getReqInstSeqNum():0);
+            memSidePort.schedTimingReq(pkt, bridge_delay +
                                       receive_delay);
         }
     }

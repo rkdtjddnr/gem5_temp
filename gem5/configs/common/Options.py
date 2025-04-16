@@ -108,6 +108,7 @@ def addNoISAOptions(parser):
     parser.add_argument("--num-queues", type=int, default=1)
     # JM - number of DMA engines inside of Ring Buffer NIC
     parser.add_argument("--num-dma-engines", type=int, default=1)
+    parser.add_argument("--num-desc-dma-engines", type=int, default=1)
     # JM - communication type
     parser.add_argument("--is-m2func", action="store_true", default=False)
     # JM - to notify this is for dpdk setup step or not. Because during dpdk setup step, we need to use RDT, TDT as normal DPDK

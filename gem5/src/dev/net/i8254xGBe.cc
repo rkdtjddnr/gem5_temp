@@ -108,8 +108,8 @@ IGbE::IGbE(const Params &p)
     // Initialize rxDescCacheArray and txDescCacheArray
     for (int i = 0; i < numQueues; i++) {
         if (commType == CommunicationType::RING) {
-            rxDescCacheArray[i] = new RxDescCacheGlobal(this, name()+".RxDescArray"+std::to_string(i), p.rx_desc_cache_size, i, p.num_dma_engines); // TODO
-            txDescCacheArray[i] = new TxDescCacheGlobal(this, name()+".TxDescArray"+std::to_string(i), p.tx_desc_cache_size, i, p.num_dma_engines);
+            rxDescCacheArray[i] = new RxDescCacheGlobal(this, name()+".RxDescArray"+std::to_string(i), p.rx_desc_cache_size, i, p.num_dma_engines, p.num_desc_dma_engines); // TODO
+            txDescCacheArray[i] = new TxDescCacheGlobal(this, name()+".TxDescArray"+std::to_string(i), p.tx_desc_cache_size, i, p.num_dma_engines, p.num_desc_dma_engines);
         } else if (commType == CommunicationType::M2FUNC) {
             // JM. For now, just set m2funcFifo size to 2. Maybe 1 is enough.
             rxM2funcContextArray[i] = new RxM2funcContext(this, name()+".RxM2funcContextArray"+std::to_string(i), 2, i, enableDTA, p.cxl_req_buf_size);
@@ -401,10 +401,9 @@ IGbE::read(PacketPtr pkt)
         if (regs.rdtr.fpd()) {
             if (commType == CommunicationType::RING) {
                 for (int i = 0; i < numQueues; i++) {
-                    rxDescCacheArray[i]->writeback(0);
+                    rxDescCacheArray[i]->writebackGlobal(0);
                 }
             }
-            // rxDescCache.writeback(0);
             DPRINTF(EthernetIntr,
                     "Posting interrupt because of RDTR.FPD write\n");
             postInterrupt(IT_RXT);
@@ -868,96 +867,18 @@ IGbE::write(PacketPtr pkt)
       case REG_FCRTH:
         regs.fcrth = val;
         break;
-    //   case REG_RDBAL:
-    //     regs.rdba.rdbal( val & ~mask(4));
-    //     rxDescCache.areaChanged();
-    //     break;
-    //   case REG_RDBAH:
-    //     regs.rdba.rdbah(val);
-    //     rxDescCache.areaChanged();
-    //     break;
-    //   case REG_RDLEN:
-    //     regs.rdlen = val & ~mask(7);
-    //     rxDescCache.areaChanged();
-    //     break;
-    //   case REG_SRRCTL:
-    //     regs.srrctl = val;
-    //     break;
-    //   case REG_RDH:
-    //     regs.rdh = val;
-    //     rxDescCache.areaChanged();
-    //     break;
-    //   case REG_RDT:
-    //     regs.rdt = val;
-    //     DPRINTF(EthernetSM, "RXS: RDT Updated.\n");
-    //     if (drainState() == DrainState::Running) {
-    //         DPRINTF(EthernetSM, "RXS: RDT Fetching Descriptors!\n");
-    //         rxDescCache.fetchDescriptors();
-    //     } else {
-    //         DPRINTF(EthernetSM, "RXS: RDT NOT Fetching Desc b/c draining!\n");
-    //     }
-    //     break;
       case REG_RDTR:
         regs.rdtr = val;
         break;
       case REG_RADV:
         regs.radv = val;
         break;
-    //   case REG_RXDCTL:
-    //     regs.rxdctl = val;
-    //     break;
-    //   case REG_TDBAL:
-    //     regs.tdba.tdbal( val & ~mask(4));
-    //     txDescCache.areaChanged();
-    //     break;
-    //   case REG_TDBAH:
-    //     regs.tdba.tdbah(val);
-    //     txDescCache.areaChanged();
-    //     break;
-    //   case REG_TDLEN:
-    //     regs.tdlen = val & ~mask(7);
-    //     txDescCache.areaChanged();
-    //     break;
-    //   case REG_TDH:
-    //     regs.tdh = val;
-    //     txDescCache.areaChanged();
-    //     break;
-    //   case REG_TXDCA_CTL:
-    //     regs.txdca_ctl = val;
-    //     if (regs.txdca_ctl.enabled())
-    //         panic("No support for DCA\n");
-    //     break;
-    //   case REG_TDT:
-    //     regs.tdt = val;
-    //     DPRINTF(EthernetSM, "TXS: TX Tail pointer updated\n");
-    //     if (drainState() == DrainState::Running) {
-    //         DPRINTF(EthernetSM, "TXS: TDT Fetching Descriptors!\n");
-    //         txDescCache.fetchDescriptors();
-    //     } else {
-    //         DPRINTF(EthernetSM, "TXS: TDT NOT Fetching Desc b/c draining!\n");
-    //     }
-    //     break;
       case REG_TIDV:
         regs.tidv = val;
         break;
-    //   case REG_TXDCTL:
-    //     regs.txdctl = val;
-    //     break;
       case REG_TADV:
         regs.tadv = val;
         break;
-    //   case REG_TDWBAL:
-    //     regs.tdwba &= ~mask(32);
-    //     regs.tdwba |= val;
-    //     txDescCache.completionWriteback(regs.tdwba & ~mask(1),
-    //                                     regs.tdwba & mask(1));
-    //     break;
-    //   case REG_TDWBAH:
-    //     regs.tdwba &= mask(32);
-    //     regs.tdwba |= (uint64_t)val << 32;
-    //     txDescCache.completionWriteback(regs.tdwba & ~mask(1),
-    //                                     regs.tdwba & mask(1));
-    //     break;
       case REG_RXCSUM:
         regs.rxcsum = val;
         break;
@@ -1026,13 +947,15 @@ IGbE::write(PacketPtr pkt)
             regs.rdt_array[queueid] = val;
             DPRINTF(EthernetDpdk, "RXS: RDT Updated.\n");
             DPRINTF(EthernetDpdk, "Write RDT[%d]: %d\n", queueid, regs.rdt_array[queueid]());
+            Tick headerDelay = pkt->headerDelay;
+            Tick payloadDelay = pkt->payloadDelay;
             printf("[LOG], %lu, Write RDT[%d]: %d\n", curTick(), queueid, val);
             etherDeviceStats.rxTailWriteBytes += pkt->getSize();
             if (commType == CommunicationType::RING) {
                 if (drainState() == DrainState::Running) {
                     DPRINTF(EthernetDpdk, "RXS: RDT Fetching Descriptors! in queue %d\n",
                             queueid);
-                    rxDescCacheArray[queueid]->fetchDescriptors();
+                    rxDescCacheArray[queueid]->fetchDescriptorsGlobal();
                 } else {
                     printf("RXS: RDT NOT Fetching Desc b/c draining! in queue %d\n", queueid);
                 }
@@ -1091,14 +1014,17 @@ IGbE::write(PacketPtr pkt)
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.tdt_array[queueid] = val;
+            Tick headerDelay = pkt->headerDelay;
+            Tick payloadDelay = pkt->payloadDelay;
             DPRINTF(EthernetDpdk, "TXS: TX Tail pointer updated in queue %d\n", queueid);
-            DPRINTF(EthernetDpdk, "Write TDT[%d]: %d\n", queueid, regs.tdt_array[queueid]());
+            DPRINTF(EthernetDpdk, "Write TDT[%d]: %d, headerDelay: %d, payloadDelay: %d\n", queueid, regs.tdt_array[queueid](),
+                   headerDelay, payloadDelay);
             printf("[LOG], %lu, Write TDT[%d]: %d\n", curTick(), queueid, val);
             etherDeviceStats.txTailWriteBytes += pkt->getSize();
             if (commType == CommunicationType::RING) {
                 if (drainState() == DrainState::Running) {
                     DPRINTF(EthernetDpdk, "TXS: TDT Fetching Descriptors! in queue %d\n", queueid);  
-                    txDescCacheArray[queueid]->fetchDescriptors();
+                    txDescCacheArray[queueid]->fetchDescriptorsGlobal();
                 } else {
                     printf("TXS: TDT NOT Fetching Desc b/c draining! in queue %d\n", queueid);
                 }
@@ -1231,14 +1157,6 @@ IGbE::cpuPostInt()
         deschedule(interEvent);
     }
 
-    // if (rdtrEvent.scheduled()) {
-    //     regs.icr.rxt0(1);
-    //     deschedule(rdtrEvent);
-    // }
-    // if (radvEvent.scheduled()) {
-    //     regs.icr.rxt0(1);
-    //     deschedule(radvEvent);
-    // }
     //jm - this part would not be used. Because of DPDK PMD. Also, rxt0 is for RX queue 0 receiver timer interrupt. 
     //If want to interrupt for other queues, have to use extended interrupt cause (EICR)
     // So, for now, just check the rdtrEvent and radvEvent of queue 0
@@ -1252,14 +1170,7 @@ IGbE::cpuPostInt()
             deschedule(rxDescCacheArray[0]->_rdtrEvent);
         }
     }
-    // if (tadvEvent.scheduled()) {
-    //     regs.icr.txdw(1);
-    //     deschedule(tadvEvent);
-    // }
-    // if (tidvEvent.scheduled()) {
-    //     regs.icr.txdw(1);
-    //     deschedule(tidvEvent);
-    // }
+
     //txdw: TX descriptor write-back interrupt
     for (int i = 0; i < numQueues; i++) {
         if (commType == CommunicationType::RING) {
@@ -1342,23 +1253,235 @@ IGbE::DescCache<T>::~DescCache()
 {
 }
 
+///////////////////////////// IGbE::DescDMAEngine ////////////////////////////
+IGbE::DescDMAEngine::DescDMAEngine(void *p, const std::string n, int idx, IGbE *i, bool _isRx,
+                      bool _isDescFetchEngine, bool _isDescWbEngine)
+    : parent(p), descDMAEngineIdx(idx), igbe(i), _name(n),
+      isRx(_isRx), isDescFetchEngine(_isDescFetchEngine),
+      isDescWbEngine(_isDescWbEngine),
+      descBase(0), descLen(0), numDescDMAing(0), fetchBuf(nullptr), wbBuf(nullptr),
+      wbDelayEvent([this]{writebackRegister1(); }, n),
+      wbDMAEvent([this]{writebackComplete(); }, n),
+      fetchDelayEvent([this]{fetchRegister1(); }, n),
+      fetchDMAEvent([this]{fetchComplete(); }, n)
+{
+    
+}
+IGbE::DescDMAEngine::~DescDMAEngine()
+{
+
+}
+
+void
+IGbE::DescDMAEngine::parentsPrinter(std::string printStr)
+{
+    if (isRx) {
+        // use parent's printer
+        RxDescCacheGlobal *rxDescCache = static_cast<RxDescCacheGlobal*>(parent);
+        rxDescCache->printer(printStr);
+    } else {
+        // use parent's printer
+        TxDescCacheGlobal *txDescCache = static_cast<TxDescCacheGlobal*>(parent);
+        txDescCache->printer(printStr);
+    }
+}
+
+void 
+IGbE::DescDMAEngine::writebackRegister(Addr _descBase, Addr _descLen, int numDesc, void *_wbBuf)
+{
+    assert(descBase == 0);
+    assert(descLen == 0);
+    assert(numDescDMAing == 0);
+    assert(!wbDelayEvent.scheduled());
+    assert(!wbDMAEvent.scheduled());
+
+    descBase = _descBase;
+    descLen = _descLen;
+    wbBuf = _wbBuf;
+    numDescDMAing = numDesc;
+
+    std::string printStr = "DMA Engine " + _name + ": Writing back " + std::to_string(numDescDMAing) + " descriptors\n";
+    parentsPrinter(printStr);
+    
+    igbe->schedule(wbDelayEvent, curTick() + igbe->wbDelay);
+
+}
+
+void
+IGbE::DescDMAEngine::writebackRegister1()
+{
+    // If we're draining delay issuing this DMA
+    if (igbe->drainState() != DrainState::Running) {
+        igbe->schedule(wbDelayEvent, curTick() + igbe->wbDelay);
+        return;
+    }
+
+    std::string printStr = "Begining DMA of " + std::to_string(numDescDMAing) + " descriptors\n";
+    parentsPrinter(printStr);
+
+    assert(numDescDMAing);
+
+    #if LOG_LEVEL == 1
+    if (isRx) {
+        printf("[LOG], %llu, RXDescWB_DMAE[%d], Addr: %lx, Size: %ld\n",
+            curTick(), descDMAEngineIdx, descBase, descLen);
+    } else {
+        printf("[LOG], %llu, TXDescWB_DMAE[%d], Addr: %lx, Size: %ld\n",
+            curTick(), descDMAEngineIdx, descBase, descLen);
+    }
+    #endif
+
+    igbe->IdioWrite(descBase,
+                    descLen, &wbDMAEvent, (uint8_t*)wbBuf,
+                    igbe->wbCompDelay, 0, igbe->adq);
+}
+
+void
+IGbE::DescDMAEngine::writebackComplete()
+{
+    #if LOG_LEVEL == 1
+    if (isRx) {
+        printf("[LOG], %llu, WBRXDescComplete_DMAE[%d], Addr: %lx, Size: %ld\n",
+            curTick(), descDMAEngineIdx, descBase, descLen);
+    } else {
+        printf("[LOG], %llu, WBTXDescComplete_DMAE[%d], Addr: %lx, Size: %ld\n",
+            curTick(), descDMAEngineIdx, descBase, descLen);
+    }
+    #endif
+
+    // clear the DMA engine
+    descBase = 0;
+    descLen = 0;
+    numDescDMAing = 0;
+    wbBuf = nullptr;
+
+    //call wbCompleteGlobal
+    if (isRx) {
+        RxDescCacheGlobal *rxDescCache = static_cast<RxDescCacheGlobal*>(parent);
+        rxDescCache->wbCompleteGlobal(descDMAEngineIdx);
+    } else {
+        TxDescCacheGlobal *txDescCache = static_cast<TxDescCacheGlobal*>(parent);
+        txDescCache->wbCompleteGlobal(descDMAEngineIdx);
+    }
+}
+
+void
+IGbE::DescDMAEngine::fetchRegister(Addr _descBase, Addr _descLen, int numDesc, void *_wbBuf)
+{
+    assert(descBase == 0);
+    assert(descLen == 0);
+    assert(numDescDMAing == 0);
+    assert(!fetchDelayEvent.scheduled());
+    assert(!fetchDMAEvent.scheduled());
+
+    descBase = _descBase;
+    descLen = _descLen;
+    fetchBuf = _wbBuf;
+    numDescDMAing = numDesc;
+
+    std::string printStr = "DMA Engine " + _name + ": Fetching " + std::to_string(numDescDMAing) + " descriptors\n";
+    parentsPrinter(printStr);
+
+    igbe->schedule(fetchDelayEvent, curTick() + igbe->fetchDelay);
+}
+
+void
+IGbE::DescDMAEngine::fetchRegister1()
+{
+    // If we're draining delay issuing this DMA
+    if (igbe->drainState() != DrainState::Running) {
+        igbe->schedule(fetchDelayEvent, curTick() + igbe->fetchDelay);
+        return;
+    }
+
+    std::string printStr = "Fetching descriptors at " + std::to_string(descBase) + ", size: " + std::to_string(descLen) + "\n";
+    parentsPrinter(printStr);
+    
+    #if LOG_LEVEL == 1
+    if (isRx) {
+        printf("[LOG], %llu, RXDescFetch_DMAE[%d], Addr: %lx, Size: %ld\n",
+            curTick(), descDMAEngineIdx, descBase, descLen);
+    } else {
+        printf("[LOG], %llu, TXDescFetch_DMAE[%d], Addr: %lx, Size: %ld\n",
+            curTick(), descDMAEngineIdx, descBase, descLen);
+    }
+    #endif
+    assert(numDescDMAing);
+    igbe->dmaRead(descBase,
+                  descLen, &fetchDMAEvent, (uint8_t*)fetchBuf,
+                  igbe->fetchCompDelay);
+
+}
+
+void
+IGbE::DescDMAEngine::fetchComplete()
+{
+    #if LOG_LEVEL == 1 || LOG_LEVEL == 5
+    if (isRx) {
+        printf("[LOG], %lu, RXDescFetchComplete_DMAE[%d], Addr: %lx, Size: %ld\n",
+            curTick(), descDMAEngineIdx, descBase, descLen);
+    } else {
+        printf("[LOG], %lu, TXDescFetchComplete_DMAE[%d], Addr: %lx, Size: %ld\n",
+            curTick(), descDMAEngineIdx, descBase, descLen);
+    }
+    #endif
+
+    // clear the DMA engine
+    descBase = 0;
+    descLen = 0;
+    numDescDMAing = 0;
+    fetchBuf = nullptr;
+
+    //call fetchCompleteGlobal
+    if (isRx) {
+        RxDescCacheGlobal *rxDescCache = static_cast<RxDescCacheGlobal*>(parent);
+        rxDescCache->fetchCompleteGlobal(descDMAEngineIdx);
+    } else {
+        TxDescCacheGlobal *txDescCache = static_cast<TxDescCacheGlobal*>(parent);
+        txDescCache->fetchCompleteGlobal(descDMAEngineIdx);
+    }
+}
 
 template<class T>
-IGbE::DescCacheGlobal<T>::DescCacheGlobal(IGbE *i, const std::string n, int s, bool _isRx, int _numDMAEngines)
-    : igbe(i), _name(n), cachePnt(0), size(s), curFetching(0), isRx(_isRx), numDMAEngines(_numDMAEngines),
-      wbOut(0), moreToWb(false), wbAlignment(0),
-      wbDelayEvent([this]{ writeback1(); }, n),
-      fetchDelayEvent([this]{ fetchDescriptors1(); }, n),
-      fetchEvent([this]{ fetchComplete(); }, n),
-      wbEvent([this]{ wbComplete(); }, n)
+IGbE::DescCacheGlobal<T>::DescCacheGlobal(IGbE *i, const std::string n, int s, bool _isRx, int _numDMAEngines, int _numDescDMAEngines)
+    : igbe(i), _name(n), cachePnt(0), size(s), curFetching(0), isRx(_isRx), numDMAEngines(_numDMAEngines), numDescDMAEngines(_numDescDMAEngines),
+      wbOut(0), moreToWb(false), wbAlignment(0)
 {
     fetchBuf = new T[size];
     wbBuf = new T[size];
     // Initialize processingCache
-    for (int i = 0; i < MAX_DMA_ENGINE_SIZE; i++) {
-        processingCache[i] = {NULL, 0, false};
-        processingPktArray[i] = NULL;
+    for (int idx = 0; idx < MAX_DMA_ENGINE_SIZE; idx++) {
+        processingCache[idx] = {NULL, 0, false};
+        processingPktArray[idx] = NULL;
     }
+    // Initialize descriptor dma engines
+    for (int idx = 0; idx < MAX_DMA_ENGINE_SIZE; idx++) {
+        std::string descFetchDMAEngineName = _name + ".descFetchDMAEngine" + std::to_string(idx);
+        std::string descWBDMAEngineName = _name + ".descWBDMAEngine" + std::to_string(idx);
+        descFetchDMAEngines[idx] = new DescDMAEngine(this, descFetchDMAEngineName, idx, igbe, isRx, true, false);
+        descWbDMAEngines[idx] = new DescDMAEngine(this, descWBDMAEngineName, idx, igbe, isRx, false, true);
+        
+        descFetchDMAEngineWorking[idx] = false;
+        descWbDMAEngineWorking[idx] = false;
+        descFetchDMAEngineDone[idx] = false;
+        descWbDMAEngineDone[idx] = false;
+
+        descFetchBaseIdx[idx] = -1;
+        descFetchNum[idx] = -1;
+
+        fetchBufArray[idx] = new T[size];
+
+        descWbBaseIdx[idx] = -1;
+        descWbNum[idx] = -1;
+
+        wbBufArray[idx] = new T[size];
+        
+    }
+    // fetch/Wb tracking
+    curFetchDMAPnt = 0;
+    curWbDMAPnt = 0;
+    curFetchingNum = 0;
+    curWbingNum = 0;
 }
 
 template<class T>
@@ -1367,6 +1490,12 @@ IGbE::DescCacheGlobal<T>::~DescCacheGlobal()
     reset();
     delete[] fetchBuf;
     delete[] wbBuf;
+    for (int idx = 0; idx < MAX_DMA_ENGINE_SIZE; idx++) {
+        delete[] fetchBufArray[idx];
+        delete[] wbBufArray[idx];
+        delete descFetchDMAEngines[idx];
+        delete descWbDMAEngines[idx];
+    }   
 }
 
 template<class T>
@@ -1379,280 +1508,6 @@ IGbE::DescCacheGlobal<T>::areaChanged()
 
 }
 
-template<class T>
-void
-IGbE::DescCacheGlobal<T>::writeback(Addr aMask)
-{
-    int curHead = descHead();
-    int max_to_wb = usedCache.size();
-
-    // Check if this writeback is less restrictive that the previous
-    // and if so setup another one immediately following it
-    if (wbOut) {
-        if (aMask < wbAlignment) {
-            moreToWb = true;
-            wbAlignment = aMask;
-        }
-        DPRINTF(EthernetDesc,
-                "Writing back already in process, returning\n");
-        return;
-    }
-
-    moreToWb = false;
-    wbAlignment = aMask;
-
-
-    DPRINTF(EthernetDesc, "Writing back descriptors head: %d tail: "
-            "%d len: %d cachePnt: %d max_to_wb: %d descleft: %d\n",
-            curHead, descTail(), descLen(), cachePnt, max_to_wb,
-            descLeft());
-
-    if (max_to_wb + curHead >= descLen()) {
-        max_to_wb = descLen() - curHead;
-        moreToWb = true;
-        // this is by definition aligned correctly
-    } else if (wbAlignment != 0) {
-        // align the wb point to the mask
-        max_to_wb = max_to_wb & ~wbAlignment;
-    }
-
-    DPRINTF(EthernetDesc, "Writing back %d descriptors\n", max_to_wb);
-
-    if (max_to_wb <= 0)
-        return;
-
-    wbOut = max_to_wb;
-
-    assert(!wbDelayEvent.scheduled());
-    igbe->schedule(wbDelayEvent, curTick() + igbe->wbDelay);
-}
-
-template<class T>
-void
-IGbE::DescCacheGlobal<T>::writeback1()
-{
-    // If we're draining delay issuing this DMA
-    if (igbe->drainState() != DrainState::Running) {
-        igbe->schedule(wbDelayEvent, curTick() + igbe->wbDelay);
-        return;
-    }
-
-    DPRINTF(EthernetDesc, "Begining DMA of %d descriptors\n", wbOut);
-    DPRINTF(EthernetDpdk, "Begining DMA of %d descriptors\n", wbOut);
-
-    for (int x = 0; x < wbOut; x++) {
-        assert(usedCache.size());
-        memcpy(&wbBuf[x], usedCache[x], sizeof(T));
-    }
-
-
-    assert(wbOut);
-
-    // SHIN. Change to IDIO
-    // igbe->dmaWrite(pciToDma(descBase() + descHead() * sizeof(T)),
-    //                wbOut * sizeof(T), &wbEvent, (uint8_t*)wbBuf,
-    //                igbe->wbCompDelay);
-
-    #if LOG_LEVEL == 1
-    if (isRx) {
-        printf("[LOG], %lu, RXDescWB, Addr: %lx, Size: %d, (Head: %ld, Tail: %ld)\n",
-            curTick(), pciToDma(descBase() + descHead() * sizeof(T)), wbOut * sizeof(T), descHead(), descTail());
-    } else {
-        printf("[LOG], %lu, TXDescWB, Addr: %lx, Size: %d, (Head: %ld, Tail: %ld)\n",
-            curTick(), pciToDma(descBase() + descHead() * sizeof(T)), wbOut * sizeof(T), descHead(), descTail());
-    }
-    for (int i = 0; i < wbOut; i++) {
-        printf("wbBuf[%d]: %s ", i, wbBufToString(i).c_str());
-    }
-    printf("\n");
-    #endif
-
-    igbe->IdioWrite(pciToDma(descBase() + descHead() * sizeof(T)),
-                    wbOut * sizeof(T), &wbEvent, (uint8_t*)wbBuf,
-                    igbe->wbCompDelay, 0, igbe->adq);
-}
-
-template<class T>
-void
-IGbE::DescCacheGlobal<T>::fetchDescriptors()
-{
-    size_t max_to_fetch;
-
-    if (curFetching) {
-        DPRINTF(EthernetDesc,
-                "Currently fetching %d descriptors, returning\n",
-                curFetching);
-        DPRINTF(EthernetDpdk,
-                "Currently fetching %d descriptors, returning\n",
-                curFetching);
-        return;
-    }
-
-    if (descTail() >= cachePnt)
-        max_to_fetch = descTail() - cachePnt;
-    else {
-        assert(descLen() >= cachePnt);
-        max_to_fetch = descLen() - cachePnt;
-    }
-
-    // Fix the underflow
-    size_t totalUsed = usedCache.size() + unusedCache.size() + descProcessing();
-    size_t free_cache = (static_cast<size_t>(size) >= totalUsed) ? (static_cast<size_t>(size) - totalUsed) : 0;
-
-
-    max_to_fetch = std::min(max_to_fetch, free_cache);
-
-
-    DPRINTF(EthernetDesc, "Fetching descriptors head: %d tail: "
-            "%d len: %d cachePnt: %d max_to_fetch: %d descleft: %d\n",
-            descHead(), descTail(), descLen(), cachePnt,
-            max_to_fetch, descLeft());
-    DPRINTF(EthernetDpdk, "Fetching descriptors head: %d tail: "
-            "%d len: %d cachePnt: %d max_to_fetch: %d descleft: %d\n",
-            descHead(), descTail(), descLen(), cachePnt,
-            max_to_fetch, descLeft());
-    // Nothing to do
-    if (max_to_fetch == 0)
-        return;
-
-    // So we don't have two descriptor fetches going on at once
-    curFetching = max_to_fetch;
-
-    assert(!fetchDelayEvent.scheduled());
-    igbe->schedule(fetchDelayEvent, curTick() + igbe->fetchDelay);
-}
-
-template<class T>
-void
-IGbE::DescCacheGlobal<T>::fetchDescriptors1()
-{
-    // If we're draining delay issuing this DMA
-    if (igbe->drainState() != DrainState::Running) {
-        igbe->schedule(fetchDelayEvent, curTick() + igbe->fetchDelay);
-        return;
-    }
-
-    DPRINTF(EthernetDesc, "Fetching descriptors at %#x (%#x), size: %#x\n",
-            descBase() + cachePnt * sizeof(T),
-            pciToDma(descBase() + cachePnt * sizeof(T)),
-            curFetching * sizeof(T));
-
-    #if LOG_LEVEL == 1
-    if (isRx) {
-        printf("[LOG], %lu, RXDescFetch, Addr: %lx, Size: %d, (cachePnt: %d, curFetching: %d, Head: %ld, Tail: %ld, unusedDesc: %d)\n",
-            curTick(), pciToDma(descBase() + cachePnt * sizeof(T)), curFetching * sizeof(T), cachePnt, curFetching, descHead(), descTail(), descUnused());
-    } else {
-        printf("[LOG], %lu, TXDescFetch, Addr: %lx, Size: %d, (cachePnt: %d, curFetching: %d, Head: %ld, Tail: %ld, unusedDesc: %d)\n",
-            curTick(), pciToDma(descBase() + cachePnt * sizeof(T)), curFetching * sizeof(T), cachePnt, curFetching, descHead(), descTail(), descUnused());
-    }
-    #endif
-    assert(curFetching);
-    igbe->dmaRead(pciToDma(descBase() + cachePnt * sizeof(T)),
-                  curFetching * sizeof(T), &fetchEvent, (uint8_t*)fetchBuf,
-                  igbe->fetchCompDelay);
-}
-
-template<class T>
-void
-IGbE::DescCacheGlobal<T>::fetchComplete()
-{
-    std::string printStr = "";
-    T *newDesc;
-    for (int x = 0; x < curFetching; x++) {
-        newDesc = new T;
-        memcpy(newDesc, &fetchBuf[x], sizeof(T));
-        unusedCache.push_back(newDesc);
-        printStr += "NewDesc[" + std::to_string(x) + "]: " + fetchBufToString(newDesc) + " | ";
-    }
-
-    igbe->etherDeviceStats.metaDMABytes += curFetching * sizeof(T);
-    if (isRx) {
-        igbe->etherDeviceStats.rxDescFetchBytes += curFetching * sizeof(T);
-    } else {
-        igbe->etherDeviceStats.txDescFetchBytes += curFetching * sizeof(T);
-    }
-
-
-    int oldCp = cachePnt;
-
-    cachePnt += curFetching;
-    assert(cachePnt <= descLen());
-    if (cachePnt == descLen())
-        cachePnt = 0;
-
-    curFetching = 0;
-
-    DPRINTF(EthernetDesc, "Fetching complete cachePnt %d -> %d\n",
-            oldCp, cachePnt);
-    
-    #if LOG_LEVEL == 1 || LOG_LEVEL == 5
-    if (isRx) {
-        printf("[LOG], %lu, RXDescFetchComplete, cachePnt: %d -> %d, Head: %ld, Tail: %ld, unusedDesc: %d\n %s\n",
-            curTick(), oldCp, cachePnt, descHead(), descTail(), descUnused(), printStr.c_str());
-    } else {
-        printf("[LOG], %lu, TXDescFetchComplete, cachePnt: %d -> %d, Head: %ld, Tail: %ld, unusedDesc: %d\n %s\n",
-            curTick(), oldCp, cachePnt, descHead(), descTail(), descUnused(), printStr.c_str());
-    }
-    #endif
-
-    enableSm();
-    igbe->checkDrain();
-}
-
-template<class T>
-void
-IGbE::DescCacheGlobal<T>::wbComplete()
-{
-
-    long curHead = descHead();
-    long oldHead = curHead;
-
-    for (int x = 0; x < wbOut; x++) {
-        assert(usedCache.size());
-        delete usedCache[0];
-        usedCache.pop_front();
-    }
-
-    igbe->etherDeviceStats.metaDMABytes += wbOut * sizeof(T);
-    if (isRx) {
-        igbe->etherDeviceStats.rxDescWBBytes += wbOut * sizeof(T);
-    } else {
-        igbe->etherDeviceStats.txDescWBBytes += wbOut * sizeof(T);
-    }
-
-    curHead += wbOut;
-    wbOut = 0;
-
-    if (curHead >= descLen())
-        curHead -= descLen();
-
-    // Update the head
-    updateHead(curHead);
-
-    DPRINTF(EthernetDesc, "Writeback complete curHead %d -> %d\n",
-            oldHead, curHead);
-    
-    #if LOG_LEVEL == 1
-    if (isRx){
-        printf("[LOG], %lu, WBRXDescComplete UpdatedHead: %ld, Tail: %ld\n", curTick(), descHead(), descTail());
-    } else {
-        printf("[LOG], %lu, WBTXDescComplete UpdatedHead: %ld, Tail: %ld\n", curTick(), descHead(), descTail());
-    }
-    #endif
-    
-
-    // If we still have more to wb, call wb now
-    actionAfterWb();
-    if (moreToWb) {
-        moreToWb = false;
-        DPRINTF(EthernetDesc, "Writeback has more todo\n");
-        writeback(wbAlignment);
-    }
-
-    if (!wbOut)
-        igbe->checkDrain();
-    fetchAfterWb();
-}
 
 template<class T>
 void
@@ -1672,12 +1527,407 @@ IGbE::DescCacheGlobal<T>::reset()
     for (int i = 0; i < MAX_DMA_ENGINE_SIZE; i++) {
         processingPktArray[i] = NULL;
     }
+    for (int i = 0; i < MAX_DMA_ENGINE_SIZE; i++) {
+        descFetchDMAEngineWorking[i] = false;
+        descWbDMAEngineWorking[i] = false;
+        descFetchDMAEngineDone[i] = false;
+        descWbDMAEngineDone[i] = false;
+
+        descFetchBaseIdx[i] = -1;
+        descFetchNum[i] = -1;
+
+        descWbBaseIdx[i] = -1;
+        descWbNum[i] = -1;
+    }
+    fetchDMAJobQueue.clear();
+    wbDMAJobQueue.clear();
+    curFetchDMAPnt = 0;
+    curWbDMAPnt = 0;
+    curFetchingNum = 0;
+    curWbingNum = 0;
+
 
     usedCache.clear();
     unusedCache.clear();
 
     cachePnt = 0;
 
+}
+
+template<class T>
+bool
+IGbE::DescCacheGlobal<T>::hasFreeWbDMAEngine()
+{
+    for (int i = 0; i < numDescDMAEngines; i++) {
+        if (!descWbDMAEngineWorking[i]) {
+            assert(!descWbDMAEngineDone[i]);
+            return true;
+        }
+    }
+    return false;
+}
+
+template<class T>
+int
+IGbE::DescCacheGlobal<T>::getFreeWbDMAEngine()
+{
+    for (int i = 0; i < numDescDMAEngines; i++) {
+        if (!descWbDMAEngineWorking[i]) {
+            assert(!descWbDMAEngineDone[i]);
+            return i;
+        }
+    }
+    return -1;
+}
+
+template<class T>
+bool
+IGbE::DescCacheGlobal<T>::hasFreeFetchDMAEngine()
+{
+    for (int i = 0; i < numDescDMAEngines; i++) {
+        if (!descFetchDMAEngineWorking[i]) {
+            assert(!descFetchDMAEngineDone[i]);
+            return true;
+        }
+    }
+    return false;
+}
+
+template<class T>
+int
+IGbE::DescCacheGlobal<T>::getFreeFetchDMAEngine()
+{
+    for (int i = 0; i < numDescDMAEngines; i++) {
+        if (!descFetchDMAEngineWorking[i]) {
+            assert(!descFetchDMAEngineDone[i]);
+            return i;
+        }
+    }
+    return -1;
+}
+
+template<class T>
+void
+IGbE::DescCacheGlobal<T>::writebackGlobal(Addr aMask)
+{
+    int curHead = descHead();
+    int max_to_wb = usedCache.size();
+    // Consider curWbDMAPnt as the head of the descriptor cache & curWbingNum
+    assert(max_to_wb >= curWbingNum);
+    max_to_wb -= curWbingNum;
+
+    moreToWb = false;
+    wbAlignment = aMask;
+
+    DPRINTF(EthernetDesc, "Writing back descriptors head: %d tail: "
+            "%d len: %d cachePnt: %d curWbDMAPnt: %d max_to_wb: %d usedCache: %d descleft: %d\n",
+            curHead, descTail(), descLen(), cachePnt, curWbDMAPnt, max_to_wb,
+            usedCache.size(), descLeft());
+    
+    if (max_to_wb + curWbDMAPnt >= descLen()) {
+        max_to_wb = descLen() - curWbDMAPnt;
+        moreToWb = true;
+    } else if (wbAlignment != 0) {
+        // align the wb point to the mask
+        max_to_wb = max_to_wb & ~wbAlignment;
+    }
+
+    DPRINTF(EthernetDesc, "Writing back %d descriptors\n", max_to_wb);
+
+    if (max_to_wb <= 0)
+        return;
+    
+    // Find the free wb DMA engine
+    if (!hasFreeWbDMAEngine()) {
+        DPRINTF(EthernetDesc, "No free wb DMA engine\n");
+        moreToWb = true;
+        return;
+    }
+    int wbDMAEngineIdx = getFreeWbDMAEngine();
+    assert(wbDMAEngineIdx != -1);
+
+    // Set the wb DMA engine working
+    descWbDMAEngineWorking[wbDMAEngineIdx] = true;
+    descWbDMAEngineDone[wbDMAEngineIdx] = false;
+    descWbBaseIdx[wbDMAEngineIdx] = curWbDMAPnt;
+    descWbNum[wbDMAEngineIdx] = max_to_wb;
+    // Copy usedCache to wbBufArray
+    assert(curWbingNum + max_to_wb <= usedCache.size());
+    for (int x = 0; x < max_to_wb; x++) {
+        assert(usedCache.size());
+        memcpy(&wbBufArray[wbDMAEngineIdx][x], usedCache[x + curWbingNum], sizeof(T));
+    }
+
+    #if LOG_LEVEL == 1
+    if (isRx) {
+        printf("[LOG], %lu, RXDescWB_DMAE[%d]_R, Addr: %lx, Size: %d, (Head: %ld, Tail: %ld, WbDMAPnt: %d, WbDMAingNum: %d)\n",
+            curTick(), wbDMAEngineIdx, pciToDma(descBase() + curWbDMAPnt * sizeof(T)), max_to_wb * sizeof(T), descHead(), descTail(), curWbDMAPnt, curWbingNum);
+    } else {
+        printf("[LOG], %lu, TXDescWB_DMAE[%d]_R, Addr: %lx, Size: %d, (Head: %ld, Tail: %ld, WbDMAPnt: %d, WbDMAingNum: %d)\n",
+            curTick(), wbDMAEngineIdx, pciToDma(descBase() + curWbDMAPnt * sizeof(T)), max_to_wb * sizeof(T), descHead(), descTail(), curWbDMAPnt, curWbingNum);
+    }
+    for (int i = 0; i < max_to_wb; i++) {
+        printf("wbBuf[%d]: %s ", i, wbBufArrayToString(wbDMAEngineIdx, i).c_str());
+    }
+    printf("\n");
+    #endif
+
+    descWbDMAEngines[wbDMAEngineIdx]->writebackRegister(pciToDma(descBase() + curWbDMAPnt * sizeof(T)),
+            max_to_wb * sizeof(T), max_to_wb, wbBufArray[wbDMAEngineIdx]);
+    
+    // push to the wbDMAJobQueue
+    // There should be no same DMA engine in the wbDMAJobQueue
+    for (int i = 0; i < wbDMAJobQueue.size(); i++) {
+        if (wbDMAJobQueue[i] == wbDMAEngineIdx) {
+            DPRINTF(EthernetDesc, "WbDMAJobQueue already has the same DMA engine\n");
+            assert(0 && "WbDMAJobQueue already has the same DMA engine");
+        }
+    }
+    wbDMAJobQueue.push_back(wbDMAEngineIdx);
+
+    curWbingNum += max_to_wb;
+    curWbDMAPnt += max_to_wb;
+    if (curWbDMAPnt >= descLen())
+        curWbDMAPnt -= descLen();
+
+}
+
+template<class T>
+void
+IGbE::DescCacheGlobal<T>::fetchDescriptorsGlobal()
+{
+    size_t max_to_fetch;
+
+    // Use curFetchDMAPnt instead of cachePnt
+    if (descTail() >= curFetchDMAPnt)
+        max_to_fetch = descTail() - curFetchDMAPnt;
+    else {
+        assert(descLen() >= curFetchDMAPnt);
+        max_to_fetch = descLen() - curFetchDMAPnt;
+    }
+
+    // Also, add curFetchingNum to the totalUsed (it is reserved size of the cache)
+    size_t totalUsed = usedCache.size() + unusedCache.size() + descProcessing() +
+                       curFetchingNum;
+    
+    size_t free_cache = (static_cast<size_t>(size) >= totalUsed) ? (static_cast<size_t>(size) - totalUsed) : 0;
+
+    max_to_fetch = std::min(max_to_fetch, free_cache);
+
+    DPRINTF(EthernetDesc, "Fetching descriptors head: %d tail: "
+            "%d len: %d cachePnt: %d curFetchDMAPnt: %d max_to_fetch: %d descleft: %d free_cache: %d\n",
+            descHead(), descTail(), descLen(), cachePnt, curFetchDMAPnt,
+            max_to_fetch, descLeft(), free_cache);
+    DPRINTF(EthernetDpdk, "Fetching descriptors head: %d tail: "
+            "%d len: %d cachePnt: %d curFetchDMAPnt: %d max_to_fetch: %d descleft: %d free_cache: %d\n",
+            descHead(), descTail(), descLen(), cachePnt, curFetchDMAPnt,
+            max_to_fetch, descLeft(), free_cache);
+    // Nothing to do
+    if (max_to_fetch == 0)
+        return;
+    
+    // Check if we have a free fetch DMA engine
+    if (!hasFreeFetchDMAEngine()) {
+        DPRINTF(EthernetDesc, "No free fetch DMA engine\n");
+        return;
+    }
+    int fetchDMAEngineIdx = getFreeFetchDMAEngine();
+    assert(fetchDMAEngineIdx != -1);
+
+    // Set the fetch DMA engine working
+    descFetchDMAEngineWorking[fetchDMAEngineIdx] = true;
+    descFetchDMAEngineDone[fetchDMAEngineIdx] = false;
+    descFetchBaseIdx[fetchDMAEngineIdx] = curFetchDMAPnt;
+    descFetchNum[fetchDMAEngineIdx] = max_to_fetch;
+        
+    DPRINTF(EthernetDesc, "Fetching %d descriptors from %d to %d\n",
+            max_to_fetch, curFetchDMAPnt, descTail());
+    #if LOG_LEVEL == 1
+    if (isRx) {
+        printf("[LOG], %lu, RXDescFetch_DMAE[%d]_R, Addr: %lx, Size: %d, (Head: %ld, Tail: %ld, FetchDMAPnt: %d, cachePnt: %d)\n",
+            curTick(), fetchDMAEngineIdx, pciToDma(descBase() + curFetchDMAPnt * sizeof(T)), max_to_fetch * sizeof(T), descHead(), descTail(), curFetchDMAPnt, cachePnt);
+    } else {
+        printf("[LOG], %lu, TXDescFetch_DMAE[%d]_R, Addr: %lx, Size: %d, (Head: %ld, Tail: %ld, FetchDMAPnt: %d, cachePnt: %d)\n",
+            curTick(), fetchDMAEngineIdx, pciToDma(descBase() + curFetchDMAPnt * sizeof(T)), max_to_fetch * sizeof(T), descHead(), descTail(), curFetchDMAPnt, cachePnt);
+    }
+    #endif
+
+    // Register the fetch
+    descFetchDMAEngines[fetchDMAEngineIdx]->fetchRegister(pciToDma(descBase() + curFetchDMAPnt * sizeof(T)),
+            max_to_fetch * sizeof(T), max_to_fetch, fetchBufArray[fetchDMAEngineIdx]);
+    
+    // push to the fetchDMAJobQueue
+    // There should be no same DMA engine in the fetchDMAJobQueue
+    for (int i = 0; i < fetchDMAJobQueue.size(); i++) {
+        if (fetchDMAJobQueue[i] == fetchDMAEngineIdx) {
+            DPRINTF(EthernetDesc, "FetchDMAJobQueue already has the same DMA engine\n");
+            assert(0 && "FetchDMAJobQueue already has the same DMA engine");
+        }
+    }
+    fetchDMAJobQueue.push_back(fetchDMAEngineIdx);
+
+    curFetchingNum += max_to_fetch;
+    curFetchDMAPnt += max_to_fetch;
+
+    if (curFetchDMAPnt >= descLen())
+        curFetchDMAPnt -= descLen();
+
+}
+
+template<class T>
+void
+IGbE::DescCacheGlobal<T>::wbCompleteGlobal(int dmaEngineIdx)
+{
+    assert(dmaEngineIdx >= 0 && dmaEngineIdx < numDescDMAEngines);
+    // Update the wb DMA engine status
+    descWbDMAEngineDone[dmaEngineIdx] = true;
+
+    igbe->etherDeviceStats.metaDMABytes += descWbNum[dmaEngineIdx] * sizeof(T);
+    if (isRx) {
+        igbe->etherDeviceStats.rxDescWBBytes += descWbNum[dmaEngineIdx] * sizeof(T);
+    } else {
+        igbe->etherDeviceStats.rxDescWBBytes += descWbNum[dmaEngineIdx] * sizeof(T);
+    }
+
+    // Update the global status by checking the wbDMAJobQueue from the front
+    // Have to wait until front of the queue is done (in-order)
+    assert(wbDMAJobQueue.size() > 0);
+    if (wbDMAJobQueue.front() == dmaEngineIdx) {
+        do {
+            long curHead = descHead();
+            long oldHead = curHead; 
+            // pop the front of the queue
+            int popIdx = wbDMAJobQueue.front();
+            wbDMAJobQueue.pop_front();
+            
+            assert(descWbNum[popIdx] != -1);
+            assert(curWbingNum >= descWbNum[popIdx]);
+            curWbingNum -= descWbNum[popIdx];
+
+            // pop usedCache & update the cachePnt
+            for (int x = 0; x < descWbNum[popIdx]; x++) {
+                assert(usedCache.size());
+                delete usedCache[0];
+                usedCache.pop_front();
+            }
+
+            // Update head
+            curHead += descWbNum[popIdx];
+            if (curHead >= descLen())
+                curHead -= descLen();
+            updateHead(curHead);
+
+            DPRINTF(EthernetDesc, "Writeback complete curHead %d -> %d\n",
+                    oldHead, curHead);
+            
+            #if LOG_LEVEL == 1
+            if (isRx) {
+                printf("[LOG], %lu, WBRXDescComplete_DMAE[%d], OldHead: %ld, UpdatedHead: %ld, Tail: %ld, curWbDMAPnt: %ld\n", curTick(), popIdx, oldHead, descHead(), descTail(), curWbDMAPnt);
+            } else {
+                printf("[LOG], %lu, WBTXDescComplete_DMAE[%d], OldHead: %ld, UpdatedHead: %ld, Tail: %ld, curWbDMAPnt: %ld\n", curTick(), popIdx, oldHead, descHead(), descTail(), curWbDMAPnt);
+            }
+            #endif
+
+            // update the wb DMA engine status
+            descWbDMAEngineWorking[popIdx] = false;
+            descWbDMAEngineDone[popIdx] = false;
+            descWbBaseIdx[popIdx] = -1;
+            descWbNum[popIdx] = -1;
+            
+        } while (wbDMAJobQueue.size() > 0 &&
+                 descWbDMAEngineDone[wbDMAJobQueue.front()] == true);
+    } else {
+        DPRINTF(EthernetDesc, "WbDMAJobQueue front (%d) is not the same as the current DMA engine (%d)\n",
+                wbDMAJobQueue.front(), dmaEngineIdx);
+        // If the current DMA engine is not the same as the front of the queue,
+    }
+
+    // If we still have more to wb, call wb now
+    actionAfterWb();
+    if (moreToWb) {
+        moreToWb = false;
+        DPRINTF(EthernetDesc, "Writeback has more todo\n");
+        writebackGlobal(wbAlignment);
+    }
+
+    igbe->checkDrain();
+    fetchAfterWb();
+
+}
+
+template<class T>
+void
+IGbE::DescCacheGlobal<T>::fetchCompleteGlobal(int dmaEngineIdx)
+{
+    assert(dmaEngineIdx >= 0 && dmaEngineIdx < numDescDMAEngines);
+    // Update the fetch DMA engine status
+    descFetchDMAEngineDone[dmaEngineIdx] = true;
+
+    igbe->etherDeviceStats.metaDMABytes += descFetchNum[dmaEngineIdx] * sizeof(T);
+    if (isRx) {
+        igbe->etherDeviceStats.rxDescFetchBytes += descFetchNum[dmaEngineIdx] * sizeof(T);
+    } else {
+        igbe->etherDeviceStats.txDescFetchBytes += descFetchNum[dmaEngineIdx] * sizeof(T);
+    }
+
+    // Update the global status by checking the fetchDMAJobQueue from the front
+    // Have to wait until front of the queue is done (in-order)
+    assert(fetchDMAJobQueue.size() > 0);
+    if (fetchDMAJobQueue.front() == dmaEngineIdx) {
+        do {
+            int oldCp = cachePnt;
+            // pop the front of the queue
+            int popIdx = fetchDMAJobQueue.front();
+            fetchDMAJobQueue.pop_front();
+
+            assert(descFetchNum[popIdx] != -1);
+            assert(curFetchingNum >= descFetchNum[popIdx]);
+            curFetchingNum -= descFetchNum[popIdx];
+
+            // push fetchBuf to unusedCache
+            std::string printStr = "";
+            T *newDesc;
+            for (int x = 0; x < descFetchNum[popIdx]; x++) {
+                newDesc = new T;
+                memcpy(newDesc, &fetchBufArray[popIdx][x], sizeof(T));
+                unusedCache.push_back(newDesc);
+                printStr += "NewDesc[" + std::to_string(x) + "]: " + fetchBufToString(newDesc) + " | ";
+            }
+
+            // Update cachePnt
+            cachePnt += descFetchNum[popIdx];
+            assert(cachePnt <= descLen());
+            if (cachePnt == descLen())
+                cachePnt = 0;
+            
+            DPRINTF(EthernetDesc, "Fetching complete cachePnt %d -> %d\n",
+                    oldCp, cachePnt);
+            
+            #if LOG_LEVEL == 1 || LOG_LEVEL == 5
+            if (isRx) {
+                printf("[LOG], %lu, RXDescFetchComplete_DMAE[%d], cachePnt: %d -> %d, Head: %ld, Tail: %ld, unusedDesc: %d\n %s\n",
+                    curTick(), popIdx, oldCp, cachePnt, descHead(), descTail(), descUnused(), printStr.c_str());
+            } else {
+                printf("[LOG], %lu, TXDescFetchComplete_DMAE[%d], cachePnt: %d -> %d, Head: %ld, Tail: %ld, unusedDesc: %d\n %s\n",
+                    curTick(), popIdx, oldCp, cachePnt, descHead(), descTail(), descUnused(), printStr.c_str());
+            }
+            #endif
+
+            // update the fetch DMA engine status
+            descFetchDMAEngineWorking[popIdx] = false;
+            descFetchDMAEngineDone[popIdx] = false;
+            descFetchBaseIdx[popIdx] = -1;
+            descFetchNum[popIdx] = -1;
+
+        } while (fetchDMAJobQueue.size() > 0 &&
+                 descFetchDMAEngineDone[fetchDMAJobQueue.front()] == true);
+    } else {
+        DPRINTF(EthernetDesc, "FetchDMAJobQueue front (%d) is not the same as the current DMA engine (%d)\n",
+                fetchDMAJobQueue.front(), dmaEngineIdx);
+    }
+
+    enableSm();
+    igbe->checkDrain();
 }
 
 template<class T>
@@ -1730,11 +1980,11 @@ IGbE::DescCacheGlobal<T>::serialize(CheckpointOut &cp) const
     }
 
     Tick fetch_delay = 0, wb_delay = 0;
-    if (fetchDelayEvent.scheduled())
-        fetch_delay = fetchDelayEvent.when();
+    // if (fetchDelayEvent.scheduled())
+    //     fetch_delay = fetchDelayEvent.when();
     SERIALIZE_SCALAR(fetch_delay);
-    if (wbDelayEvent.scheduled())
-        wb_delay = wbDelayEvent.when();
+    // if (wbDelayEvent.scheduled())
+    //     wb_delay = wbDelayEvent.when();
     SERIALIZE_SCALAR(wb_delay);
 
 
@@ -1749,6 +1999,8 @@ IGbE::DescCacheGlobal<T>::unserialize(CheckpointIn &cp)
     UNSERIALIZE_SCALAR(wbOut);
     UNSERIALIZE_SCALAR(moreToWb);
     UNSERIALIZE_SCALAR(wbAlignment);
+
+    curFetchDMAPnt = cachePnt;
 
     typename CacheType::size_type usedCacheSize;
     UNSERIALIZE_SCALAR(usedCacheSize);
@@ -1771,10 +2023,10 @@ IGbE::DescCacheGlobal<T>::unserialize(CheckpointIn &cp)
     Tick fetch_delay = 0, wb_delay = 0;
     UNSERIALIZE_SCALAR(fetch_delay);
     UNSERIALIZE_SCALAR(wb_delay);
-    if (fetch_delay)
-        igbe->schedule(fetchDelayEvent, fetch_delay);
-    if (wb_delay)
-        igbe->schedule(wbDelayEvent, wb_delay);
+    // if (fetch_delay)
+    //     igbe->schedule(fetchDelayEvent, fetch_delay);
+    // if (wb_delay)
+    //     igbe->schedule(wbDelayEvent, wb_delay);
 
 
 }
@@ -1851,7 +2103,7 @@ IGbE::RxDescCache::writePacket(EthPacketPtr packet, int pkt_offset, igbreg::RxDe
         //         packet->length, igbe->rxWriteDelay);
         
         #if LOG_LEVEL == 1
-        if (descTail() == 63 || descTail() == 127 || descTail() == 191) {
+        if (descTail() == 63 || descTail() == 127 || descTail() == 191 || descTail() == 255) {
             printf("[LOG], %lu, NIC_WR_RX_PKT_TO_MBUF_DMAE[%d], %lx, %d, Head: %d, Tail: %d\n", curTick(), dmaEngineIdx, pciToDma(correspondingDesc->adv_read.pkt), packet->length, descHead(), descTail());
         }
         #endif
@@ -1983,7 +2235,7 @@ IGbE::RxDescCache::pktComplete()
     DPRINTF(EthernetDpdk, "RXD[%d] Packet written to memory updating Descriptor\n", queueID);
 
     #if LOG_LEVEL == 1
-    if (descTail() == 63 || descTail() == 127 || descTail() == 191) {
+    if (descTail() == 63 || descTail() == 127 || descTail() == 191 || descTail() == 255) {
         printf("[LOG], %lu, NIC_WR_RESP_RX_PKT_TO_MBUF_DMAE[%d], Head: %d, Tail: %d\n", curTick(), dmaEngineIdx, descHead(), descTail());
     }
     #endif
@@ -2135,8 +2387,8 @@ IGbE::RxDescCache::hasOutstandingEvents()
 
 ///////////////////////////// IGbE::RxDescCacheGlobal //////////////////////////////
 
-IGbE::RxDescCacheGlobal::RxDescCacheGlobal(IGbE *i, const std::string n, int s, int qid, int _numDMAEngines)
-    : DescCacheGlobal<RxDesc>(i, n, s, true, _numDMAEngines), queueID(qid),
+IGbE::RxDescCacheGlobal::RxDescCacheGlobal(IGbE *i, const std::string n, int s, int qid, int _numDMAEngines, int _numDescDMAEngines)
+    : DescCacheGlobal<RxDesc>(i, n, s, true, _numDMAEngines, _numDescDMAEngines), queueID(qid),
     _rdtrEvent([this]{ _rdtrProcess(); }, n),
     _radvEvent([this]{ _radvProcess(); }, n)
 
@@ -2151,7 +2403,7 @@ IGbE::RxDescCacheGlobal::RxDescCacheGlobal(IGbE *i, const std::string n, int s, 
 
     // initialize the DMA engine
     assert(numDMAEngines > 0);
-    printf("==================RxDescCacheGlobal with %d DMA Engines==================\n", numDMAEngines);
+    printf("==================RxDescCacheGlobal with %d DMA Engines %d desc DMA Engines==================\n", numDMAEngines, numDescDMAEngines);
     for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
         // Treat original RxDescCache as the DMA engine
         std::string dmaEngineName = n + ".DMAEngine" + std::to_string(engine_idx);
@@ -2341,8 +2593,12 @@ IGbE::RxDescCacheGlobal::enableSm()
 bool
 IGbE::RxDescCacheGlobal::hasOutstandingEvents()
 {
-    bool descCacheGlobalOutstanding = wbEvent.scheduled() ||
-        fetchEvent.scheduled();
+    bool descCacheGlobalOutstanding = false;
+    // Check all desc DMA engines
+    for (int engine_idx = 0; engine_idx < numDescDMAEngines; engine_idx++) {
+        descCacheGlobalOutstanding |= descFetchDMAEngines[engine_idx]->hasOutstandingEvents();
+        descCacheGlobalOutstanding |= descWbDMAEngines[engine_idx]->hasOutstandingEvents();
+    }
     // Have to check all DMA engines
     for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
         descCacheGlobalOutstanding |= dmaEngineArray[engine_idx]->hasOutstandingEvents();
@@ -2405,7 +2661,7 @@ IGbE::TxDescCache::getPacketData(EthPacketPtr p, Addr addr, int size)
     DPRINTF(EthernetDesc, "TXD[%d] Starting DMA of packet at offset %d\n", queueID, p->length);
 
     #if LOG_LEVEL == 1
-    if (descTail() == 128 || descTail() == 192 || descTail() == 256) {
+    if (descTail() == 128 || descTail() == 192 || descTail() == 256 || descTail() == 320) {
         printf("[LOG], %lu, NIC_RD_REQ_TX_MBUF_DMAE[%d], %lx, %d, Head: %d, Tail: %d\n", curTick(), dmaEngineIdx, addr, size, descHead(), descTail());
     }
     #endif
@@ -2426,7 +2682,7 @@ IGbE::TxDescCache::pktComplete()
     // printf("TXD[%d] At clk: %ld pktComplete() pktPtr: %p\n", queueID, curTick(), pktPtr);
 
     #if LOG_LEVEL == 1
-    if (descTail() == 128 || descTail() == 192 || descTail() == 256) {
+    if (descTail() == 128 || descTail() == 192 || descTail() == 256 || descTail() == 320) {
         printf("[LOG], %lu, NIC_RD_RESP_TX_MBUF_DMAE[%d], %lx, Head: %d, Tail: %d\n", curTick(), dmaEngineIdx, dmaAddr, descHead(), descTail());
     }
     #endif
@@ -2455,8 +2711,8 @@ IGbE::TxDescCache::hasOutstandingEvents()
 }
 
 ////////////////////////////// IGbE::TxDescCacheGlobal //////////////////////////////
-IGbE::TxDescCacheGlobal::TxDescCacheGlobal(IGbE *i, const std::string n, int s, int qid, int _numDMAEngines)
-    : DescCacheGlobal<TxDesc>(i,n, s, false, _numDMAEngines), queueID(qid), roundRobinIdx(0),
+IGbE::TxDescCacheGlobal::TxDescCacheGlobal(IGbE *i, const std::string n, int s, int qid, int _numDMAEngines, int _numDescDMAEngines)
+    : DescCacheGlobal<TxDesc>(i,n, s, false, _numDMAEngines, _numDescDMAEngines), queueID(qid), roundRobinIdx(0),
       isTcp(false), pktHdrWaiting(false), pktMultiDesc(false),
       completionAddress(0), completionEnabled(false),
       useTso(false), tsoHeaderLen(0), tsoMss(0), tsoTotalLen(0), tsoUsedLen(0),
@@ -2477,7 +2733,7 @@ IGbE::TxDescCacheGlobal::TxDescCacheGlobal(IGbE *i, const std::string n, int s, 
 
     // initialize the DMA engine
     assert(numDMAEngines > 0);
-    printf("==================TxDescCacheGlobal with %d DMA Engines==================\n", numDMAEngines);
+    printf("==================TxDescCacheGlobal with %d DMA Engines %d desc DMA Engines==================\n", numDMAEngines, numDescDMAEngines);
     for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
         // Treat original TxDescCache as the DMA engine
         std::string dmaEngineName = n + ".DMAEngine" + std::to_string(engine_idx);
@@ -2896,14 +3152,14 @@ IGbE::TxDescCacheGlobal::onDMAComplete(int engineIdx)
 
     if (igbe->regs.txdctl_array[queueID].wthresh() == 0) {
         DPRINTF(EthernetDesc, "TXD[%d] WTHRESH == 0, writing back descriptor\n", queueID);
-        writeback(0);
+        writebackGlobal(0);
     } else if (!igbe->regs.txdctl_array[queueID].gran() && igbe->regs.txdctl_array[queueID].wthresh() <=
                descInBlock(usedCache.size())) {
         DPRINTF(EthernetDesc, "TXD[%d] used > WTHRESH, writing back descriptor\n", queueID);
-        writeback((igbe->cacheBlockSize()-1)>>4);
+        writebackGlobal((igbe->cacheBlockSize()-1)>>4);
     } else if (igbe->regs.txdctl_array[queueID].wthresh() <= usedCache.size()) {
         DPRINTF(EthernetDesc, "TXD[%d] used > WTHRESH, writing back descriptor\n", queueID);
-        writeback((igbe->cacheBlockSize()-1)>>4);
+        writebackGlobal((igbe->cacheBlockSize()-1)>>4);
     }
 
     enableSm();
@@ -3084,7 +3340,12 @@ IGbE::TxDescCacheGlobal::enableSm()
 bool
 IGbE::TxDescCacheGlobal::hasOutstandingEvents()
 {
-    bool descCacheGlobalOutstanding = wbEvent.scheduled() || fetchEvent.scheduled();
+    bool descCacheGlobalOutstanding = false;
+    // Check all desc DMA engines
+    for (int engine_idx = 0; engine_idx < numDescDMAEngines; engine_idx++) {
+        descCacheGlobalOutstanding |= descFetchDMAEngines[engine_idx]->hasOutstandingEvents();
+        descCacheGlobalOutstanding |= descWbDMAEngines[engine_idx]->hasOutstandingEvents();
+    }
     // Have to check all DMA engines
     for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
         descCacheGlobalOutstanding |= dmaEngineArray[engine_idx]->hasOutstandingEvents();
@@ -3097,6 +3358,15 @@ std::string
 IGbE::TxDescCacheGlobal::wbBufToString(int idx) {
     igbreg::TxDesc *desc;
     desc = wbBuf + idx;
+    uint8_t Dd = txd_op::getDd(desc);
+    std::string descStr = "TxDescWb_DD: ";
+    descStr += csprintf("%u", Dd);
+    return descStr;
+}
+std::string
+IGbE::TxDescCacheGlobal::wbBufArrayToString(int engineIdx, int idx) {
+    igbreg::TxDesc *desc;
+    desc = wbBufArray[engineIdx] + idx;
     uint8_t Dd = txd_op::getDd(desc);
     std::string descStr = "TxDescWb_DD: ";
     descStr += csprintf("%u", Dd);
@@ -4394,7 +4664,7 @@ IGbE::txStateMachine(int queueID)
             assert(success);
 
             txPacketArray[queueID] = nullptr;
-            txDescCacheArray[queueID]->writeback((cacheBlockSize()-1)>>4);
+            txDescCacheArray[queueID]->writebackGlobal((cacheBlockSize()-1)>>4);
             // set successTxQueueSend to true
             successTxQueueSend = true;
             
@@ -4418,8 +4688,8 @@ IGbE::txStateMachine(int queueID)
         if (txDescCacheArray[queueID]->descLeft() == 0) {
             etherDeviceStats.txRingBufferFull++; //TODO - jm: make stat as array
             postInterrupt(IT_TXQE);
-            txDescCacheArray[queueID]->writeback(0);
-            txDescCacheArray[queueID]->fetchDescriptors();
+            txDescCacheArray[queueID]->writebackGlobal(0);
+            txDescCacheArray[queueID]->fetchDescriptorsGlobal();
             DPRINTF(EthernetSM, "TXD[%d]: No descriptors left in ring, forcing "
                     "writeback stopping ticking and posting TXQE\n", queueID);
             DPRINTF(EthernetDpdk, "TXD[%d]: No descriptors left in ring, forcing "
@@ -4429,7 +4699,7 @@ IGbE::txStateMachine(int queueID)
         }
 
         if (!(txDescCacheArray[queueID]->descUnused())) {
-            txDescCacheArray[queueID]->fetchDescriptors();
+            txDescCacheArray[queueID]->fetchDescriptorsGlobal();
             etherDeviceStats.txDescCacheFullCount++; //TODO - jm: make stat as array
             DPRINTF(EthernetSM, "TXD[%d]: No descriptors available in cache, "
                     "fetching and stopping ticking\n", queueID);
@@ -4471,8 +4741,7 @@ IGbE::txStateMachine(int queueID)
             DPRINTF(EthernetDpdk, "TXD[%d]: getPacketSize returned: %d\n", queueID, size);
             DPRINTF(EthernetDpdk,
                     "TXD[%d]: No packets to get, writing back used descriptors\n", queueID);
-            // txDescCache.writeback(0);
-            txDescCacheArray[queueID]->writeback(0);
+            txDescCacheArray[queueID]->writebackGlobal(0);
         } else {
             etherDeviceStats.txFifoFullCount++; //TODO - jm: make stat as array
             DPRINTF(EthernetSM, "TXD[%d]: FIFO full, stopping ticking until space "
@@ -5476,18 +5745,15 @@ IGbE::rxStateMachine(int queueID)
 {
     bool rxTickQueue = rxTick; //rxTickQueue is used to keep track of the rxTick status for the queueID
     if (!regs.rctl.en()) {
-        // rxTick = false;
         rxTickQueue = false;
         DPRINTF(EthernetSM, "RXS[%d]: RX disabled, stopping ticking\n", queueID);
         DPRINTF(EthernetDpdk, "RXS[%d]: RX disabled, stopping ticking\n", queueID);
         return rxTickQueue;
     }
     // If the packet is done check for interrupts/descriptors/etc
-    // if (rxDescCacheArray[queueID]->packetDone()) {
     int readyDMAEngineIdx = rxDescCacheArray[queueID]->hasReadyEthPacket();
     if (readyDMAEngineIdx != -1) {
-        // rxDmaPacketArray[queueID] = false;
-        // rxDescCacheArray[queueID]->unsetPacketDone();
+        
         rxDescCacheArray[queueID]->clearDoneEthPacket(readyDMAEngineIdx);
 
         DPRINTF(EthernetSM, "RXS[%d]: Packet completed DMA to memory\n", queueID);
@@ -5499,47 +5765,54 @@ IGbE::rxStateMachine(int queueID)
                 descLeft, regs.rctl.rdmts(), regs.rdlen_array[queueID]()); //regs.rdlen());
 
         // rdmts 2->1/8, 1->1/4, 0->1/2
+        int descSize = 16;
+        int numDescRX = (regs.rdlen_array[queueID]()) / descSize;
         int ratio = (1ULL << (regs.rctl.rdmts() + 1));
-        if (descLeft * ratio <= regs.rdlen_array[queueID]()) {
-            DPRINTF(Ethernet, "RXS[%d]: Interrupting (RXDMT) "
-                    "because of descriptors left\n", queueID);
+        if (descLeft * ratio <= numDescRX) {
+            DPRINTF(EthernetSM, "RXS[%d]: Interrupting (RXDMT) "
+                    "because of descriptors left descLeft: %d, ratio: %d, rdlen_array: %d, numDescRX: %d\n", queueID,
+                    descLeft, ratio, regs.rdlen_array[queueID](), numDescRX);
             DPRINTF(EthernetDpdk, "RXS[%d]: Interrupting (RXDMT) "
                     "because of descriptors left\n", queueID);
-            rxDescCacheArray[queueID]->writeback(0);
+            rxDescCacheArray[queueID]->writebackGlobal(0);
          }
 
         if (descLeft < 32)
         {
-            rxDescCacheArray[queueID]->writeback(0);
+            DPRINTF(EthernetSM, "RXS[%d]: writebackGlobal(0) because descLeft < 32\n", queueID);
+            rxDescCacheArray[queueID]->writebackGlobal(0);
         }
 
         if (rxFifo.empty()) {
-            rxDescCacheArray[queueID]->writeback(0);
+            DPRINTF(EthernetSM, "RXS[%d]: writebackGlobal(0) because rxFifo is empty\n", queueID);
+            rxDescCacheArray[queueID]->writebackGlobal(0);
         }
 
         if (descLeft == 0) { 
             etherDeviceStats.rxRingBufferFull++; //TODO - jm : make this as array 
-            rxDescCacheArray[queueID]->writeback(0);
             DPRINTF(EthernetSM, "RXS[%d]: No descriptors left in ring, forcing"
                     " writeback and stopping ticking\n", queueID);
             DPRINTF(EthernetDpdk, "RXS[%d]: No descriptors left in ring, forcing"
                     " writeback and stopping ticking\n", queueID);
+            rxDescCacheArray[queueID]->writebackGlobal(0);
             rxTickQueue = false;
         }
 
         // only support descriptor granulaties
         assert(regs.rxdctl_array[queueID].gran());
 
-        if (regs.rxdctl_array[queueID].wthresh() >= rxDescCacheArray[queueID]->descUsed()) {
+        if (regs.rxdctl_array[queueID].wthresh() <= rxDescCacheArray[queueID]->descUsed()) {
             DPRINTF(EthernetSM,
-                    "RXS[%d]: Writing back because WTHRESH >= descUsed\n", queueID);
+                    "RXS[%d]: Writing back because WTHRESH (%d) <= descUsed (%d)\n", queueID, 
+                    regs.rxdctl_array[queueID].wthresh(), rxDescCacheArray[queueID]->descUsed());
             DPRINTF(EthernetDpdk,
-                    "RXS[%d]: Writing back because WTHRESH >= descUsed\n", queueID);
+                    "RXS[%d]: Writing back because WTHRESH (%d) <= descUsed (%d)\n", queueID,
+                    regs.rxdctl_array[queueID].wthresh(), rxDescCacheArray[queueID]->descUsed());
             
             if (regs.rxdctl_array[queueID].wthresh() < (cacheBlockSize()>>4))
-                rxDescCacheArray[queueID]->writeback(regs.rxdctl_array[queueID].wthresh()-1);
+                rxDescCacheArray[queueID]->writebackGlobal(regs.rxdctl_array[queueID].wthresh()-1);
             else
-                rxDescCacheArray[queueID]->writeback((cacheBlockSize()-1)>>4);
+                rxDescCacheArray[queueID]->writebackGlobal((cacheBlockSize()-1)>>4);
            
         }
 
@@ -5550,11 +5823,11 @@ IGbE::rxStateMachine(int queueID)
                     "descUnused < PTHRESH\n", queueID);
             DPRINTF(EthernetDpdk, "RXS[%d]: Fetching descriptors because "
                     "descUnused < PTHRESH\n", queueID);
-            rxDescCacheArray[queueID]->fetchDescriptors();
+            rxDescCacheArray[queueID]->fetchDescriptorsGlobal();
         }
         
         if (rxDescCacheArray[queueID]->descUnused() == 0) {
-            rxDescCacheArray[queueID]->fetchDescriptors();
+            rxDescCacheArray[queueID]->fetchDescriptorsGlobal();
             etherDeviceStats.rxDescCacheFullCount++;
             DPRINTF(EthernetSM, "RXS[%d]: No descriptors available in cache, "
                     "fetching descriptors and stopping ticking\n", queueID);
@@ -5565,14 +5838,12 @@ IGbE::rxStateMachine(int queueID)
         return rxTickQueue;
     }
 
-    // if (rxDmaPacketArray[queueID]) {
     if (!rxDescCacheArray[queueID]->hasFreeDMAEngine()) {
         DPRINTF(EthernetSM,
                 "RXS[%d]: stopping ticking until packet DMA completes. No free DMA engines\n", queueID);
         DPRINTF(EthernetDpdk,
                 "RXS[%d]: stopping ticking until packet DMA completes. No free DMA engines\n", queueID);
-        // rxTick = false;
-        // return;
+        
         rxTickQueue = false;
         if (rxPacketArray[queueID] != nullptr) {
             if (rxPacketArray[queueID]->rxFifoNotEmptyDmaBusyChecked == false) {
@@ -5583,10 +5854,8 @@ IGbE::rxStateMachine(int queueID)
         return rxTickQueue;
     }
 
-    // if (!rxDescCache.descUnused()) {
-    //     rxDescCache.fetchDescriptors();
     if (!rxDescCacheArray[queueID]->descUnused()) {
-        rxDescCacheArray[queueID]->fetchDescriptors();
+        rxDescCacheArray[queueID]->fetchDescriptorsGlobal();
         etherDeviceStats.rxDescCacheFullCount++;
         DPRINTF(EthernetSM, "RXS[%d]: No descriptors available in cache, "
                 "stopping ticking\n", queueID);
@@ -5609,16 +5878,6 @@ IGbE::rxStateMachine(int queueID)
         rxTickQueue = false;
         return rxTickQueue;
     }
-
-    // if (rxFifo.empty()) {
-    //     DPRINTF(EthernetSM, "RXS: RxFIFO empty, stopping ticking\n");
-    //     DPRINTF(EthernetDpdk, "RXS: RxFIFO empty, stopping ticking\n");
-    //     rxTick = false;
-    //     return;
-    // }
-
-    // EthPacketPtr pkt;
-    // pkt = rxFifo.front();
 
     bool success = rxDescCacheArray[queueID]->writePacketGlobal(pkt);
     if (success) {
