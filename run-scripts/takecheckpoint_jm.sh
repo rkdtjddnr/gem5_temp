@@ -15,7 +15,8 @@
 
 GUEST_SCRIPT="dpdk-testpmd.sh"
 RESOURCE_DIR="resources-dpdk-sve-16RXD-fastfree-B64-tbl-lcore"
-RUN_COMMAND="./l2fwd-ckp-dpdk-set-1core-1q-sve-16RXD-fastfree-B64-tbl-lcore-pDMA2-dmbfix-high-spec-vecreg-256-2xunit-2xq-4xmshr-4LSUnit-sq-predreg-wait-short.sh --take-checkpoint --num-nics 1 --num-queues 1 --script $GUEST_SCRIPT --freq 3GHz"
+RUN_COMMAND="./l2fwd-ckp-dpdk-set-1core-1q-sve-16RXD-fastfree-B64-tbl-lcore-pDMA128-descDMA32-dmbfix-mmio-dma-1us-normal-spec-vecreg-256-2xunit-4LSUnit-predreg-wait-short.sh --take-checkpoint --num-nics 1 --num-queues 1 --script $GUEST_SCRIPT --freq 3GHz"
+./l2fwd-ckp-dpdk-set-1core-1q-sve-16RXD-fastfree-B64-tbl-lcore-pDMA128-descDMA32-dmbfix-mmio-dma-1us-normal-spec-vecreg-256-2xunit-4LSUnit-predreg-wait-short.sh --num-nics 1 --num-queues 1 --script dpdk-testpmd.sh --freq 3GHz --packet-rate 188743680 --packet-size 64
 
 
 

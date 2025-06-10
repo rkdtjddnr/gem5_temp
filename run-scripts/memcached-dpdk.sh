@@ -29,12 +29,15 @@ function setup_dirs {
   mkdir -p "$RUNDIR"
 }
 
+DISK_DIR="lcore_4_wo_debug/rootfs.ext2"
+LINUX_DIR="lcore_4_wo_debug/vmlinux"
+
 function run_simulation {
   "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
-  --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
+  --kernel="$RESOURCES/$LINUX_DIR" --disk="$RESOURCES/$DISK_DIR" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
   --num-cpus=$(($num_nics+3)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
-  --num-nics="$num_nics" --num-loadgens="$num_nics" \
+  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues"\
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 }
 
@@ -49,7 +52,7 @@ RESOURCES=${GIT_ROOT}/resources-dpdk
 GUEST_SCRIPT_DIR=${GIT_ROOT}/guest-scripts
 
 # parse command line arguments
-TEMP=$(getopt -o 'h' --long freq:,take-checkpoint,num-nics:,cpu-types:,l2-size:,script:,packet-rate:,loadgen-find-bw,help -n 'dpdk-loadgen' -- "$@")
+TEMP=$(getopt -o 'h' --long freq:,take-checkpoint,num-nics:,cpu-types:,l2-size:,script:,packet-rate:,num-queues:,loadgen-find-bw,help -n 'dpdk-loadgen' -- "$@")
 
 # check for parsing errors
 if [ $? != 0 ]; then
@@ -63,6 +66,10 @@ while true; do
   case "$1" in
   --num-nics)
     num_nics="$2"
+    shift 2
+    ;;
+  --num-queues)
+    num_queues="$2"
     shift 2
     ;;
   --l2-size)
@@ -110,12 +117,16 @@ if [[ -z "$num_nics" ]]; then
   echo "Error: missing argument --num-nics" >&2
   usage
 fi
+if [[ -z "$num_queues" ]]; then
+  echo "Error: missing argument --num-queues" >&2
+  usage
+fi
 
 if [[ -n "$checkpoint" ]]; then
   # RUNDIR=${GIT_ROOT}/rundir/$num_nics"NIC-ckp-"$GUEST_SCRIPT
-  RUNDIR=${GIT_ROOT}/rundir/ISPASS-2024-memcached-exps/$num_nics"NIC-ckp"-$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/ISPASS-2024-memcached-exps/$num_queues"Queues-"$num_nics"NIC-ckp"-$GUEST_SCRIPT
   setup_dirs
-  echo "Taking Checkpoint for NICs=$num_nics" >&2
+  echo "Taking Checkpoint for NICs=$num_nics Queues=$num_queues">&2
   GEM5TYPE="fast"
   # DEBUG_FLAGS="--debug-flags=LoadgenDebug"
   PORT=11211
@@ -123,8 +134,8 @@ if [[ -n "$checkpoint" ]]; then
   PACKET_RATE=5000
   LOADGENREPLAYMODE=ConstThroughput
   PCAP_FILENAME="../resources-dpdk/warmup-dpdk-5k.pcap"
-  CONFIGARGS="-r 2 --max-checkpoints 1 --checkpoint-at-end --cpu-clock=$FREQ --l2_size=$L2_SIZE $CACHE_CONFIG --loadgen-start=6654416674681 --loadgen-type=Pcap --loadgen-stack=DPDKStack --loadgen_pcap_filename=$PCAP_FILENAME --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT"
-  # CONFIGARGS="--max-checkpoints 2 --cpu-clock=$FREQ --l2_size=$L2_SIZE $CACHE_CONFIG --loadgen-start=600011771117451658 --loadgen-type=Pcap --loadgen-stack=DPDKStack --loadgen_pcap_filename=$PCAP_FILENAME --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT"
+  #CONFIGARGS="-r 2 --max-checkpoints 1 --checkpoint-at-end --cpu-clock=$FREQ --l2_size=$L2_SIZE $CACHE_CONFIG --loadgen-start=6654416674681 --loadgen-type=Pcap --loadgen-stack=DPDKStack --loadgen_pcap_filename=$PCAP_FILENAME --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT"
+  CONFIGARGS="--max-checkpoints 2 --cpu-clock=$FREQ --l2_size=$L2_SIZE $CACHE_CONFIG --loadgen-start=600011771117451658 --loadgen-type=Pcap --loadgen-stack=DPDKStack --loadgen_pcap_filename=$PCAP_FILENAME --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT"
   run_simulation > ${RUNDIR}/simout
   exit 0
 else
@@ -137,7 +148,8 @@ else
   # PCAP_FILENAME="../resources/request-dpdk-trace.pcap"
   ((INCR_INTERVAL = PACKET_RATE / 10)) 
   LOADGENREPLAYMODE=${LOADGENREPLAYMODE:-"ConstThroughput"}
-  RUNDIR=${GIT_ROOT}/rundir/memcached-dpdk-findbw-cpu-type-exp/$num_nics"NIC"-$GUEST_SCRIPT-$FREQ"-ddio-enabled"-$PACKET_RATE
+  #RUNDIR=${GIT_ROOT}/rundir/memcached-dpdk-findbw-cpu-type-exp/$num_nics"NIC"-$GUEST_SCRIPT-$FREQ"-ddio-enabled"-$PACKET_RATE
+  RUNDIR=${GIT_ROOT}/rundir/memcached-dpdk-findbw-cpu-type-exp/$num_queues"Queues-"$num_nics"NIC"-$GUEST_SCRIPT-$FREQ"-ddio-enabled"-$PACKET_RATE
   setup_dirs
   CPUTYPE="O3_ARM_v7a_3" # just because DerivO3CPU is too slow sometimes
   GEM5TYPE="opt"

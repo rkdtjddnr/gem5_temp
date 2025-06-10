@@ -273,8 +273,13 @@ eth_em_dev_init(struct rte_eth_dev *eth_dev) //eth_igb_dev_init
 	// Ring Buffer
 	#ifdef EM_SVE_512
 	printf("EM_SVE_512 defined\n");
+	printf("[PMD] ptr to rx_pkt_burst %p \n", (void *)&eth_em_recv_pkts_sve512);
+	printf("[PMD] ptr to eth_dev -> %p \n", (void *)eth_dev);
+	printf("[PMD] eth_dev->data->name -> %s \n", eth_dev->data->name);
+	fflush(stdout);
 	eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts_sve512;
 	eth_dev->tx_pkt_burst = (eth_tx_burst_t)&eth_em_xmit_pkts_vec_sve512;
+	
 	#else
 	printf("EM_SVE_512 not defined\n");
 	eth_dev->rx_pkt_burst = (eth_rx_burst_t)&eth_em_recv_pkts;

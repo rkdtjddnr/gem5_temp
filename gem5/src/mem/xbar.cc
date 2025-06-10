@@ -381,6 +381,13 @@ BaseXBar::Layer<SrcType, DstType>::recvRetry()
 PortID
 BaseXBar::findPort(AddrRange addr_range)
 {
+    
+    DPRINTF(AddrRanges, "In findPort: gotAllAddrRanges = %s\n",
+            gotAllAddrRanges ? "true" : "false");
+
+    
+    DPRINTF(AddrRanges, "Looking for port matching addr_range: start = %#x, end = %#x, range = %s\n",
+            addr_range.start(), addr_range.end(), addr_range.to_string());
     // we should never see any address lookups before we've got the
     // ranges of all connected CPU-side-port modules
     assert(gotAllAddrRanges);
@@ -450,16 +457,39 @@ BaseXBar::recvRangeChange(PortID mem_side_port_id)
 
     // update the global flag
     if (!gotAllAddrRanges) {
-        // take a logical AND of all the ports and see if we got
-        // ranges from everyone
-        gotAllAddrRanges = true;
-        std::vector<bool>::const_iterator r = gotAddrRanges.begin();
-        while (gotAllAddrRanges &&  r != gotAddrRanges.end()) {
-            gotAllAddrRanges &= *r++;
+    gotAllAddrRanges = true;
+    std::vector<bool>::const_iterator r = gotAddrRanges.begin();
+    int idx = 0;
+    while (gotAllAddrRanges && r != gotAddrRanges.end()) {
+        if (!(*r)) {
+            DPRINTF(AddrRanges, "[DBG] Port %d has not yet provided address range\n", idx);
+
+            if (idx < memSidePorts.size() && memSidePorts[idx] && memSidePorts[idx]->isConnected()) {
+                DPRINTF(AddrRanges, "[DBG] Port %d name: %s\n", idx,
+                        memSidePorts[idx]->getPeer().name());
+
+
+                const AddrRangeList& ranges = memSidePorts[idx]->getAddrRanges();
+                if (ranges.empty()) {
+                    DPRINTF(AddrRanges, "[DBG] --> No address range registered yet.\n");
+                } else {
+                    for (const auto& range : ranges) {
+                        DPRINTF(AddrRanges, "[DBG] --> Existing Range: %s\n",
+                                range.to_string());
+                    }
+                }
+            } else {
+                DPRINTF(AddrRanges, "[DBG] Port %d is not connected or invalid\n", idx);
+            }
         }
-        if (gotAllAddrRanges)
-            DPRINTF(AddrRanges, "Got address ranges from all responders\n");
+        gotAllAddrRanges &= *r++;
+        ++idx;
     }
+    if (gotAllAddrRanges)
+        DPRINTF(AddrRanges, "Got address ranges from all responders\n");
+    else
+        DPRINTF(AddrRanges, "Still waiting for some ports to provide address ranges\n");
+}
 
     // note that we could get the range from the default port at any
     // point in time, and we cannot assume that the default range is

@@ -25,7 +25,12 @@ static const char *kPacketMemPoolName = "dpdk_packet_mem_pool";
 #define kMTUStandardFrames 1500
 #define kMTUJumboFrames 9000
 #define kLinkTimeOut_ms 100
-#define kMaxBurstSize 1
+#define kMaxBurstSize 64
+
+// New config for memcached mempool
+#define RTE_MBUF_DEFAULT_DATAROOM 2048
+#define RTE_MBUF_DEFAULT_BUF_SIZE (RTE_MBUF_DEFAULT_DATAROOM + RTE_PKTMBUF_HEADROOM)
+#define DEF_MBUF_CACHE 250
 
 // To implement new tx pipeline
 #define BURST_TX_DRAIN_US 1000000 /* TX drain every ~100us */
@@ -79,13 +84,16 @@ struct DPDKObj {
 static int InitDPDK(struct DPDKObj *dpdk_obj) {
   assert(dpdk_obj != NULL);
 
+
+
   const size_t kDpdkArgcMax = 16;
   int dargv_cnt = 0;
   char *dargv[kDpdkArgcMax];
   dargv[dargv_cnt++] = (char *)"-l";
-  dargv[dargv_cnt++] = (char *)"0-3";
+  dargv[dargv_cnt++] = (char *)"0";
   dargv[dargv_cnt++] = (char *)"-n";
   dargv[dargv_cnt++] = (char *)"1";
+  //dargv[dargv_cnt++] = (char *)"--log-level=ethdev,debug";
   dargv[dargv_cnt++] = (char *)"--proc-type";
   dargv[dargv_cnt++] = (char *)"auto";
 
@@ -95,7 +103,10 @@ static int InitDPDK(struct DPDKObj *dpdk_obj) {
     return -1;
   }
   fprintf(stderr, "EAL is initialized!\n");
+  // assume port id only 0
 
+  // change log stream stderr -> stdout
+  rte_openlog_stream(stdout);
   
   ret = rte_pdump_init();
   if (ret) {
@@ -142,6 +153,8 @@ static int InitDPDK(struct DPDKObj *dpdk_obj) {
     return -1;
   }
 
+    
+
   // Make minimal Ethernet port configuration:
   //  - no checksum offload
   //  - no RSS
@@ -149,22 +162,34 @@ static int InitDPDK(struct DPDKObj *dpdk_obj) {
   struct rte_eth_conf port_conf;
   memset(&port_conf, 0, sizeof(port_conf));
   port_conf.link_speeds = ETH_LINK_SPEED_AUTONEG;
-  port_conf.rxmode.max_rx_pkt_len = kMTUStandardFrames;
+  // Change mtu config
+  //ort_conf.rxmode.max_rx_pkt_len = kMTUStandardFrames;
+  //port_conf.rxmode.max_rx_pkt_len = RTE_MBUF_DEFAULT_DATAROOM;
+  port_conf.rxmode.max_rx_pkt_len = RTE_ETHER_MAX_LEN;
   ret = rte_eth_dev_configure(pmd_port_id, kRingN, kRingN, &port_conf);
   if (ret) {
     fprintf(stderr, "Failed to configure port.\n");
     return -1;
   }
-  ret = rte_eth_dev_set_mtu(pmd_port_id, kMTUStandardFrames);
-  if (ret) {
-    fprintf(stderr, "Failed to configure MTU size.\n");
-    return -1;
-  }
+
+  // SW, we don't need this method 
+  //ret = rte_eth_dev_set_mtu(pmd_port_id, RTE_ETHER_MAX_LEN);
+  // if (ret) {
+  //   fprintf(stderr, "Failed to configure MTU size.\n");
+  //   return -1;
+  // }
 
   // Make packet pool.
+  // dpdk_obj->mpool = rte_pktmbuf_pool_create(
+  //     kPacketMemPoolName, kRingN * kRingDescN * 2, 0, 0,
+  //     kMTUStandardFrames + RTE_PKTMBUF_HEADROOM, SOCKET_ID_ANY);
+
+  // Scaling data buf size 1500(MTU) -> 1518
+  // Cache size -> 250
+  // Config is same as testpmd appication
   dpdk_obj->mpool = rte_pktmbuf_pool_create(
-      kPacketMemPoolName, kRingN * kRingDescN * 2, 0, 0,
-      kMTUStandardFrames + RTE_PKTMBUF_HEADROOM, SOCKET_ID_ANY);
+      kPacketMemPoolName, kRingN * kRingDescN * 8, DEF_MBUF_CACHE, 0,
+      RTE_MBUF_DEFAULT_BUF_SIZE, SOCKET_ID_ANY);
   if (dpdk_obj->mpool == NULL) {
     fprintf(stderr, "Failed to create memory pool for packets.\n");
     return -1;
@@ -228,6 +253,11 @@ static int InitDPDK(struct DPDKObj *dpdk_obj) {
     fprintf(stderr, "Failed to start port\n");
     return -1;
   }
+  struct rte_eth_dev *dev = &rte_eth_devices[pmd_port_id];
+  printf("[APP] ------ after Start port -------- \n");
+  printf("[APP] ptr to eth_dev -> %p \n", (void *)dev);
+  printf("[APP] ptr to dev->rx_pkt_burst -> %p \n", (void *)dev->rx_pkt_burst);
+  fflush(stdout);
 
   // Get link status.
   fprintf(stderr, "Port started, waiting for link to get up...\n");
@@ -267,8 +297,7 @@ static int AllocateDPDKTxBuffers(struct DPDKObj *dpdk_obj, size_t batch_size) {
   if (batch_size > kMaxBurstSize)
     return -1;
 
-  int ret =
-      rte_pktmbuf_alloc_bulk(dpdk_obj->mpool, dpdk_obj->tx_mbufs, batch_size);
+  int ret = rte_pktmbuf_alloc_bulk(dpdk_obj->mpool, dpdk_obj->tx_mbufs, batch_size);
   if (ret)
     return -1;
   dpdk_obj->tx_burst_size = batch_size;
@@ -283,6 +312,7 @@ static struct rte_mbuf *GetNextDPDKTxBuffer(struct DPDKObj *dpdk_obj) {
     return NULL;
   struct rte_mbuf *mbuf = dpdk_obj->tx_mbufs[dpdk_obj->tx_burst_ptr];
   ++dpdk_obj->tx_burst_ptr;
+  //printf("[DEBUG] dpdk_obj->tx_burst_ptr -> %u\n", dpdk_obj->tx_burst_ptr);
   return mbuf;
 }
 
@@ -292,6 +322,7 @@ static struct rte_mbuf *GetNextDPDKRxBuffer(struct DPDKObj *dpdk_obj) {
     return NULL;
   struct rte_mbuf *mbuf = dpdk_obj->rx_mbufs[dpdk_obj->rx_burst_ptr];
   ++dpdk_obj->rx_burst_ptr;
+  //printf("[DEBUG] dpdk_obj->rx_burst_ptr -> %u\n", dpdk_obj->rx_burst_ptr);
   return mbuf;
 }
 
@@ -374,11 +405,18 @@ static int SendBuffer(struct DPDKObj *dpdk_obj, struct rte_mbuf *pckt) {
 static int RecvOverDPDK(struct DPDKObj *dpdk_obj) {
   struct rte_mbuf *packets[kMaxBurstSize];
   const uint16_t ring_id = 0;
+  //printf("[MEMC] Starting RX from igbe !! \n");
   uint16_t received_pckt_cnt =
       rte_eth_rx_burst(dpdk_obj->pmd_ports[dpdk_obj->pmd_port_to_use], ring_id,
                        packets, kMaxBurstSize);
   if (received_pckt_cnt == 0)
+  {
+    //printf("[MEMC] Nothing from igbe..... return... \n");
     return 0;
+  }
+  // else
+  //   printf("[MEMC] %u packets from igbe\n", received_pckt_cnt);
+    
 
   dpdk_obj->rx_burst_size = 0;
   for (int i = 0; i < received_pckt_cnt; ++i) {

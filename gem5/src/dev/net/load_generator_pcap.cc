@@ -46,6 +46,11 @@ LoadGeneratorPcap::LoadGeneratorPcap(const LoadGeneratorPcapParams &p)
       incrementInterval(p.increment_interval),
       lastRxCount(0),
       lastTxCount(0),
+
+      // SW, for steady state
+      prevTick(0),
+      rxInterval(0),
+
       count_packets(0),
       pcapFilename(p.pcap_filename),
       sendPacketEvent([this] { sendPacket(); }, name()),
@@ -315,7 +320,23 @@ void LoadGeneratorPcap::endTest() const {
   exitSimLoop("m5_exit by loadgen End Simulator.", 0, curTick(), 0, true);
 }
 
+
+
 bool LoadGeneratorPcap::processRxPkt(EthPacketPtr pkt) {
+
+  if (lastRxCount == 0)
+    DPRINTF(LoadgenLatency, "LoadGen receive first RX !!\n");
+
+  // Steady-state interval??
+  // checking interval between rxPck for first 10000 pckt
+  if((lastRxCount > 0 && lastRxCount < 10000) || lastRxCount == 110000)
+  {
+    rxInterval = (gem5::curTick() - prevTick) / 1e3; // ns
+    DPRINTF(LoadgenLatency, "LoadGen RX interval %lu \n", rxInterval);
+  }
+  prevTick = gem5::curTick();
+  
+
   loadGeneratorPcapStats.recvPackets++;
   lastRxCount++;
 
@@ -327,7 +348,7 @@ bool LoadGeneratorPcap::processRxPkt(EthPacketPtr pkt) {
   // memcpy(&sendTick, &(pkt->data[8]), sizeof(uint64_t));
   float delta = float((gem5::curTick() - sendTick)) / 10.0e8;
   loadGeneratorPcapStats.latency.sample(delta);
-  DPRINTF(LoadgenLatency, "Latency %f \n", delta);
+  //DPRINTF(LoadgenLatency, "Latency %f \n", delta);
   return true;
 }
 }  // namespace gem5

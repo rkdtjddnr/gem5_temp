@@ -51,6 +51,11 @@ class LoadGeneratorPcap : public SimObject {
   std::string pcapFilename;
   pcap_t *pcap_h;
 
+
+  // SW, for steady state
+  uint64_t prevTick, rxInterval;
+
+
   // Scheduling events.
   EventFunctionWrapper sendPacketEvent;
   EventFunctionWrapper checkLossEvent;

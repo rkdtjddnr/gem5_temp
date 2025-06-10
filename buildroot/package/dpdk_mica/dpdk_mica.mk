@@ -1,0 +1,11 @@
+DPDK_MICA_VERSION:=2.0.1
+DPDK_MICA_SITE:="$(BR2_EXTERNAL_DPDK_GEM5_PATH)/package/dpdk_mica/dpdk_mica_src"
+DPDK_MICA_CONF_ENV = ac_cv_prog_cc_c99='-std=gnu99'
+DPDK_MICA_CONF_ENV += RTE_SDK="$(@D)/../dpdk-20.11.3"
+#DPDK_MICA_CONF_ENV += RTE_SDK="$(BR2_EXTERNAL_DPDK_GEM5_PATH)/package/dpdk/dpdk-source"
+DPDK_MICA_DEPENDENCIES = libevent
+DPDK_MICA_SITE_METHOD:=local
+DPDK_MICA_AUTORECONF = YES
+DPDK_MICA_INSTALL_TARGET:=YES
+
+$(eval $(cmake-package))

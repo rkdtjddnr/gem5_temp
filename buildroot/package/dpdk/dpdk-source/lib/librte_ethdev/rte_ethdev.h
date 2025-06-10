@@ -4851,6 +4851,17 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 		return 0;
 	}
 #endif
+
+#define SW_LOG 0
+#if SW_LOG == 1
+	RTE_ETHDEV_LOG(DEBUG, "[DRV] Starting RX: port_id=%u, queue_id=%u, nb_pkts=%u\n",
+                   port_id, queue_id, nb_pkts);
+	RTE_ETHDEV_LOG(DEBUG, "[DRV] ptr to eth_dev -> %p \n", (void *)dev);
+	RTE_ETHDEV_LOG(DEBUG, "[DRV] ptr to rx_pkt_burst -> %p \n", (void *)dev->rx_pkt_burst);
+	RTE_ETHDEV_LOG(DEBUG, "[DRV] dev->data->name -> %s \n", dev->data->name);
+	fflush(stdout);
+#endif	
+
 	nb_rx = (*dev->rx_pkt_burst)(dev->data->rx_queues[queue_id],
 				     rx_pkts, nb_pkts);
 

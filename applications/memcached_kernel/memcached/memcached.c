@@ -47,6 +47,11 @@
 #include <sysexits.h>
 #include <stddef.h>
 
+//#include <gem5/m5ops.h>
+
+
+
+
 #ifdef HAVE_GETOPT_LONG
 #include <getopt.h>
 #endif
@@ -146,9 +151,10 @@ int perform_get(const struct ReqHdr *p_hdr, uint8_t** val, uint32_t *val_len);
 size_t process_through_memcached(uint8_t* rx_buff_ptr, uint8_t* tx_buff_ptr) {
     struct MemcacheUdpHeader *hdr = (struct MemcacheUdpHeader*)rx_buff_ptr;
     if (hdr->RESERVED[0] != kMagicMagic[0] || hdr->RESERVED[1] != kMagicMagic[1]) {
-        fprintf(stderr, "Critical error: unexpected packet received!\n");
+        printf("Critical error: unexpected packet received!\n");
         return 0;
     }
+    //printf("[DEBUG] process_through_memcached starting!\n");
     rx_buff_ptr += sizeof(struct MemcacheUdpHeader);
     const struct ReqHdr *p_hdr = (struct ReqHdr*)rx_buff_ptr;
 
@@ -165,7 +171,8 @@ size_t process_through_memcached(uint8_t* rx_buff_ptr, uint8_t* tx_buff_ptr) {
     // Parse type of request.
     if (p_hdr->opcode == 0x01) {
         // SET.
-        // fprintf(stderr, "\n**** Encountered a SET request ****\n");
+        //printf("**** Encountered a SET request ****\n");
+        
         int res = perform_set(p_hdr);
         
         // Set the response.
@@ -180,7 +187,8 @@ size_t process_through_memcached(uint8_t* rx_buff_ptr, uint8_t* tx_buff_ptr) {
         // GET.
         uint8_t *value;
         uint32_t value_len;
-        // fprintf(stderr, "\n**** Encountered a GET request ****\n");
+        //printf("**** Encountered a GET request ****\n");
+        
         int res = perform_get(p_hdr, &value, &value_len);
 
         // Set the response.
@@ -204,6 +212,11 @@ size_t process_through_memcached(uint8_t* rx_buff_ptr, uint8_t* tx_buff_ptr) {
         }
         // fprintf(stderr, "\"GET\" Packet size in bytes is %lu\n", sizeof(struct MemcacheUdpHeader) + sizeof(struct RespHdr) + value_len);
         return sizeof(struct MemcacheUdpHeader) + sizeof(struct RespHdr) + value_len;
+    }
+    // except handling 
+    else {
+        printf("**** Undefined opcode ****\n");
+        return 0;
     }
 }
 
@@ -6396,28 +6409,62 @@ int main (int argc, char **argv) {
 #ifdef _GEM5_
     fprintf(stderr, "Taking post-initialization checkpoint.\n");
     system("m5 checkpoint");
+    //m5_checkpoint(0,0);
 #endif
-
-    fprintf(stderr, "DPDK-version of memcached is ready to accept requests!\n");
+    
+    printf("DPDK-version of memcached is ready to accept requests!\n");
+    printf("DPDK-version of memcached burst size is %d\n", kMaxBurstSize);
      while (!stop_main_loop) {
          uint16_t received_pckt_cnt = RecvOverDPDK(&dpdk);
          if (received_pckt_cnt == 0) continue;
 
          // Prepare response buffer.
-         AllocateDPDKTxBuffers(&dpdk, received_pckt_cnt);
-
-         // fprintf(stderr, "DPDK-Version of Memcached Server received %d Packets in a single Bursts!\n", (int)received_pckt_cnt);
+         int alloc_tx = AllocateDPDKTxBuffers(&dpdk, received_pckt_cnt);
+        //  if(alloc_tx != 0)
+        //  {
+        //     printf("Failed to alloc tx mbuf from mempool\n");
+        //     // [DEBUG] mempool status
+        //     rte_mempool_dump(stdout, dpdk.mpool);
+        //  }
+        //  else
+        //  {
+        //     printf("Alloc tx mbuf from mempool\n");
+        //     // [DEBUG] mempool status
+        //     rte_mempool_dump(stdout, dpdk.mpool);
+        //  }   
+         //printf("DPDK-Version of Memcached Server received %d Packets in a single Bursts!\n", (int)received_pckt_cnt);
+         
 
          for (int i = 0; i < received_pckt_cnt; ++i) {
+             
              struct rte_mbuf *rx_mbuf = GetNextDPDKRxBuffer(&dpdk);
              struct rte_mbuf *tx_mbuf = GetNextDPDKTxBuffer(&dpdk);
+             // printf i for distinguish new burst 0-64 -> 0-64 -> .....
+             //if(i == 0)
+             //   printf("rx 0x%lx tx 0x%lx \n", rte_mbuf_data_iova_default(rx_mbuf), rte_mbuf_data_iova_default(tx_mbuf));
+            
+            //  printf("[MEMC] ------ %d ------ \n", i);
+            //  printf("[MEMC] rx mbuf physical addr 0x%lx \n", rte_mbuf_data_iova_default(rx_mbuf));
+            //  printf("[MEMC] tx mbuf physical addr 0x%lx \n", rte_mbuf_data_iova_default(tx_mbuf));
+             //printf("[MEMC] rx_mbuf -> %p\n", (void*)rx_mbuf);
+             //printf("[MEMC] tx_mbuf -> %p\n", (void*)tx_mbuf);
              assert(rx_mbuf != NULL);
              assert(tx_mbuf != NULL);
 
              // Process through memcached.
              uint8_t *rx_buff_ptr = ExtractPacketPayload(rx_mbuf);
              uint8_t *tx_buff_ptr = ExtractPacketPayload(tx_mbuf);
+             //printf("[MEMC] rx_buff_ptr -> %p\n", (void*)rx_buff_ptr);
+             //printf("[MEMC] tx_buff_ptr -> %p\n", (void*)tx_buff_ptr);
+             assert(rx_buff_ptr != NULL);
+             assert(tx_buff_ptr != NULL);
+             
              size_t rsp_pckt_size = process_through_memcached(rx_buff_ptr, tx_buff_ptr);
+             if(rsp_pckt_size == 0)
+             {
+                printf("Something is wrong..... rsp_pckt_size is 0 !!!\n");
+                continue;
+             }
              // fprintf(stderr, "Packet size in bytes is %ld\n", rsp_pckt_size);
             
              // Swap MAC addresses and set packet parameters.
@@ -6427,7 +6474,7 @@ int main (int argc, char **argv) {
              FreeDPDKPacket(rx_mbuf);
          }
 
-         // fprintf(stderr, "DPDK-Version of Memcached Server is sending out %d Packets in a single Burst!\n", (int)dpdk.tx_burst_size);
+         //printf("DPDK-Version of Memcached Server is sending out %d Packets in a single Burst!\n", (int)dpdk.tx_burst_size);
          // Send response.
          SendBatch(&dpdk);
      }

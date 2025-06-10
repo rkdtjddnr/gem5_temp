@@ -1,0 +1,8 @@
+config BR2_PACKAGE_DPDK_MICA
+	bool "dpdk_mica"
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_USE_MMU # fork()
+	depends on BR2_PACKAGE_GFLAGS
+	select BR2_PACKAGE_LIBEVENT
+	help
+		dpdk_mica for gem5

@@ -52,6 +52,9 @@
 #include "e1000_ethdev.h"
 #include "base/e1000_osdep.h"
 
+// SW debug
+#define SW_LOG 0
+
 #define	E1000_TXD_VLAN_SHIFT	16
 
 #define E1000_RXDCTL_GRAN	0x01000000 /* RXDCTL Granularity */
@@ -1481,6 +1484,8 @@ eth_em_xmit_fixed_burst_vec_sve512(void *tx_queue, struct rte_mbuf **tx_pkts,
 
 	txq->tx_tail = tx_id;
 
+	// modified 
+	rte_wmb();
 	E1000_PCI_REG_WRITE_RELAXED(txq->tdt_reg_addr, txq->tx_tail);
 
 	return nb_pkts;
@@ -1494,6 +1499,11 @@ eth_em_xmit_pkts_vec_sve512(void *tx_queue, struct rte_mbuf **tx_pkts,
 	/*Utilize ice_rxtx_vec_avx512.c file. But we will use arm sve intrinsic*/
 	uint16_t nb_tx = 0;
 	struct em_tx_queue *txq = (struct em_tx_queue *)tx_queue;
+
+	// SW, debug code for tx
+	PMD_TX_LOG(DEBUG, "[PMD_TX] Starting tx burst: nb_pkts=%u \n", nb_pkts);
+	PMD_TX_LOG(DEBUG, "[PMD_TX] Current TDT val=%u, TX ring DMA addr=%lu, TX desc num=%u, Used TX desc=%u \n", 
+				txq->tx_tail, txq->tx_ring_phys_addr, txq->nb_tx_desc, txq->nb_tx_used);
 
 	while (nb_pkts) {
 		uint16_t ret, num;
@@ -3482,6 +3492,14 @@ eth_em_rxq_rearm_common(struct em_rx_queue *rxq)
 	int i;
 	uint16_t rx_id;
 
+	#if SW_LOG == 1
+	printf( "------- eth_em_rxq_rearm_common -------\n");
+	printf(
+    "[PMD] rxdp addr = %p, rx_ring base = %p, rearm_start = %u\n",
+    (void *)rxdp, (void *)rxq->rx_ring, rxq->rxrearm_start);
+	fflush(stdout);
+	#endif
+
 	/* Pull 'n' more MBUFs into the software ring */
 	if (rte_mempool_get_bulk(rxq->mb_pool,
 				 (void *)rxep,
@@ -3545,6 +3563,9 @@ eth_em_rxq_rearm_common(struct em_rx_queue *rxq)
 			     (rxq->nb_rx_desc - 1) : (rxq->rxrearm_start - 1));
 
 	/* Update the tail pointer on the NIC */
+	#if SW_LOG == 1
+	printf( "[PMD] MMIO write rx_id %u to rdt_reg_addr %lx \n", rx_id, rxq->rdt_reg_addr);
+	#endif
 	E1000_PCI_REG_WRITE(rxq->rdt_reg_addr, rx_id);
 
 }
@@ -3560,6 +3581,21 @@ eth_em_rxq_rearm(struct em_rx_queue *rxq)
 			// rte_lcore_id());
 	int i;
 	uint16_t rx_id;
+	
+	// SW debugging 
+	// logging all address value
+	#if SW_LOG == 1
+	printf( "------- eth_em_rxq_rearm -------\n");
+	printf(
+    "[PMD] rxdp addr = %p, rx_ring base = %p, rearm_start = %u\n",
+    (void *)rxdp, (void *)rxq->rx_ring, rxq->rxrearm_start);
+
+	printf(
+    "[PMD] mempool cache addr = %p (from lcore %u)\n",
+    (void *)cache, lcore);
+	fflush(stdout);
+	#endif
+	
 
 	if (unlikely(!cache))
 		return eth_em_rxq_rearm_common(rxq);
@@ -3644,8 +3680,11 @@ eth_em_rxq_rearm(struct em_rx_queue *rxq)
 			     (rxq->nb_rx_desc - 1) : (rxq->rxrearm_start - 1));
 
 	/* Update the tail pointer on the NIC */
-	// printf("DPDK_SVE512[RX]: rx_rearm_start: %d\n", rxq->rxrearm_start);
-	// fflush(stdout);
+	//printf("DPDK_SVE512[RX]: rx_rearm_start: %d\n", rxq->rxrearm_start);
+	//fflush(stdout);
+	#if SW_LOG == 1
+	printf( "[PMD] MMIO write rx_id %u to rdt_reg_addr %lx \n", rx_id, rxq->rdt_reg_addr);
+	#endif
 	E1000_PCI_REG_WRITE(rxq->rdt_reg_addr, rx_id);
 
 }
@@ -3666,6 +3705,20 @@ eth_em_recv_pkts_sve512(void *rx_queue, struct rte_mbuf **rx_pkts,
 	volatile union e1000_adv_rx_desc *last_rxdp_within_batch_32 = rxq->rx_ring + last_rx_id_within_batch_32;
 	uint16_t nb_rx;
 
+	// debugging
+	#if SW_LOG == 1
+	printf( "------ eth_em_recv_pkts_sve512 ------\n");
+	printf( "[PMD] Start RX: port=%u queue=%u tail=%u nb_pkts=%u\n",
+		rxq->port_id, rxq->queue_id, rxq->rx_tail, nb_pkts);
+	printf("[PMD] rxq = %p, rx_ring base addr = %p, rx_tail = %u, rxdp addr = %p\n",
+    (void *)rxq,
+    (void *)rxq->rx_ring,
+    rxq->rx_tail,
+    (void *)rxdp);
+	fflush(stdout);
+	#endif
+	
+
 	// also prefetch the last descriptor within the batch
 	rte_prefetch0(last_rxdp_within_batch_32);
 	rte_prefetch0(rxdp);
@@ -3677,7 +3730,11 @@ eth_em_recv_pkts_sve512(void *rx_queue, struct rte_mbuf **rx_pkts,
 	 * of time to act
 	 */
 	if (rxq->rxrearm_nb > EM_RXQ_REARM_THRESH)
+	{
+		
 		eth_em_rxq_rearm(rxq);
+	}
+		
 	
 	/* Before we start moving massive data around, check to see if
 	 * there is actually a packet available
@@ -3695,7 +3752,7 @@ eth_em_recv_pkts_sve512(void *rx_queue, struct rte_mbuf **rx_pkts,
 		nb_rx = _eth_em_recv_raw_pkts_vec_sve512_eff(rxq, rx_pkts, nb_pkts);
 		return nb_rx;
 	}
-
+	
 	nb_rx = 0;
 	while (nb_pkts > 0) {
 		uint16_t ret, n;
@@ -3870,6 +3927,8 @@ eth_em_recv_pkts_m2func(void *rx_queue, struct rte_mbuf **rx_pkts,
 		mb = rx_pkts[i];
 		eth_hdr = rte_pktmbuf_mtod(mb, struct rte_ether_hdr *);
 	}
+	printf( "[PMD] RX finished: port=%u queue=%u total_pkts=%u\n",
+		rxq->port_id, rxq->queue_id, nb_rx);
 	
 	return nb_rx;
 }
@@ -6854,7 +6913,11 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 
 	// Ring buffer
 	#ifdef EM_SVE_512
+	printf("[PMD] ------ eth_em_rx_init -------- \n");
+	printf("[PMD] ptr to eth_dev -> %p \n", (void *)dev);
+	printf("[PMD] ptr to eth_em_recv_pkts_sve512 -> %p \n", (void *)eth_em_recv_pkts_sve512);
 	dev->rx_pkt_burst = (eth_rx_burst_t)eth_em_recv_pkts_sve512;
+	printf("[PMD] ptr to dev->rx_pkt_burst -> %p \n", (void *)dev->rx_pkt_burst);
 	#else
 	dev->rx_pkt_burst = (eth_rx_burst_t)eth_em_recv_pkts;
 	#endif
@@ -6880,7 +6943,9 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 		rxq = dev->data->rx_queues[i];
 		buf_size = rte_pktmbuf_data_room_size(rxq->mb_pool) -
 			RTE_PKTMBUF_HEADROOM;
+		printf("[PMD] buf size -> %uB \n", buf_size);
 		rctl_bsize = RTE_MIN(rctl_bsize, buf_size);
+		printf("[PMD] rctl_bsize -> %u \n", rctl_bsize);
 	}
 
 	rctl |= em_rctl_bsize(hw->mac.type, &rctl_bsize);
@@ -6948,6 +7013,10 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 			dev->rx_pkt_burst =
 				(eth_rx_burst_t)eth_em_recv_scattered_pkts;
 			dev->data->scattered_rx = 1;
+			printf("[PMD] @@@ When configuring queue @@@ \n");
+			printf("[PMD] rctl_bsize -> %u \n", rctl_bsize);
+			printf("[PMD] rxmode->offloads %lx \n", rxmode->offloads);
+			printf("[PMD] ptr to dev->rx_pkt_burst -> %p \n", (void *)dev->rx_pkt_burst);
 		}
 	}
 
@@ -6956,8 +7025,15 @@ eth_em_rx_init(struct rte_eth_dev *dev)
 			PMD_INIT_LOG(DEBUG, "forcing scatter mode");
 		dev->rx_pkt_burst = eth_em_recv_scattered_pkts;
 		dev->data->scattered_rx = 1;
+		printf("[PMD] @@@ After configuring queue @@@ \n");
+		printf("[PMD] ptr to dev->rx_pkt_burst -> %p \n", (void *)dev->rx_pkt_burst);
 	}
 
+	// printf("[PMD] @@@ Is scatter mode enabled?? @@@ \n");
+	// printf("[PMD] rxmode->mq_mode %lx\n", rxmode->mq_mode);
+	// printf("[PMD] dev_conf rxmode->offloads %lx \n", dev->data->dev_conf.rxmode.offloads);
+	printf("[PMD] ptr to eth_em_recv_scattered_pkts -> %p \n", (void *)eth_em_recv_scattered_pkts);
+	printf("[PMD] ptr to dev->rx_pkt_burst -> %p \n", (void *)dev->rx_pkt_burst);
 	/*
 	 * Configure RSS if device configured with multiple RX queues.
 	 */

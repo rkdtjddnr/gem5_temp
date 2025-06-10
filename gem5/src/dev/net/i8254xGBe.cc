@@ -60,6 +60,9 @@
 //0: No log, 1: Ring buffer log, 5: Ring buffer log prepare
 #define LOG_LEVEL 0
 
+// SW : more condition to i want to watch
+#define WANT_TO_SEE 0
+
 namespace gem5
 {
 
@@ -949,7 +952,9 @@ IGbE::write(PacketPtr pkt)
             DPRINTF(EthernetDpdk, "Write RDT[%d]: %d\n", queueid, regs.rdt_array[queueid]());
             Tick headerDelay = pkt->headerDelay;
             Tick payloadDelay = pkt->payloadDelay;
+            #if LOG_LEVEL == 1 || LOG_LEVEL == 5
             printf("[LOG], %lu, Write RDT[%d]: %d\n", curTick(), queueid, val);
+            #endif
             etherDeviceStats.rxTailWriteBytes += pkt->getSize();
             if (commType == CommunicationType::RING) {
                 if (drainState() == DrainState::Running) {
@@ -1019,7 +1024,9 @@ IGbE::write(PacketPtr pkt)
             DPRINTF(EthernetDpdk, "TXS: TX Tail pointer updated in queue %d\n", queueid);
             DPRINTF(EthernetDpdk, "Write TDT[%d]: %d, headerDelay: %d, payloadDelay: %d\n", queueid, regs.tdt_array[queueid](),
                    headerDelay, payloadDelay);
+            #if LOG_LEVEL == 1 || LOG_LEVEL == 5
             printf("[LOG], %lu, Write TDT[%d]: %d\n", curTick(), queueid, val);
+            #endif
             etherDeviceStats.txTailWriteBytes += pkt->getSize();
             if (commType == CommunicationType::RING) {
                 if (drainState() == DrainState::Running) {
@@ -1658,7 +1665,7 @@ IGbE::DescCacheGlobal<T>::writebackGlobal(Addr aMask)
         memcpy(&wbBufArray[wbDMAEngineIdx][x], usedCache[x + curWbingNum], sizeof(T));
     }
 
-    #if LOG_LEVEL == 1
+    #if LOG_LEVEL == 1 || WANT_TO_SEE == 1
     if (isRx) {
         printf("[LOG], %lu, RXDescWB_DMAE[%d]_R, Addr: %lx, Size: %d, (Head: %ld, Tail: %ld, WbDMAPnt: %d, WbDMAingNum: %d)\n",
             curTick(), wbDMAEngineIdx, pciToDma(descBase() + curWbDMAPnt * sizeof(T)), max_to_wb * sizeof(T), descHead(), descTail(), curWbDMAPnt, curWbingNum);
@@ -1742,7 +1749,7 @@ IGbE::DescCacheGlobal<T>::fetchDescriptorsGlobal()
         
     DPRINTF(EthernetDesc, "Fetching %d descriptors from %d to %d\n",
             max_to_fetch, curFetchDMAPnt, descTail());
-    #if LOG_LEVEL == 1
+    #if LOG_LEVEL == 1 || LOG_LEVEL == 5
     if (isRx) {
         printf("[LOG], %lu, RXDescFetch_DMAE[%d]_R, Addr: %lx, Size: %d, (Head: %ld, Tail: %ld, FetchDMAPnt: %d, cachePnt: %d)\n",
             curTick(), fetchDMAEngineIdx, pciToDma(descBase() + curFetchDMAPnt * sizeof(T)), max_to_fetch * sizeof(T), descHead(), descTail(), curFetchDMAPnt, cachePnt);
@@ -1820,7 +1827,7 @@ IGbE::DescCacheGlobal<T>::wbCompleteGlobal(int dmaEngineIdx)
             DPRINTF(EthernetDesc, "Writeback complete curHead %d -> %d\n",
                     oldHead, curHead);
             
-            #if LOG_LEVEL == 1
+            #if LOG_LEVEL == 1 || WANT_TO_SEE == 1
             if (isRx) {
                 printf("[LOG], %lu, WBRXDescComplete_DMAE[%d], OldHead: %ld, UpdatedHead: %ld, Tail: %ld, curWbDMAPnt: %ld\n", curTick(), popIdx, oldHead, descHead(), descTail(), curWbDMAPnt);
             } else {
