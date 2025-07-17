@@ -763,6 +763,25 @@ typedef int (*eth_hairpin_queue_peer_unbind_t)
 	(struct rte_eth_dev *dev, uint16_t cur_queue, uint32_t direction);
 /**< @internal Unbind peer queue from the current queue. */
 
+
+#ifdef USE_ENSO
+// new driver function for ENSO
+typedef int (*notif_init_fn_t)(struct rte_eth_dev* dev,
+                               unsigned notif_id,
+                               uint64_t phys_addr);
+
+typedef int (*rx_enso_init_fn_t)(struct rte_eth_dev* dev,
+                                 uint16_t rx_enso_id,
+                                 unsigned core_id,
+                                 uint64_t phys_addr);
+
+typedef void (*update_rx_notif_head_fn_t)(struct rte_eth_dev* dev, uint32_t notif_id, uint32_t updated_head);
+
+typedef void (*update_rx_enso_head_fn_t)(struct rte_eth_dev* dev, uint16_t rx_enso_id, uint32_t updated_head);
+
+typedef void (*update_tx_notif_tail_fn_t)(struct rte_eth_dev* dev, uint32_t notif_id, uint32_t updated_tail);
+#endif
+
 /**
  * @internal A structure containing the functions exported by an Ethernet driver.
  */
@@ -917,6 +936,14 @@ struct eth_dev_ops {
 	/**< Set up the connection between the pair of hairpin queues. */
 	eth_hairpin_queue_peer_unbind_t hairpin_queue_peer_unbind;
 	/**< Disconnect the hairpin queues of a pair from each other. */
+
+	#ifdef USE_ENSO
+	notif_init_fn_t notif_init;
+	rx_enso_init_fn_t rx_enso_init;
+	update_rx_notif_head_fn_t update_rx_notif_head;
+	update_rx_enso_head_fn_t update_rx_enso_head;
+	update_tx_notif_tail_fn_t update_tx_notif_tail;
+	#endif
 };
 
 /**

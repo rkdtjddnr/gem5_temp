@@ -5809,3 +5809,555 @@ RTE_INIT(ethdev_init_telemetry)
 			eth_dev_handle_port_link_status,
 			"Returns the link status for a port. Parameters: int port_id");
 }
+
+#ifdef USE_ENSO
+static uint16_t global_tx_enso_id = 0;
+uint32_t rx_pipe_status[PIPE_STATUS_SIZE] = {0};
+static void set_pipe_status(int pipe_index, bool status);
+static bool get_pipe_status(int pipe_index);
+static int find_and_allocate_pipe();
+
+EnsoDevice_t* rte_eth_enso_device_init(unsigned core_id, uint16_t port_id)
+{
+	EnsoDevice_t* device = (EnsoDevice_t*)malloc(sizeof(EnsoDevice_t));
+	assert(device);
+
+	device->core_id = core_id;
+	device->port_id = port_id;
+	device->tx_pr_head = 0;
+	device->tx_pr_tail = 0;
+	
+	device->rx_pipe = NULL;
+	device->tx_pipe = NULL;
+
+	return device;
+}
+
+void rte_eth_device_free(EnsoDevice_t* device)
+{
+	free(device->notif_pair);
+	free(device->rx_pipe);
+	free(device->tx_pipe);
+	free(device);
+}
+
+int rte_eth_notif_init(EnsoDevice_t* device)
+{
+	NotificationBufPair_t* new_notif_pair = (NotificationBufPair_t*)malloc(sizeof(NotificationBufPair_t));
+	if(new_notif_pair == NULL)
+	{
+		printf("Could not allocate notification buffer state in malloc\n");
+		return -1;
+	}
+
+	// link with device
+	device->notif_pair = new_notif_pair;
+
+	new_notif_pair->id = device->core_id;
+	new_notif_pair->rx_buf = (struct RxNotification*)rte_zmalloc("notif_buf", ENSO_BUF_SIZE, RTE_CACHE_LINE_MIN_SIZE);
+      //(struct RxNotification*)get_huge_page(huge_page_path);
+	if (new_notif_pair->rx_buf == NULL) {
+		printf("Could not get huge page\n");
+		return -1;
+	}
+
+	// Use first half of the huge page for RX and second half for TX.
+	new_notif_pair->tx_buf = 
+		(struct TxNotification*)((uint64_t)new_notif_pair->rx_buf + NOTIF_BUF_SIZE);
+
+	uint64_t phys_addr = rte_malloc_virt2iova(new_notif_pair->rx_buf);
+	
+	
+	new_notif_pair->rx_head = 0;
+
+	// Preserve TX DSC tail and make head have the same value.
+	new_notif_pair->tx_tail = 0;
+	new_notif_pair->tx_head = new_notif_pair->tx_tail;
+
+	new_notif_pair->pending_rx_pipe_tails = (uint32_t*)malloc(
+		sizeof(*(new_notif_pair->pending_rx_pipe_tails)) * MAX_NB_FLOWS);
+	if (new_notif_pair->pending_rx_pipe_tails == NULL) {
+		printf("Could not allocate memory\n");
+		return -1;
+	}
+	memset(new_notif_pair->pending_rx_pipe_tails, 0, MAX_NB_FLOWS);
+
+	new_notif_pair->wrap_tracker =
+		(uint8_t*)malloc(NOTIFICATION_BUF_SIZE / 8);
+	if (new_notif_pair->wrap_tracker == NULL) {
+		printf("Could not allocate memory\n");
+		return -1;
+	}
+	memset(new_notif_pair->wrap_tracker, 0, (NOTIFICATION_BUF_SIZE / 8));
+
+	new_notif_pair->next_rx_pipe_ids =
+		(uint16_t*)malloc(NOTIFICATION_BUF_SIZE * sizeof(uint16_t));
+	if (new_notif_pair->next_rx_pipe_ids == NULL) {
+		printf("Could not allocate memory\n");
+		return -1;
+	}
+
+	new_notif_pair->next_rx_ids_head = 0;
+	new_notif_pair->next_rx_ids_tail = 0;
+	new_notif_pair->tx_full_cnt = 0;
+	new_notif_pair->nb_unreported_completions = 0;
+
+
+	struct rte_eth_dev *dev;
+	
+	dev = &rte_eth_devices[device->port_id];
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->notif_init, -ENOTSUP);
+
+	return (*dev->dev_ops->notif_init)(dev, new_notif_pair->id, phys_addr);
+
+}
+
+int rte_eth_rx_enso_init(EnsoDevice_t* device)
+{
+	RxEnsoPipe_t* new_rx_pipe = (RxEnsoPipe_t*)malloc(sizeof(RxEnsoPipe_t));
+	if(new_rx_pipe == NULL)
+	{
+		printf("Could not allocate RX enso buffer state in malloc\n");
+		return -1;
+	}
+
+	// need to prevent race condition in multi-core
+	new_rx_pipe->id = find_and_allocate_pipe();
+	if(new_rx_pipe->id < 0)
+		return -1;
+
+	device->rx_pipe = new_rx_pipe;
+
+	new_rx_pipe->buf = (uint32_t*)rte_zmalloc('rx_enso_pipe', ENSO_BUF_SIZE, RTE_CACHE_LINE_MIN_SIZE);
+	if(new_rx_pipe->buf == NULL)
+	{
+		printf("Could not get huge page\n");
+		return -1;
+	}
+
+	new_rx_pipe->buf_phys_addr = rte_malloc_virt2iova(new_rx_pipe->buf);
+	new_rx_pipe->rx_head = 0;
+	new_rx_pipe->rx_tail = 0;
+	new_rx_pipe->next_pipe = false;
+	
+
+	struct rte_eth_dev *dev;
+	
+	dev = &rte_eth_devices[device->port_id];
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->rx_enso_init, -ENOTSUP);
+
+	return (*dev->dev_ops->rx_enso_init)(dev, new_rx_pipe->id, device->core_id, new_rx_pipe->buf_phys_addr);
+}
+
+// rte_eth_tx_enso_init -> eth_em_tx_enso_init
+int rte_eth_tx_enso_init(EnsoDevice_t* device)
+{
+	TxEnsoPipe_t* new_tx_pipe = (TxEnsoPipe_t*)malloc(sizeof(TxEnsoPipe_t));
+	if(new_tx_pipe == NULL)
+	{
+		printf("Could not allocate TX enso buffer state in malloc\n");
+		return -1;
+	}
+	new_tx_pipe->id = global_tx_enso_id;
+	++global_tx_enso_id;
+
+	device->tx_pipe = new_tx_pipe;
+
+	new_tx_pipe->buf = (uint8_t*)rte_zmalloc('tx_enso_pipe', ENSO_BUF_SIZE, RTE_CACHE_LINE_MIN_SIZE);
+	if(new_tx_pipe->buf == NULL)
+	{
+		printf("Could not get huge page\n");
+		return -1;
+	}
+	new_tx_pipe->buf_phys_addr = rte_malloc_virt2iova(new_tx_pipe->buf);
+	new_tx_pipe->app_begin = 0;
+	new_tx_pipe->app_end = 0;
+	
+	return 0;
+}
+
+int32_t rte_eth_rx_enso_next(EnsoDevice_t* device)
+{
+	assert(device);
+	device->rx_pipe->next_pipe = true;
+	return get_next_rx_enso(device->notif_pair, device->port_id);
+}
+
+uint32_t rte_eth_rx_enso_burst(EnsoDevice_t* device, uint8_t** buf)
+{
+	assert(device);
+	// check TX completion & update
+	process_completions(device);
+	if(!device->rx_pipe->next_pipe)
+	{
+		uint16_t ret = get_new_tails(device->notif_pair, device->port_id);
+	}
+		
+	// byte -> Bytes get
+	uint32_t byte = next_batch_from_pipe(device->rx_pipe, device->notif_pair, (void**)buf);
+
+	return byte;
+}
+
+// update rx_enso_pipe tail & MMIO -> different with free
+void rte_eth_rx_enso_clear(EnsoDevice_t* device)
+{
+	assert(device);
+	advance_pipe(device->port_id, device->rx_pipe);
+}
+
+void rte_eth_rx_confirm_byte(RxEnsoPipe_t* rx_pipe, uint32_t nb_bytes)
+{
+	uint32_t rx_tail = rx_pipe->rx_tail;
+	rx_tail = (rx_tail + (nb_bytes / 64)) % ENSO_PIPE_SIZE;
+	rx_pipe->rx_tail = rx_tail;
+}
+
+void rte_eth_tx_enso_burst(EnsoDevice_t* device, uint32_t nb_bytes)
+{
+	assert(device);
+	uint64_t phys_addr = device->tx_pipe->buf_phys_addr + device->tx_pipe->app_begin;
+    assert(nb_bytes <= MAX_CAPACITY);
+    //assert(nb_bytes / QUANTUM * QUANTUM == nb_bytes);
+
+    device->tx_pipe->app_begin = (device->tx_pipe->app_begin + nb_bytes) & ENSO_BUF_MASK;
+
+	// Todo : TX logic
+    send_tx(device, phys_addr, nb_bytes);
+}
+
+
+uint8_t* rte_eth_alloc_tx_buffer(EnsoDevice_t* device, uint32_t target_capacity)
+{
+	assert(device);
+	uint32_t ret = extend_buf_to_target(device, target_capacity);
+	return (device->tx_pipe->buf + device->tx_pipe->app_begin);
+}
+
+/* Helper func for RX*/
+
+uint16_t get_new_tails(NotificationBufPair_t* notif_pair, uint16_t port_id)
+{
+	assert(notif_pair);
+	struct RxNotification* notif_buf = notif_pair->rx_buf;
+	uint32_t notification_buf_head = notif_pair->rx_head;
+	uint16_t nb_consumed_notifications = 0;
+	// volatile because NIC update notification by DMA
+	volatile struct RxNotification* cur_notification = notif_buf + notification_buf_head;
+
+	uint64_t cur_signal;
+	uint64_t cur_tail;
+	uint64_t cur_queue;
+
+	uint16_t next_rx_ids_tail = notif_pair->next_rx_ids_tail;
+
+	for (uint16_t i = 0; i < NOTIF_MAX_BATCH; ++i) {
+		// rte_io_rmb();
+
+		cur_signal = cur_notification->signal;
+		cur_tail = cur_notification->tail;
+		cur_queue = cur_notification->queue_id;
+
+		// Check if the next notification was updated by the NIC.
+		if (cur_signal == 0) {
+			break;
+		}
+
+		// printf("[DRV] cur notification signal %lu, tail %lu, id %lu\n", cur_signal, cur_tail, cur_queue);
+
+		cur_notification->signal = 0;
+		notification_buf_head = (notification_buf_head + 1) % NOTIFICATION_BUF_SIZE;
+
+		uint16_t enso_pipe_id = cur_queue;//cur_notification->queue_id;
+		notif_pair->pending_rx_pipe_tails[enso_pipe_id] = (uint32_t)cur_tail;
+
+		notif_pair->next_rx_pipe_ids[next_rx_ids_tail] = enso_pipe_id;
+		next_rx_ids_tail = (next_rx_ids_tail + 1) % NOTIFICATION_BUF_SIZE;
+
+		cur_notification += 1;
+		++nb_consumed_notifications;
+		
+		
+	}
+
+	notif_pair->next_rx_ids_tail = next_rx_ids_tail;
+
+	if (likely(nb_consumed_notifications > 0)) {
+		// Update notification buffer head.
+		struct rte_eth_dev *dev;
+		dev = &rte_eth_devices[port_id];
+		
+		RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->update_rx_notif_head, -ENOTSUP);
+		(*dev->dev_ops->update_rx_notif_head)(dev, notif_pair->id, notification_buf_head);
+		
+		notif_pair->rx_head = notification_buf_head;
+	}
+
+	// printf("[DRV] consumed notif %u\n", nb_consumed_notifications); 
+
+	return nb_consumed_notifications;
+}
+
+
+uint32_t next_batch_from_pipe(RxEnsoPipe_t* rx_pipe, NotificationBufPair_t* notif_pair, void** buf)
+{
+	assert(rx_pipe);
+	uint32_t* enso_pipe_buf = rx_pipe->buf;
+	uint32_t enso_pipe_head = rx_pipe->rx_tail;
+
+	int queue_id = rx_pipe->id;
+
+	*buf = &enso_pipe_buf[enso_pipe_head * 16];
+
+
+	uint32_t enso_pipe_tail = notif_pair->pending_rx_pipe_tails[queue_id];
+
+	// printf("[DRV] enso_pipe_head: %u, tail: %u\n", enso_pipe_head, enso_pipe_tail);
+	// printf("[DRV] new buf addr %p\n", *buf);
+
+	if (enso_pipe_tail == enso_pipe_head) {
+		return 0;
+	}
+
+	uint32_t flit_aligned_size =
+		((enso_pipe_tail - enso_pipe_head) % ENSO_PIPE_SIZE) * 64;
+
+	return flit_aligned_size;
+}
+
+void advance_pipe(uint16_t port_id, RxEnsoPipe_t* rx_pipe)
+{
+	assert(rx_pipe);
+	struct rte_eth_dev *dev;
+	dev = &rte_eth_devices[port_id];
+	
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->update_rx_enso_head, -ENOTSUP);
+	(*dev->dev_ops->update_rx_enso_head)(dev, rx_pipe->id, rx_pipe->rx_tail);
+
+	rx_pipe->rx_head = rx_pipe->rx_tail;
+}
+
+int32_t get_next_rx_enso(NotificationBufPair_t* notif_pair, uint16_t port_id)
+{
+	assert(notif_pair);
+	uint16_t next_rx_ids_head = notif_pair->next_rx_ids_head;
+	uint16_t next_rx_ids_tail = notif_pair->next_rx_ids_tail;
+
+	if (next_rx_ids_head == next_rx_ids_tail) {
+		uint16_t nb_consumed_notifications = get_new_tails(notif_pair, port_id);
+		if (unlikely(nb_consumed_notifications == 0)) {
+			return -1;
+		}
+	}
+
+	uint16_t enso_pipe_id = notif_pair->next_rx_pipe_ids[next_rx_ids_head];
+
+	notif_pair->next_rx_ids_head = (next_rx_ids_head + 1) % NOTIFICATION_BUF_SIZE;
+
+	return enso_pipe_id;
+}
+
+
+/* Helper func for TX*/
+void send_tx(EnsoDevice_t* device, uint64_t phys_addr, uint32_t nb_bytes)
+{
+	assert(device);
+	send_to_queue(device, phys_addr, nb_bytes);
+
+	uint32_t nb_pending_reqs = (device->tx_pr_tail - device->tx_pr_head) & NOTIF_BUF_MASK;
+
+	while (unlikely(nb_pending_reqs >= (NOTIF_BUF_MASK - 2))) {
+		process_completions(device);
+		nb_pending_reqs = (device->tx_pr_tail - device->tx_pr_head) & NOTIF_BUF_MASK;
+	}
+
+	device->tx_pending_requests[device->tx_pr_tail].pipe_id = device->tx_pipe->id;
+	device->tx_pending_requests[device->tx_pr_tail].nb_bytes = nb_bytes;
+	device->tx_pr_tail = (device->tx_pr_tail + 1) & NOTIF_BUF_MASK;
+
+}
+
+uint32_t send_to_queue(EnsoDevice_t* device, uint64_t phys_addr, uint32_t len)
+{
+	assert(device);
+	struct TxNotification* tx_buf = device->notif_pair->tx_buf;
+	uint32_t tx_tail = device->notif_pair->tx_tail;
+	uint32_t missing_bytes = len;
+
+	uint64_t transf_addr = phys_addr;
+	uint64_t hugepage_mask = ~((uint64_t)ENSO_BUF_SIZE- 1);
+  	uint64_t hugepage_base_addr = transf_addr & hugepage_mask;
+  	uint64_t hugepage_boundary = hugepage_base_addr + ENSO_BUF_SIZE;
+
+	while (missing_bytes > 0) 
+	{
+		// check free slots of TX notification buffer
+    	uint32_t free_slots = (device->notif_pair->tx_head - tx_tail - 1) % NOTIFICATION_BUF_SIZE;
+
+    	// Block until we can send.
+		while (unlikely(free_slots == 0)) 
+		{
+			++device->notif_pair->tx_full_cnt;
+			update_tx_head(device->notif_pair);
+			free_slots = (device->notif_pair->tx_head - tx_tail - 1) % NOTIFICATION_BUF_SIZE;
+		}
+
+		struct TxNotification* tx_notification = tx_buf + tx_tail;
+		uint32_t req_length = ((missing_bytes < MAX_TRANSFER) ? missing_bytes : MAX_TRANSFER);
+		uint32_t missing_bytes_in_page = hugepage_boundary - transf_addr;
+		req_length = ((req_length < missing_bytes_in_page) ? req_length : missing_bytes_in_page);
+
+		// If the transmission needs to be split among multiple requests, we
+		// need to set a bit in the wrap tracker.
+		uint8_t wrap_tracker_mask = (missing_bytes > req_length) << (tx_tail & 0x7);
+		device->notif_pair->wrap_tracker[tx_tail / 8] |= wrap_tracker_mask;
+
+		tx_notification->length = req_length;
+		tx_notification->signal = 1;
+		tx_notification->phys_addr = transf_addr;
+
+		uint64_t huge_page_offset = (transf_addr + req_length) % ENSO_BUF_SIZE;
+		transf_addr = hugepage_base_addr + huge_page_offset;
+
+		tx_tail = (tx_tail + 1) % NOTIFICATION_BUF_SIZE;
+		missing_bytes -= req_length;
+	}
+
+	device->notif_pair->tx_tail = tx_tail;
+
+	struct rte_eth_dev *dev;
+	dev = &rte_eth_devices[device->port_id];
+	
+	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->update_tx_notif_tail, -ENOTSUP);
+	(*dev->dev_ops->update_tx_notif_tail)(dev, device->notif_pair->id, tx_tail);
+
+  	return len;
+
+}
+
+
+uint32_t tx_capacity(TxEnsoPipe_t* tx_pipe)
+{
+	assert(tx_pipe);
+	return ((tx_pipe->app_end - tx_pipe->app_begin - 1) & ENSO_BUF_MASK);
+}
+
+uint32_t extend_buf_to_target(EnsoDevice_t* device, uint32_t target_capacity)
+{
+	assert(device);
+	uint32_t capacity = tx_capacity(device->tx_pipe);
+	assert(target_capacity <= MAX_CAPACITY);
+	while(capacity < target_capacity)
+	{
+		process_completions(device);
+		capacity = tx_capacity(device->tx_pipe);
+	}
+	
+	return capacity;
+}
+
+void process_completions(EnsoDevice_t* device)
+{
+	assert(device);
+	uint32_t tx_completions = get_unreported_completions(device->notif_pair);
+	for (uint32_t i = 0; i < tx_completions; ++i) {
+		TxPendingRequest_t tx_req = device->tx_pending_requests[device->tx_pr_head];
+		device->tx_pr_head = (device->tx_pr_head + 1) & NOTIF_BUF_MASK;
+
+		// Todo need to change multi-enso pipe per device??
+		// TxPipe* pipe = tx_pipes_[tx_req.pipe_id]; // base enso code
+		notify_completion(device->tx_pipe, tx_req.nb_bytes);
+	}
+}
+
+uint32_t get_unreported_completions(NotificationBufPair_t* notif_pair) 
+{
+	assert(notif_pair);
+	uint32_t completions;
+	update_tx_head(notif_pair);
+	completions = notif_pair->nb_unreported_completions;
+	notif_pair->nb_unreported_completions = 0;
+
+	return completions;
+}
+
+void notify_completion(TxEnsoPipe_t* tx_pipe, uint32_t nb_bytes)
+{
+	assert(tx_pipe);
+	tx_pipe->app_end = (tx_pipe->app_end + nb_bytes) & ENSO_BUF_MASK;
+}
+
+// update tx notification
+void update_tx_head(NotificationBufPair_t* notif_pair) 
+{
+	assert(notif_pair);
+	struct TxNotification* tx_buf = notif_pair->tx_buf;
+	uint32_t head = notif_pair->tx_head;
+	uint32_t tail = notif_pair->tx_tail;
+
+	if (head == tail) {
+		return;
+	}
+
+	// Advance pointer for pkt queues that were already sent.
+	for (uint16_t i = 0; i < NOTIF_MAX_BATCH; ++i) {
+		if (head == tail) {
+			break;
+		}
+		struct TxNotification* tx_notification = tx_buf + head;
+
+		// Notification has not yet been consumed by hardware.
+		if (tx_notification->signal != 0) {
+			break;
+		}
+
+		// Requests that wrap around need two notifications but should only signal
+		// a single completion notification. Therefore, we only increment
+		// `nb_unreported_completions` in the second notification.
+		// TODO(sadok): If we implement the logic to have two notifications in the
+		// same cache line, we can get rid of `wrap_tracker` and instead check
+		// for two notifications.
+		uint8_t wrap_tracker_mask = 1 << (head & 0x7);
+		uint8_t no_wrap = !(notif_pair->wrap_tracker[head / 8] & wrap_tracker_mask);
+		notif_pair->nb_unreported_completions += no_wrap;
+		notif_pair->wrap_tracker[head / 8] &= ~wrap_tracker_mask;
+
+		head = (head + 1) % NOTIFICATION_BUF_SIZE;
+	}
+
+	notif_pair->tx_head = head;
+}
+
+/* for internal PIPE index alloc */
+static void set_pipe_status(int pipe_index, bool status) 
+{
+    int array_index = pipe_index / BITS_PER_INT;  
+    int bit_index = pipe_index % BITS_PER_INT;   
+
+    if (status) {
+        rx_pipe_status[array_index] |= (1 << bit_index); 
+    } else {
+        rx_pipe_status[array_index] &= ~(1 << bit_index);  
+    }
+}
+
+static bool get_pipe_status(int pipe_index) 
+{
+    int array_index = pipe_index / BITS_PER_INT;
+    int bit_index = pipe_index % BITS_PER_INT;
+
+    return ((rx_pipe_status[array_index] & (1 << bit_index)) != 0);
+}
+
+static int find_and_allocate_pipe() 
+{
+    for (int i = 0; i < MAX_NB_FLOWS; i++) {
+        if (!get_pipe_status(i)) {  
+            set_pipe_status(i, true); 
+            return i; 
+        }
+    }
+    return -1; 
+}
+
+#endif

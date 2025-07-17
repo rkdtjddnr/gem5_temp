@@ -113,6 +113,13 @@ static int eth_em_rss_reta_query(struct rte_eth_dev *dev,
 				 struct rte_eth_rss_reta_entry64 *reta_conf,
 				 uint16_t reta_size);
 
+#ifdef USE_ENSO
+int eth_em_notif_init(struct rte_eth_dev* dev, unsigned notif_id, uint64_t phys_addr);
+int eth_em_rx_enso_init(struct rte_eth_dev* dev, uint16_t rx_enso_id, unsigned core_id, uint64_t phys_addr);
+void eth_em_update_rx_notif_head(struct rte_eth_dev* dev, uint32_t notif_id, uint32_t updated_head);
+void eth_em_update_rx_enso_head(struct rte_eth_dev* dev, uint16_t rx_enso_id, uint32_t updated_head);
+void eth_em_update_tx_notif_tail(struct rte_eth_dev* dev, uint32_t notif_id, uint32_t updated_tail);
+#endif
 
 
 #define EM_FC_PAUSE_TIME 0x0680
@@ -209,6 +216,13 @@ static const struct eth_dev_ops eth_em_ops = {
 	.reta_query		 	  = eth_em_rss_reta_query,
 	.rss_hash_update	  = eth_em_rss_hash_update,
 	.rss_hash_conf_get	  = eth_em_rss_hash_conf_get,
+	#ifdef USE_ENSO
+	.notif_init			  = eth_em_notif_init,
+	.rx_enso_init		  = eth_em_rx_enso_init,
+	.update_rx_notif_head = eth_em_update_rx_notif_head,
+	.update_rx_enso_head  = eth_em_update_rx_enso_head,
+	.update_tx_notif_tail = eth_em_update_tx_notif_tail,
+	#endif
 };
 
 
@@ -2070,6 +2084,78 @@ eth_em_set_mc_addr_list(struct rte_eth_dev *dev,
 	e1000_update_mc_addr_list(hw, (u8 *)mc_addr_set, nb_mc_addr);
 	return 0;
 }
+
+#ifdef USE_ENSO
+// eth_em_notif_init
+int eth_em_notif_init(struct rte_eth_dev* dev, unsigned notif_id, uint64_t phys_addr)
+{
+	struct e1000_hw* hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	// initialize RDT / RDH of notif
+	E1000_WRITE_REG(hw, E1000_RDT(notif_id), 0);
+	E1000_WRITE_REG(hw, E1000_RDH(notif_id), 0);
+
+	E1000_WRITE_REG(hw, E1000_TDH(notif_id), 0);
+	printf("========NOTIF BUF - INITIALIZE RDT,RDH,TDH[%d] = %d========\n", notif_id, 0);
+
+	E1000_WRITE_REG(hw, E1000_RDBAL(notif_id), (uint32_t)phys_addr);
+  	E1000_WRITE_REG(hw, E1000_RDBAH(notif_id), (uint32_t)(phys_addr >> 32));
+	printf("========RX NOTIF - OVERWRITE RDBAL[%d] = 0x%x========\n", notif_id, (uint32_t)phys_addr);
+	printf("========RX NOTIF - OVERWRITE RDBAH[%d] = 0x%x========\n", notif_id, (uint32_t)(phys_addr >> 32));
+
+  	phys_addr += NOTIF_BUF_SIZE;
+
+  	E1000_WRITE_REG(hw, E1000_TDBAL(notif_id), (uint32_t)phys_addr);
+  	E1000_WRITE_REG(hw, E1000_TDBAH(notif_id), (uint32_t)(phys_addr >> 32));
+
+	printf("========TX NOTIF - OVERWRITE TDBAL[%d] = 0x%x========\n", notif_id, (uint32_t)phys_addr);
+	printf("========TX NOTIF - OVERWRITE TDBAH[%d] = 0x%x========\n", notif_id, (uint32_t)(phys_addr >> 32));
+
+	return 0;
+}
+// eth_em_rx_enso_init
+int eth_em_rx_enso_init(struct rte_eth_dev* dev, uint16_t rx_enso_id, unsigned core_id, uint64_t phys_addr)
+{
+	struct e1000_hw* hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	E1000_WRITE_REG(hw, E1000_RDT(rx_enso_id + MAX_NB_MANAGER), 0);
+	E1000_WRITE_REG(hw, E1000_RDH(rx_enso_id + MAX_NB_MANAGER), 0);
+	printf("========ENSO PIPE - INITIALIZE RDT,RDH[%d] = %d========\n", rx_enso_id, 0);
+
+	E1000_WRITE_REG(hw, E1000_RDBAL(rx_enso_id + MAX_NB_MANAGER), (uint32_t)phys_addr + core_id);
+	E1000_WRITE_REG(hw, E1000_RDBAH(rx_enso_id + MAX_NB_MANAGER), (uint32_t)(phys_addr >> 32));
+	printf("========ENSO PIPE - OVERWRITE RDBAL[%d] = 0x%x========\n", rx_enso_id, (uint32_t)phys_addr + core_id);
+	printf("========ENSO PIPE - OVERWRITE RDBAH[%d] = 0x%x========\n", rx_enso_id, (uint32_t)(phys_addr >> 32));
+
+	return 0;
+}
+
+void eth_em_update_rx_notif_head(struct rte_eth_dev* dev, uint32_t notif_id, uint32_t updated_head)
+{
+	struct e1000_hw* hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	E1000_WRITE_REG(hw, E1000_RDH(notif_id), updated_head);
+	// printf("[MMIO] RX NOTIF BUF - UPDATE HEAD(RDH)[%d] = %d\n", notif_id, updated_head);
+}
+
+void eth_em_update_rx_enso_head(struct rte_eth_dev* dev, uint16_t rx_enso_id, uint32_t updated_head)
+{
+	struct e1000_hw* hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	E1000_WRITE_REG(hw, E1000_RDH(rx_enso_id + MAX_NB_MANAGER), updated_head);
+	// printf("[MMIO] RX ENSO PIPE - UPDATE HEAD(RDH)[%d] = %d\n", rx_enso_id, updated_head);
+}
+
+void eth_em_update_tx_notif_tail(struct rte_eth_dev* dev, uint32_t notif_id, uint32_t updated_tail)
+{
+	struct e1000_hw* hw = E1000_DEV_PRIVATE_TO_HW(dev->data->dev_private);
+
+	E1000_WRITE_REG(hw, E1000_TDT(notif_id), updated_tail);
+	// printf("[MMIO] TX NOTIF BUF - UPDATE TAIL(TDT)[%d] = %d\n", notif_id, updated_tail);
+}
+
+
+#endif
 
 RTE_PMD_REGISTER_PCI(net_e1000_em, rte_em_pmd);
 RTE_PMD_REGISTER_PCI_TABLE(net_e1000_em, pci_id_em_map);

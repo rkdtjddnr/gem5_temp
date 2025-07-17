@@ -5359,6 +5359,169 @@ rte_eth_tx_buffer(uint16_t port_id, uint16_t queue_id,
 
 	return rte_eth_tx_buffer_flush(port_id, queue_id, buffer);
 }
+#define USE_ENSO
+#ifdef USE_ENSO
+#define MAX_NB_APPS 1024
+#define MAX_NB_FLOWS 8192
+#define MAX_NB_MANAGER (16 / 2)
+#define ENSO_BUF_SIZE (1UL << 21) // 2MB
+#define NOTIF_BUF_SIZE ENSO_BUF_SIZE/2 // 1MB per RX, TX each
+
+#define ENSO_PIPE_SIZE 32768
+#define NOTIFICATION_BUF_SIZE 16384
+#define NOTIF_MAX_BATCH 64 // max batch size for consuming notification
+
+#define ENSO_BUF_MASK (ENSO_BUF_SIZE - 1)
+#define NOTIF_BUF_MASK (NOTIFICATION_BUF_SIZE - 1)
+#define QUANTUM 64 // buffer QUANTUM
+#define MAX_CAPACITY (ENSO_BUF_SIZE - QUANTUM)
+#define MAX_TRANSFER 131072 // maximum of TX bytes
+
+// for internal PIPE index alloc
+#define BITS_PER_INT 32     
+#define PIPE_STATUS_SIZE (MAX_NB_FLOWS / BITS_PER_INT)  
+
+struct __attribute__((__packed__)) RxNotification {
+  uint64_t signal;
+  uint64_t queue_id;
+  uint64_t tail;
+  uint64_t pad[5];
+};
+
+struct __attribute__((__packed__)) TxNotification {
+  uint64_t signal;
+  uint64_t phys_addr;
+  uint64_t length;  // In bytes (up to 1MB).
+  uint64_t pad[5];
+};
+
+typedef struct TxPendingRequest
+{
+	uint32_t pipe_id;
+	uint32_t nb_bytes;
+}TxPendingRequest_t;
+
+typedef struct RxEnsoPipe RxEnsoPipe_t;
+typedef struct TxEnsoPipe TxEnsoPipe_t;
+typedef struct NotificationBufPair NotificationBufPair_t;
+
+typedef struct EnsoDevice 
+{
+
+	unsigned core_id;	
+	uint16_t port_id; // for using DPDK method
+
+	uint32_t tx_pr_head;
+	uint32_t tx_pr_tail;
+	TxPendingRequest_t tx_pending_requests[NOTIFICATION_BUF_SIZE];
+
+	NotificationBufPair_t* notif_pair;
+	// Todo : can multi-enso pipe???
+	RxEnsoPipe_t* rx_pipe;
+	TxEnsoPipe_t* tx_pipe;
+
+}EnsoDevice_t;
+
+
+struct NotificationBufPair 
+{
+  // First cache line:
+  struct RxNotification* rx_buf;
+  uint16_t* next_rx_pipe_ids;  // Next pipe ids to consume from rx_buf.
+  struct TxNotification* tx_buf;
+  uint32_t* rx_head_ptr;
+  uint32_t* tx_tail_ptr;
+  uint32_t rx_head;
+  uint32_t tx_head;
+  uint32_t tx_tail;
+  uint16_t next_rx_ids_head;
+  uint16_t next_rx_ids_tail;
+  uint32_t nb_unreported_completions;
+  uint32_t id;
+
+  // Second cache line:
+  uint64_t tx_full_cnt;
+  uint32_t ref_cnt;
+
+  uint8_t* wrap_tracker;
+  uint32_t* pending_rx_pipe_tails;
+
+};
+
+
+struct RxEnsoPipe
+{
+	uint16_t id; //Tx Enso Pipe ID
+	uint32_t* buf;
+	uint64_t buf_phys_addr;
+	//uint32_t* buf_head_ptr;
+	uint32_t rx_head;
+	uint32_t rx_tail;
+	//uint64_t phys_buf_offset;  // Use to convert between phys and virt address.
+	bool next_pipe;
+};
+
+
+struct TxEnsoPipe
+{
+	uint16_t id; //Tx Enso Pipe ID
+	uint8_t* buf; // TX buffer virtual ptr -> for Host
+	uint32_t app_begin;  // The next byte to be sent.
+  	uint32_t app_end;    // The next byte to be allocated.
+  	uint64_t buf_phys_addr; // TX enso pipe buffer base physical addr -> for MMIO
+};
+
+
+
+
+/*@@@@@@ Initialize Function @@@@@@@*/
+EnsoDevice_t* rte_eth_enso_device_init(unsigned core_id, uint16_t port_id);
+// rte_eth_notif_init -> eth_em_notif_init
+// core_id is same as notif_id
+int rte_eth_notif_init(EnsoDevice_t* device);
+// rte_eth_rx_enso_init -> eth_em_rx_enso_init
+int rte_eth_rx_enso_init(EnsoDevice_t* device);
+// rte_eth_tx_enso_init -> eth_em_tx_enso_init
+int rte_eth_tx_enso_init(EnsoDevice_t* device);
+
+
+/*@@@@@@ Related RX Function @@@@@@@*/
+int32_t rte_eth_rx_enso_next(EnsoDevice_t* device);
+// rte_eth_rx_enso_burst -> eth_em_rx_enso_burst
+uint32_t rte_eth_rx_enso_burst(EnsoDevice_t* device, uint8_t** buf);
+// clear function for advance pipe head & MMIO
+void rte_eth_rx_enso_clear(EnsoDevice_t* device);
+void rte_eth_rx_confirm_byte(RxEnsoPipe_t* rx_pipe, uint32_t nb_bytes);
+
+
+/*@@@@@@ Related TX Function @@@@@@@*/
+// rte_eth_tx_enso_burst -> eth_em_tx_enso_burst
+void rte_eth_tx_enso_burst(EnsoDevice_t* device, uint32_t nb_bytes);
+
+uint8_t* rte_eth_alloc_tx_buffer(EnsoDevice_t* device, uint32_t target_capacity);
+
+
+// rte_eth_tx_enso_free
+
+
+/* HELPER FUNC? */
+/* Helper function for RX */
+uint16_t get_new_tails(NotificationBufPair_t* notif_pair, uint16_t port_id);
+uint32_t next_batch_from_pipe(RxEnsoPipe_t* rx_pipe, NotificationBufPair_t* notif_pair, void** buf);
+void advance_pipe(uint16_t port_id, RxEnsoPipe_t* rx_pipe);
+int32_t get_next_rx_enso(NotificationBufPair_t* notif_pair, uint16_t port_id);
+
+/* Helper function for TX */
+void send_tx(EnsoDevice_t* device, uint64_t phys_addr, uint32_t nb_bytes);
+uint32_t send_to_queue(EnsoDevice_t* device, uint64_t phys_addr, uint32_t len);
+uint32_t tx_capacity(TxEnsoPipe_t* tx_pipe);
+uint32_t extend_buf_to_target(EnsoDevice_t* device, uint32_t target_capacity);
+void process_completions(EnsoDevice_t* device);
+uint32_t get_unreported_completions(NotificationBufPair_t* notif_pair);
+void notify_completion(TxEnsoPipe_t* tx_pipe, uint32_t nb_bytes);
+void update_tx_head(NotificationBufPair_t* notif_pair);
+
+#endif
 
 #ifdef __cplusplus
 }
