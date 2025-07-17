@@ -1478,6 +1478,28 @@ BaseCache::recvTimingReq(PacketPtr pkt, PortID cpu_side_port_id)
     
     #endif
     
+    /*
+    uint64_t rx_enso_pipe_base = 8610906112;
+    uint64_t rx_notif_buf_base = 8615100416;
+
+    uint64_t batch_size = 64; // want to see max 64 flits
+    uint64_t enso_size = 64; // base flit size 64B
+
+    // RX Notification (0-63)
+    uint64_t rx_notif_0 = rx_notif_buf_base + enso_size * 0;
+    if (pkt->getAddr() >= rx_notif_0 && pkt->getAddr() < (rx_notif_0 + batch_size * enso_size)) {
+        int offset = (pkt->getAddr() - rx_notif_0) / enso_size;
+        printf("[LOG], %llu, %s, %s, %d, RX_NOTIF_0_63[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+    }
+
+    // RX Enso Pipe (0-63)
+    uint64_t rx_pipe_0 = rx_enso_pipe_base + enso_size * 0;
+    if (pkt->getAddr() >= rx_pipe_0 && pkt->getAddr() < (rx_pipe_0 + batch_size * enso_size)) {
+        int offset = (pkt->getAddr() - rx_pipe_0) / enso_size;
+        printf("[LOG], %llu, %s, %s, %d, RX_PIPE_0_63[%d]_REQ\n", curTick(), name().c_str(), pkt->print().c_str(), satisfied ? 1 : 0, offset);
+    }
+    */
+    
     
     // For LOG
     // if LOG_LEVEL is 1, ring buffer log
@@ -3605,6 +3627,28 @@ BaseCache::recvTimingResp(PacketPtr pkt)
         
     
     #endif
+
+    /*
+    uint64_t rx_enso_pipe_base = 8610906112;
+    uint64_t rx_notif_buf_base = 8615100416;
+
+    uint64_t batch_size = 64; // want to see max 64 flits
+    uint64_t enso_size = 64; // base flit size 64B
+
+    // RX Notification (0-63)
+    uint64_t rx_notif_0 = rx_notif_buf_base + enso_size * 0;
+    if (pkt->getAddr() >= rx_notif_0 && pkt->getAddr() < (rx_notif_0 + batch_size * enso_size)) {
+        int offset = (pkt->getAddr() - rx_notif_0) / enso_size;
+        printf("[LOG], %llu, %s, %s, %d, RX_NOTIF_0_63[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+    }
+
+    // RX Enso Pipe (0-63)
+    uint64_t rx_pipe_0 = rx_enso_pipe_base + enso_size * 0;
+    if (pkt->getAddr() >= rx_pipe_0 && pkt->getAddr() < (rx_pipe_0 + batch_size * enso_size)) {
+        int offset = (pkt->getAddr() - rx_pipe_0) / enso_size;
+        printf("[LOG], %llu, %s, %s, %d, RX_PIPE_0_63[%d]_RES\n", curTick(), name().c_str(), pkt->print().c_str(), 0, offset);
+    }
+    */
 
 
     #if LOG_LEVEL == 1
