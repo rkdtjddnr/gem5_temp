@@ -50,8 +50,6 @@
 //#include <gem5/m5ops.h>
 
 
-
-
 #ifdef HAVE_GETOPT_LONG
 #include <getopt.h>
 #endif
@@ -75,6 +73,143 @@
 #include <rte_common.h>
 #include <rte_prefetch.h>
 #include <rte_branch_prediction.h>
+#include <rte_ether.h>
+#include <rte_ip.h>
+#include <rte_byteorder.h>
+
+
+#ifdef USE_ENSO
+struct RXTXState 
+{
+    //EndpointId eid;
+    //enso::TxPipe* tx_pipe;
+
+    struct PendingTX {
+
+    uint8_t* start_tx_buffer;
+    uint8_t* current_tx_buffer;
+
+    uint16_t count;
+    uint64_t oldest_time;
+    } pending_tx;
+};
+
+uint16_t be_to_le_16(const uint16_t le) {
+  return ((le & (uint16_t)0x00ff) << 8) | ((le & (uint16_t)0xff00) >> 8);
+}
+
+uint16_t get_pkt_len(const uint8_t* addr) {
+    const struct rte_ether_hdr* l2_hdr = (struct rte_ether_hdr*)addr;
+    const struct rte_ipv4_hdr* l3_hdr = (struct rte_ipv4_hdr*)(l2_hdr + 1);
+    const uint16_t total_len = be_to_le_16(l3_hdr->total_length) + sizeof(struct rte_ether_hdr);
+    //printf("[DEBUG] host get_pkt_len func total_len %u \n", total_len);
+    
+    return total_len;
+}
+
+uint32_t getMemcPktLen(const uint8_t* addr)
+{
+    const struct rte_ether_hdr* l2_hdr = (struct rte_ether_hdr*)addr;
+    const struct MemcacheUdpHeader* hdr = (struct MemcacheUdpHeader*)(l2_hdr + 1);
+    const struct ReqHdr *p_hdr = (struct ReqHdr*)(hdr + 1);
+
+    uint32_t total_body_len_ = (uint32_t)(p_hdr->total_body_length[3]) |
+                             (uint32_t)(p_hdr->total_body_length[2] << 8) |
+                             (uint32_t)(p_hdr->total_body_length[1] << 16) |
+                             (uint32_t)(p_hdr->total_body_length[0] << 24);
+
+    printf("[DEBUG] MEMCACHED pkt totl_bdy_len %u \n", total_body_len_);
+
+    return (total_body_len_ + sizeof(struct rte_ether_hdr) + sizeof(struct MemcacheUdpHeader));
+}
+
+uint8_t* getNextPkt(uint8_t* pkt)
+{
+    uint32_t pkt_len = get_pkt_len(pkt);
+    //uint32_t pkt_len = getMemcPktLen(pkt); // for memcached
+    uint32_t nb_flits = (pkt_len - 1) / 64 + 1;
+    //printf("[DEBUG] pkt_len: %u, nb_flits: %u\n", pkt_len, nb_flits);
+
+    return pkt + nb_flits * 64;
+}
+
+void dump_packet_bytes_mem(const uint8_t* addr, size_t len) {
+    printf("[DEBUG] Dumping %zu bytes from address %p:\n", len, addr);
+    for (size_t i = 0; i < len; ++i) {
+        if (i % 16 == 0) printf("%04zx : ", i);
+        printf("%02x ", addr[i]);
+        if (i % 16 == 15) printf("\n");
+    }
+    if (len % 16 != 0) printf("\n");
+}
+
+// based on ENSO code
+void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, uint8_t* rx_buf, int32_t burstSize, uint32_t availByte)
+{
+    uint8_t* addr = rx_buf;
+    uint8_t* next_addr = getNextPkt(rx_buf);
+    uint8_t* end_of_buffer = (uint8_t*)rx_pipe->buf + ENSO_BUF_SIZE;
+
+    int32_t missingMessages = burstSize;
+    uint32_t remainingBytes = availByte;
+
+    // Debugging test, read memory barrier
+    //rte_io_rmb();                           // memory barrier
+    //volatile uint8_t dummy = *addr;        // 강제 memory read
+    //(void)dummy;   
+    //printf("[DEBUG] end_of_buffer %p \n", end_of_buffer);
+    
+    // only process max burst size
+    while((missingMessages > 0) && (remainingBytes > 0))
+    {
+        // Test code
+        // Copy RX to TX
+
+        uint32_t nbBytes = next_addr - addr;
+        assert(nbBytes > 0);
+
+        // Test code : copy memory RX pipe -> TX pipe
+        memcpy(rxTxState->pending_tx.current_tx_buffer, addr, nbBytes);
+        
+        // macswap operation
+        /*
+        struct rte_ether_hdr* l2_hdr = (struct rte_ether_hdr*)rxTxState->pending_tx.current_tx_buffer;
+        struct rte_ether_addr original_src_mac = l2_hdr->s_addr;
+        l2_hdr->s_addr = l2_hdr->d_addr;
+        l2_hdr->d_addr = original_src_mac;
+        */
+        rxTxState->pending_tx.current_tx_buffer += nbBytes;
+        rxTxState->pending_tx.count++;
+
+        // confirm rx byte
+        rte_eth_rx_confirm_byte(rx_pipe, nbBytes);
+        // Todo: update rx pipe state
+        // onAdvanceMessage(nbBytes);
+
+        addr = next_addr;
+
+        // check addr wrap-around 
+        if(addr >= end_of_buffer)
+        {
+            printf("[DEBUG] addr %p limit %p \n", addr, end_of_buffer);
+            break;
+        }
+
+        next_addr = getNextPkt(addr);
+
+        remainingBytes -= nbBytes;
+        --missingMessages;
+        // maintain accumulated processed bytes??
+        // NotifyProcessedBytes(nbBytes);
+        // basic iterator implementation
+        // add TX ??
+
+
+    }
+
+    printf("[DEBUG] process complete, remaining %u bytes, %u pkts\n", remainingBytes, missingMessages);
+}
+#endif
 
 
 /*
@@ -6390,6 +6525,27 @@ int main (int argc, char **argv) {
         fprintf(stderr, "Failed to initialize DPDK.\n");
         return -1;
     }
+    
+    // ENSO Initializing
+    EnsoDevice_t* ensoDevice = rte_eth_enso_device_init(0, 0);
+    struct RXTXState rxTxState;
+    rxTxState.pending_tx.count = 0;
+    rxTxState.pending_tx.current_tx_buffer = NULL;
+    rxTxState.pending_tx.start_tx_buffer = NULL;
+
+    uint32_t target_size = 1536*1024; // allocate size for TX buffer, need to change??
+    
+    int notif_ret = rte_eth_notif_init(ensoDevice);
+    int rx_enso_ret = rte_eth_rx_enso_init(ensoDevice);
+    int tx_enso_ret = rte_eth_tx_enso_init(ensoDevice);
+
+    if(notif_ret < 0 || rx_enso_ret < 0 || tx_enso_ret < 0)
+    {
+        printf("failed to initialize ENSO\n");
+        return 0;
+    }
+    else
+        printf("======finish initializing ENSO buffer======\n");
 
 	uint16_t pckt_sent;
     struct rte_eth_dev_tx_buffer *buffer;
@@ -6411,10 +6567,16 @@ int main (int argc, char **argv) {
     system("m5 checkpoint");
     //m5_checkpoint(0,0);
 #endif
-    
+    #ifndef USE_ENSO
     printf("DPDK-version of memcached is ready to accept requests!\n");
     printf("DPDK-version of memcached burst size is %d\n", kMaxBurstSize);
+    #else
+    printf("ENSO-version of memcached is ready to accept requests!\n");
+    printf("ENSO-version of memcached burst size is %d\n", 1024);
+    #endif
      while (!stop_main_loop) {
+
+        #ifndef USE_ENSO
          uint16_t received_pckt_cnt = RecvOverDPDK(&dpdk);
          if (received_pckt_cnt == 0) continue;
 
@@ -6477,6 +6639,41 @@ int main (int argc, char **argv) {
          //printf("DPDK-Version of Memcached Server is sending out %d Packets in a single Burst!\n", (int)dpdk.tx_burst_size);
          // Send response.
          SendBatch(&dpdk);
+        #else
+
+        // ENSO running process demo
+        uint8_t* buf = NULL;
+    
+        uint32_t next_rx = rte_eth_rx_enso_next(ensoDevice);
+        if(next_rx < 0) continue;
+
+        uint32_t newByte = rte_eth_rx_enso_burst(ensoDevice, &buf);
+        assert(buf);
+        if(newByte == 0) continue;
+        printf("======== Recieve %u bytes from Rx pipe ========\n", newByte);
+
+        // set up tx buffer
+        uint8_t* tx_buf = rte_eth_alloc_tx_buffer(ensoDevice, target_size);
+        assert(tx_buf);
+        rxTxState.pending_tx.current_tx_buffer = tx_buf;
+        rxTxState.pending_tx.start_tx_buffer = tx_buf;
+
+        processBatchedPacket(ensoDevice->rx_pipe, &rxTxState, buf, 1024, newByte);
+
+        rte_eth_rx_enso_clear(ensoDevice);
+
+        uint32_t tx_size = (rxTxState.pending_tx.current_tx_buffer - rxTxState.pending_tx.start_tx_buffer);
+    
+        if (tx_size > 0)
+        {
+            printf("======== Send %u packets, %u bytes to Tx pipe ========\n",rxTxState.pending_tx.count, tx_size);
+            rte_eth_tx_enso_burst(ensoDevice, tx_size);
+        }
+            
+        rxTxState.pending_tx.count = 0;
+        fflush(stdout);
+        #endif
+
      }
 
     //while (!stop_main_loop) {

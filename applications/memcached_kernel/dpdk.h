@@ -93,6 +93,8 @@ static int InitDPDK(struct DPDKObj *dpdk_obj) {
   dargv[dargv_cnt++] = (char *)"0";
   dargv[dargv_cnt++] = (char *)"-n";
   dargv[dargv_cnt++] = (char *)"1";
+  //dargv[dargv_cnt++] = (char *)"-m";
+  //dargv[dargv_cnt++] = (char *)"2048";
   //dargv[dargv_cnt++] = (char *)"--log-level=ethdev,debug";
   dargv[dargv_cnt++] = (char *)"--proc-type";
   dargv[dargv_cnt++] = (char *)"auto";
