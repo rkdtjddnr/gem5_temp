@@ -20,7 +20,7 @@ SET (DPDK_C_FLAGS CFLAGS+="-I$ENV{RTE_SDK}/lib/librte_eal/include"
                    CFLAGS+="-I$ENV{RTE_SDK}/lib/librte_mempool"
                    CFLAGS+="-I$ENV{RTE_SDK}/lib/librte_ring"
                    #CFLAGS+="-I$ENV{GIT_ROOT}/gem5/include"
-                   CFLAGS+="-D_GEM5_")
+                   CFLAGS+="-D_GEM5_")           
 
 SET (DPDK_LD_FLAGS LDFLAGS+="-L$ENV{RTE_SDK}/build/drivers"
         LDFLAGS+="-L$ENV{RTE_SDK}/build/lib"
@@ -121,129 +121,129 @@ if(USE_DPDK_NETWORKING)
 	# Build memcached with the right flags.
 	add_custom_target(memcached ALL
 		/usr/bin/make -f "${CMAKE_CURRENT_SOURCE_DIR}/memcached/Makefile" ${DPDK_C_FLAGS} ${DPDK_LD_FLAGS}
-		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/memcached)
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/memcached)        
 	# Install just built memcached  into the rootfs.
 	install(CODE "execute_process(COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/memcached/memcached $ENV{TARGET_DIR}/usr/bin/memcached_dpdk)")
 endif()
 
 # common requirements
-find_package(gflags REQUIRED)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/gem5-include)
-link_directories(${CMAKE_CURRENT_SOURCE_DIR}/gem5-lib)
-link_libraries(m5 gflags)
-add_definitions("-D_GEM5_")
+# find_package(gflags REQUIRED)
+# include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+# include_directories(${CMAKE_CURRENT_SOURCE_DIR}/gem5-include)
+# link_directories(${CMAKE_CURRENT_SOURCE_DIR}/gem5-lib)
+# link_libraries(m5 gflags)
+# add_definitions("-D_GEM5_")
 
-if(USE_DPDK_NETWORKING)
-	include_directories($ENV{RTE_SDK}/config)
-	include_directories($ENV{RTE_SDK}/build)
-	include_directories($ENV{RTE_SDK}/lib/librte_eal/include)
-	include_directories($ENV{RTE_SDK}/lib/librte_eal/linux/include)
-	include_directories($ENV{RTE_SDK}/lib/librte_ethdev)
-	include_directories($ENV{RTE_SDK}/lib/librte_net)
-	include_directories($ENV{RTE_SDK}/lib/librte_eal/arm/include)
-	include_directories($ENV{RTE_SDK}/lib/librte_mbuf)
-	include_directories($ENV{RTE_SDK}/lib/librte_mempool)
-	include_directories($ENV{RTE_SDK}/lib/librte_ring)
-	include_directories($ENV{RTE_SDK}/lib/librte_pdump)
-	include_directories($ENV{RTE_SDK}/lib/librte_kvargs)
-	add_definitions("-D_USE_DPDK_CLIENT_")
-	# link_libraries must come before add_executable
-	link_libraries(
-        -L$ENV{RTE_SDK}/build/drivers
-        -L$ENV{RTE_SDK}/build/lib
-        -fno-inline-atomics
-        -Wl,--whole-archive
-        -l:librte_flow_classify.a
-        -l:librte_pipeline.a
-        -l:librte_pdump.a
-        -l:librte_distributor.a
-        -l:librte_ip_frag.a
-        -l:librte_meter.a
-        -l:librte_lpm.a
-        -l:librte_acl.a
-        -l:librte_jobstats.a
-        -l:librte_metrics.a
-        -l:librte_bitratestats.a
-        -l:librte_latencystats.a
-        -l:librte_efd.a
-        -l:librte_bpf.a
-        -l:librte_cfgfile.a
-        -l:librte_gro.a
-        -l:librte_gso.a
-        -l:librte_hash.a
-        -l:librte_member.a
-        -l:librte_vhost.a
-        -l:librte_kvargs.a
-        -l:librte_mbuf.a
-        -l:librte_net.a
-        -l:librte_ethdev.a
-        -l:librte_bbdev.a
-        -l:librte_cryptodev.a
-        -l:librte_security.a
-        -l:librte_compressdev.a
-        -l:librte_eventdev.a
-        -l:librte_rawdev.a
-        -l:librte_timer.a
-        -l:librte_mempool_ring.a
-        -l:librte_mempool.a
-        -l:librte_ring.a
-        -l:librte_pci.a
-        -l:librte_eal.a
-        -l:librte_cmdline.a
-        -l:librte_reorder.a
-        -l:librte_sched.a
-        -l:librte_common_cpt.a
-        -l:librte_common_octeontx.a
-        -l:librte_common_dpaax.a
-        -l:librte_bus_pci.a
-        -l:librte_bus_vdev.a
-        -l:librte_net_e1000.a
-        -l:librte_net_tap.a
-        -l:librte_net_virtio.a
-        -l:librte_net_igc.a
-        -l:librte_common_iavf.a
-        -l:librte_kni.a
-        -l:librte_telemetry.a
-        -l:librte_rcu.a
-        -Wl,--no-whole-archive
-        -l:librte_table.a
-        -l:librte_port.a
-        -ldl
-        -lm
-        -latomic
-        -lpthread)
+# if(USE_DPDK_NETWORKING)
+# 	include_directories($ENV{RTE_SDK}/config)
+# 	include_directories($ENV{RTE_SDK}/build)
+# 	include_directories($ENV{RTE_SDK}/lib/librte_eal/include)
+# 	include_directories($ENV{RTE_SDK}/lib/librte_eal/linux/include)
+# 	include_directories($ENV{RTE_SDK}/lib/librte_ethdev)
+# 	include_directories($ENV{RTE_SDK}/lib/librte_net)
+# 	include_directories($ENV{RTE_SDK}/lib/librte_eal/arm/include)
+# 	include_directories($ENV{RTE_SDK}/lib/librte_mbuf)
+# 	include_directories($ENV{RTE_SDK}/lib/librte_mempool)
+# 	include_directories($ENV{RTE_SDK}/lib/librte_ring)
+# 	include_directories($ENV{RTE_SDK}/lib/librte_pdump)
+# 	include_directories($ENV{RTE_SDK}/lib/librte_kvargs)
+# 	add_definitions("-D_USE_DPDK_CLIENT_")
+# 	# link_libraries must come before add_executable
+# 	link_libraries(
+#         -L$ENV{RTE_SDK}/build/drivers
+#         -L$ENV{RTE_SDK}/build/lib
+#         -fno-inline-atomics
+#         -Wl,--whole-archive
+#         -l:librte_flow_classify.a
+#         -l:librte_pipeline.a
+#         -l:librte_pdump.a
+#         -l:librte_distributor.a
+#         -l:librte_ip_frag.a
+#         -l:librte_meter.a
+#         -l:librte_lpm.a
+#         -l:librte_acl.a
+#         -l:librte_jobstats.a
+#         -l:librte_metrics.a
+#         -l:librte_bitratestats.a
+#         -l:librte_latencystats.a
+#         -l:librte_efd.a
+#         -l:librte_bpf.a
+#         -l:librte_cfgfile.a
+#         -l:librte_gro.a
+#         -l:librte_gso.a
+#         -l:librte_hash.a
+#         -l:librte_member.a
+#         -l:librte_vhost.a
+#         -l:librte_kvargs.a
+#         -l:librte_mbuf.a
+#         -l:librte_net.a
+#         -l:librte_ethdev.a
+#         -l:librte_bbdev.a
+#         -l:librte_cryptodev.a
+#         -l:librte_security.a
+#         -l:librte_compressdev.a
+#         -l:librte_eventdev.a
+#         -l:librte_rawdev.a
+#         -l:librte_timer.a
+#         -l:librte_mempool_ring.a
+#         -l:librte_mempool.a
+#         -l:librte_ring.a
+#         -l:librte_pci.a
+#         -l:librte_eal.a
+#         -l:librte_cmdline.a
+#         -l:librte_reorder.a
+#         -l:librte_sched.a
+#         -l:librte_common_cpt.a
+#         -l:librte_common_octeontx.a
+#         -l:librte_common_dpaax.a
+#         -l:librte_bus_pci.a
+#         -l:librte_bus_vdev.a
+#         -l:librte_net_e1000.a
+#         -l:librte_net_tap.a
+#         -l:librte_net_virtio.a
+#         -l:librte_net_igc.a
+#         -l:librte_common_iavf.a
+#         -l:librte_kni.a
+#         -l:librte_telemetry.a
+#         -l:librte_rcu.a
+#         -Wl,--no-whole-archive
+#         -l:librte_table.a
+#         -l:librte_port.a
+#         -ldl
+#         -lm
+#         -latomic
+#         -lpthread)
 
-	# Build memcached dpdk client with the right flags and install into rootfs.
-	add_executable(memcached_client_dpdk memcached_client.cc)	
-	#target_link_libraries(memcached_client_dpdk gflags)
-	install(CODE "execute_process(COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/memcached_client_dpdk $ENV{TARGET_DIR}/usr/bin/memcached_client_dpdk)")
+# 	# Build memcached dpdk client with the right flags and install into rootfs.
+# 	add_executable(memcached_client_dpdk memcached_client.cc)	
+# 	#target_link_libraries(memcached_client_dpdk gflags)
+# 	install(CODE "execute_process(COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/memcached_client_dpdk $ENV{TARGET_DIR}/usr/bin/memcached_client_dpdk)")
 
-	# Build dpdk_pcap with the right flags and install into rootfs.
-	#set(CMAKE_EXE_LINKER_FLAGS ${DPDK_LD_FLAGS})
-	add_executable(dpdk_pcap dpdk_pcap.c)
-	target_compile_options(dpdk_pcap PRIVATE "-Wno-sign-conversion")
-	#target_link_libraries(dpdk_pcap gflags)
-	install(CODE "execute_process(COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/dpdk_pcap $ENV{TARGET_DIR}/usr/bin/dpdk_pcap)")
-else()
-	#gcc setup
-	add_definitions(-std=c++17 -O3 -march=native)
-	add_definitions(-Wall -Wextra -Wabi -Wsign-conversion -Wno-sign-compare -Wformat -Wformat-security)
-	add_definitions(-Wno-deprecated-declarations)
-	add_definitions(-pedantic)
-	add_definitions(-fstack-protector -fPIE -fPIC)
-	add_definitions(-Wno-unused-function)
-	add_definitions(-D_FORTIFY_SOURCE=2)
+# 	# Build dpdk_pcap with the right flags and install into rootfs.
+# 	#set(CMAKE_EXE_LINKER_FLAGS ${DPDK_LD_FLAGS})
+# 	#add_executable(dpdk_pcap dpdk_pcap.c)
+# 	#target_compile_options(dpdk_pcap PRIVATE "-Wno-sign-conversion")
+# 	#target_link_libraries(dpdk_pcap gflags)
+# 	#install(CODE "execute_process(COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/dpdk_pcap $ENV{TARGET_DIR}/usr/bin/dpdk_pcap)")
+# else()
+# 	#gcc setup
+# 	add_definitions(-std=c++17 -O3 -march=native)
+# 	add_definitions(-Wall -Wextra -Wabi -Wsign-conversion -Wno-sign-compare -Wformat -Wformat-security)
+# 	add_definitions(-Wno-deprecated-declarations)
+# 	add_definitions(-pedantic)
+# 	add_definitions(-fstack-protector -fPIE -fPIC)
+# 	add_definitions(-Wno-unused-function)
+# 	add_definitions(-D_FORTIFY_SOURCE=2)
 
-	# Build memcached kernel client with the right flags and install into rootfs.
-	#set(CMAKE_EXE_LINKER_FLAGS ${MC_LD_FLAGS})
-	add_executable(memcached_client_kernel memcached_client.cc)
-	# Set the directory containing the gem5-lib library
-	#target_link_directories(memcached_client_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gem5-lib)
+# 	# Build memcached kernel client with the right flags and install into rootfs.
+# 	#set(CMAKE_EXE_LINKER_FLAGS ${MC_LD_FLAGS})
+# 	add_executable(memcached_client_kernel memcached_client.cc)
+# 	# Set the directory containing the gem5-lib library
+# 	#target_link_directories(memcached_client_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gem5-lib)
 
-	# Link against the gem5-lib library (static)
-	#target_link_libraries(memcached_client_kernel PRIVATE m5 gflags)
+# 	# Link against the gem5-lib library (static)
+# 	#target_link_libraries(memcached_client_kernel PRIVATE m5 gflags)
 
-	#target_link_libraries(memcached_client_kernel gflags)
-	install(CODE "execute_process(COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/memcached_client_kernel $ENV{TARGET_DIR}/usr/bin/memcached_client_kernel)")
-endif()
+# 	#target_link_libraries(memcached_client_kernel gflags)
+# 	install(CODE "execute_process(COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/memcached_client_kernel $ENV{TARGET_DIR}/usr/bin/memcached_client_kernel)")
+# endif()
