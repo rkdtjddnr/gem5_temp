@@ -114,4 +114,87 @@ PacketFifo::unserialize(const std::string &base, CheckpointIn &cp)
     }
 }
 
+#ifdef USE_ENSO
+bool
+EnsoPacketFifo::copyout(void *dest, unsigned offset, unsigned len)
+{
+    char *data = (char *)dest;
+    if (offset + len >= size())
+        return false;
+
+    iterator i = fifo.begin();
+    iterator end = fifo.end();
+    while (len > 0) {
+        EnsoRxPtr &pkt = i->packet;
+        while (offset >= pkt->length) {
+            offset -= pkt->length;
+            ++i;
+        }
+
+        if (i == end)
+            panic("invalid fifo");
+
+        unsigned size = std::min(pkt->length - offset, len);
+        memcpy(data, pkt->data, size);
+        offset = 0;
+        len -= size;
+        data += size;
+        ++i;
+    }
+
+    return true;
+}
+
+
+void
+EnsoPacketFifoEntry::serialize(const std::string &base, CheckpointOut &cp) const
+{
+    packet->serialize(base + ".packet", cp);
+    paramOut(cp, base + ".slack", slack);
+    paramOut(cp, base + ".number", number);
+    paramOut(cp, base + ".priv", priv);
+}
+
+void
+EnsoPacketFifoEntry::unserialize(const std::string &base, CheckpointIn &cp)
+{
+    packet = std::make_shared<EnsoRxData>();
+    packet->unserialize(base + ".packet", cp);
+    paramIn(cp, base + ".slack", slack);
+    paramIn(cp, base + ".number", number);
+    paramIn(cp, base + ".priv", priv);
+}
+
+void
+EnsoPacketFifo::serialize(const std::string &base, CheckpointOut &cp) const
+{
+    paramOut(cp, base + ".size", _size);
+    paramOut(cp, base + ".maxsize", _maxsize);
+    paramOut(cp, base + ".reserved", _reserved);
+    paramOut(cp, base + ".packets", fifo.size());
+
+    int i = 0;
+    for (const auto &entry : fifo)
+        entry.serialize(csprintf("%s.entry%d", base, i++), cp);
+}
+
+void
+EnsoPacketFifo::unserialize(const std::string &base, CheckpointIn &cp)
+{
+    paramIn(cp, base + ".size", _size);
+//  paramIn(cp, base + ".maxsize", _maxsize);
+    paramIn(cp, base + ".reserved", _reserved);
+    int fifosize;
+    paramIn(cp, base + ".packets", fifosize);
+
+    fifo.clear();
+
+    for (int i = 0; i < fifosize; ++i) {
+        EnsoPacketFifoEntry entry;
+        entry.unserialize(csprintf("%s.entry%d", base, i), cp);
+        fifo.push_back(entry);
+    }
+}
+#endif
+
 } // namespace gem5

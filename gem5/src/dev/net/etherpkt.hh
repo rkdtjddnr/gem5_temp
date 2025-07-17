@@ -97,8 +97,78 @@ class EthPacketData
     void serialize(const std::string &base, CheckpointOut &cp) const;
     void unserialize(const std::string &base, CheckpointIn &cp);
 };
-
 typedef std::shared_ptr<EthPacketData> EthPacketPtr;
+
+#define USE_ENSO
+#ifdef USE_ENSO
+  struct MetaData
+    {
+      // uint16_t pktID; // Data offset in Data FIFO
+      uint32_t pktQueueId; // Enso Pipe ID
+      bool isNotify; // Is noftification needed after this pkt DMAed?
+      MetaData() : pktQueueId(0), isNotify(false) {}
+    };
+
+    struct PipeState
+    {
+      uint64_t physAddr;   // Host Enso Pipe physical addr for DMA
+      bool pipeStatus;     // Enso Pipe Status using for notify logic, 1 == busy, 0 == idle
+      uint64_t notifBufId; // Notification buffer ID, typically 1 notification buffer per core
+
+      // internal queue_state;
+      // uint16_t head;
+      uint32_t tail;
+    };
+
+    class EnsoRxData
+    {
+    public:
+        /**
+         * Pointer to packet data will be deleted
+         */
+        uint8_t *data;
+
+        /**
+         * Total size of the allocated data buffer.
+         */
+        unsigned bufLength;
+
+        /**
+         * Amount of space occupied by the payload in the data buffer
+         */
+        unsigned length;
+
+        /**
+         * number of flit of this pkt
+         */
+        unsigned flits;
+        
+        /**
+         * metadata for this packet
+         */
+        MetaData meta;
+
+        /**
+         * EnsoPipeState used by this pkt
+         */
+        PipeState *pipe;
+
+        EnsoRxData()
+            : data(nullptr), bufLength(0), length(0), flits(0), meta(), pipe(nullptr)
+        { }
+
+        explicit EnsoRxData(unsigned size)
+            : data(new uint8_t[size]), bufLength(size), length(0), flits(), meta(), pipe(nullptr)
+        { }
+
+        ~EnsoRxData() { if (data) delete [] data; }
+
+        void serialize(const std::string &base, CheckpointOut &cp) const;
+        void unserialize(const std::string &base, CheckpointIn &cp);
+    };
+
+    typedef std::shared_ptr<EnsoRxData> EnsoRxPtr;
+  #endif
 
 } // namespace gem5
 

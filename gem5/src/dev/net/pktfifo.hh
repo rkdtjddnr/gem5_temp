@@ -248,6 +248,202 @@ class PacketFifo
     void unserialize(const std::string &base, CheckpointIn &cp);
 };
 
+#ifdef USE_ENSO
+struct EnsoPacketFifoEntry
+{
+    
+    EnsoRxPtr packet;
+    uint64_t number;
+    unsigned slack;
+    int priv;
+
+    EnsoPacketFifoEntry()
+    {
+        clear();
+    }
+
+    EnsoPacketFifoEntry(const EnsoPacketFifoEntry &s)
+        : packet(s.packet), number(s.number), slack(s.slack), priv(s.priv)
+    {
+    }
+
+    EnsoPacketFifoEntry(EnsoRxPtr p, uint64_t n)
+        : packet(p), number(n), slack(0), priv(-1)
+    {
+    }
+
+    void clear()
+    {
+        packet = NULL;
+        number = 0;
+        slack = 0;
+        priv = -1;
+    }
+
+    void serialize(const std::string &base, CheckpointOut &cp) const;
+    void unserialize(const std::string &base, CheckpointIn &cp);
+};
+
+class EnsoPacketFifo
+{
+  public:
+
+    typedef std::list<EnsoPacketFifoEntry> fifo_list;
+    typedef fifo_list::iterator iterator;
+    typedef fifo_list::const_iterator const_iterator;
+    bool _isRXFifo;
+
+  protected:
+    std::list<EnsoPacketFifoEntry> fifo;
+    uint64_t _counter;
+    unsigned _maxsize;
+    unsigned _size;
+    unsigned _reserved;
+
+  public:
+    explicit EnsoPacketFifo(int max, bool isRXFifo = false)
+        : _counter(0), _maxsize(max), _size(0), _reserved(0), _isRXFifo(isRXFifo) {}
+    virtual ~EnsoPacketFifo() {}
+
+    unsigned packets() const { return fifo.size(); }
+    unsigned maxsize() const { return _maxsize; }
+    unsigned size() const { return _size; }
+    unsigned reserved() const { return _reserved; }
+    int avail() const { //return _maxsize - _size - _reserved; 
+                        return static_cast<int>(_maxsize) - static_cast<int>(_size) - static_cast<int>(_reserved); }
+    bool empty() const { return size() <= 0; }
+    bool full() const { return avail() <= 0; }
+
+    unsigned
+    reserve(unsigned len = 0)
+    {
+        assert(avail() >= len);
+        _reserved += len;
+        return _reserved;
+    }
+
+    iterator begin() { return fifo.begin(); }
+    iterator end() { return fifo.end(); }
+
+    const_iterator begin() const { return fifo.begin(); }
+    const_iterator end() const { return fifo.end(); }
+
+    EnsoRxPtr front() { return fifo.begin()->packet; }
+
+    bool push(EnsoRxPtr ptr)
+    {
+        assert(ptr->length);
+        // assert(_reserved <= ptr->length);
+        
+        int avail_space = avail();
+        int required_space = std::max(0, static_cast<int>(ptr->length) - static_cast<int>(_reserved));
+
+        if (avail_space < required_space) {
+            // if (_isRXFifo) {
+            //     printf("RXFifo push rejected! _reserved: %d, ptr->length: %d, avail: %d, required: %d, _size: %d, _maxsize: %d\n", 
+            //        _reserved, ptr->length, avail_space, required_space, _size, _maxsize);
+            // }
+            return false;
+        } else {
+            // if (_isRXFifo) {
+            //     printf("RXFifo push success! _reserved: %d, ptr->length: %d, avail: %d, required: %d, _size: %d, _maxsize: %d\n", 
+            //         _reserved, ptr->length, avail_space, required_space, _size, _maxsize);
+            // }
+        }
+
+        // check overflow
+        if (_size + ptr->length > _maxsize) {
+            // printf("Warning: _size would overflow. _size: %d, ptr->legnth: %d, _maxsize: %d\n", _size, ptr->length, _maxsize);
+            return false;
+        }
+        _size += ptr->length;
+
+        EnsoPacketFifoEntry entry;
+        entry.packet = ptr;
+        entry.number = _counter++;
+        fifo.push_back(entry);
+        if (_reserved > ptr->length)
+            _reserved -= ptr->length;
+        else
+            _reserved = 0;
+        return true;
+
+    }
+
+    void pop()
+    {
+        if (empty())
+            return;
+
+        iterator entry = fifo.begin();
+        _size -= entry->packet->length;
+        _size -= entry->slack;
+        entry->packet = NULL;
+        fifo.pop_front();
+    }
+
+    void clear()
+    {
+        for (iterator i = begin(); i != end(); ++i)
+            i->clear();
+        fifo.clear();
+        _size = 0;
+        _reserved = 0;
+    }
+
+    void remove(iterator i)
+    {
+        if (i != fifo.begin()) {
+            iterator prev = i;
+            --prev;
+            assert(prev != fifo.end());
+            prev->slack += i->packet->length;
+            prev->slack += i->slack;
+        } else {
+            _size -= i->packet->length;
+            _size -= i->slack;
+        }
+
+        i->clear();
+        fifo.erase(i);
+    }
+
+    bool copyout(void *dest, unsigned offset, unsigned len);
+
+    int countPacketsBefore(const_iterator i) const
+    {
+        if (i == fifo.end())
+            return 0;
+        return i->number - fifo.begin()->number;
+    }
+
+    int countPacketsAfter(const_iterator i) const
+    {
+        auto end = fifo.end();
+        if (i == end)
+            return 0;
+        return (--end)->number - i->number;
+    }
+
+    void check() const
+    {
+        unsigned total = 0;
+        for (auto i = begin(); i != end(); ++i)
+            total += i->packet->length + i->slack;
+
+        if (total != _size)
+            panic("total (%d) is not == to size (%d)\n", total, _size);
+    }
+
+/**
+ * Serialization stuff
+ */
+  public:
+    void serialize(const std::string &base, CheckpointOut &cp) const;
+    void unserialize(const std::string &base, CheckpointIn &cp);
+};
+#endif
+
 } // namespace gem5
 
 #endif // __DEV_NET_PKTFIFO_HH__
