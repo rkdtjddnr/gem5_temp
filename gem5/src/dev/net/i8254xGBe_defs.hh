@@ -360,6 +360,25 @@ struct TxDesc
     uint64_t d2;
 };
 
+#define USE_ENSO
+#ifdef USE_ENSO
+// RX/TX Notification struct
+// 64B cacheline size
+struct __attribute__((__packed__)) RxNotification {
+  uint64_t signal; // Should always be 0x1.
+  uint64_t queue_id;
+  uint64_t tail;
+  uint64_t pad[5];
+};
+
+struct __attribute__((__packed__)) TxNotification {
+  uint64_t signal; // 0x1 if set from software, 0x0 if set from hardware,
+  uint64_t phys_addr;
+  uint64_t length;  // In bytes (up to 1MB).
+  uint64_t pad[5];
+};
+#endif
+
 GEM5_DEPRECATED_NAMESPACE(TxdOp, txd_op);
 namespace txd_op
 {
