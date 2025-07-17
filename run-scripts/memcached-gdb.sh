@@ -40,23 +40,23 @@ function run_simulation {
   echo "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
-  --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
+  --num-cpus=$(($num_nics)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
   --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 
   "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
-  --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
+  --num-cpus=$(($num_nics)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
   --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 }
 
 function run_gdb_simulation {
-  gdb --args "$GEM5_DIR/build/ARM/gem5.opt" $DEBUG_FLAGS --outdir="$RUNDIR" \
+  gdb --args "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
-  --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
+  --num-cpus=$(($num_nics)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
   --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 }
@@ -73,6 +73,7 @@ GUEST_SCRIPT_DIR=${GIT_ROOT}/guest-scripts
 
 # parse command line arguments
 TEMP=$(getopt -o 'h' --long freq:,take-checkpoint,num-nics:,cpu-types:,l2-size:,script:,packet-rate:,num-queues:,loadgen-find-bw,help -n 'dpdk-loadgen' -- "$@")
+
 
 # check for parsing errors
 if [ $? != 0 ]; then
@@ -144,20 +145,22 @@ fi
 
 if [[ -n "$checkpoint" ]]; then
   # RUNDIR=${GIT_ROOT}/rundir/$num_nics"NIC-ckp-"$GUEST_SCRIPT
-  RUNDIR=${GIT_ROOT}/rundir/ISPASS-2024-mica-exps/$num_nics"NIC"-$num_queues"Queues"-"ckp"-$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/ISPASS-2024-memcached-exps/$num_nics"NIC"-$num_queues"Queues"-"ckp"-$GUEST_SCRIPT
   setup_dirs
   echo "Taking Checkpoint for NICs=$num_nics Queues=$num_queues">&2
   GEM5TYPE="fast"
+  #GEM5TYPE="opt"
   # DEBUG_FLAGS="--debug-flags=LoadgenDebug"
   PORT=11211
   CPUTYPE="AtomicSimpleCPU"
+  #CPUTYPE="O3_ARM_v7a_3"
   PACKET_RATE=5000
   LOADGENREPLAYMODE=ConstThroughput
   PCAP_FILENAME="../resources-dpdk/warmup-dpdk-5k.pcap"
-  #PCAP_FILENAME="../resources-dpdk/warm_up/mica_1_8_8_16384_1_get_50.pcap"
-  #CONFIGARGS="-r 2 --max-checkpoints 1 --checkpoint-at-end --cpu-clock=$FREQ --l2_size=$L2_SIZE $CACHE_CONFIG --loadgen-start=6654416674681 --loadgen-type=Pcap --loadgen-stack=DPDKStack --loadgen_pcap_filename=$PCAP_FILENAME --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT"
+  #CONFIGARGS="-r 2 --max-checkpoints 1 --checkpoint-at-end --cpu-clock=$FREQ --l2_size=$L2_SIZE $CACHE_CONFIG $CPU_CONFIG --loadgen-start=6654416674681 --loadgen-type=Pcap --loadgen-stack=DPDKStack --loadgen_pcap_filename=$PCAP_FILENAME --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT"
   CONFIGARGS="--max-checkpoints 2 --cpu-clock=$FREQ --l2_size=$L2_SIZE $CACHE_CONFIG --loadgen-start=600011771117451658 --loadgen-type=Pcap --loadgen-stack=DPDKStack --loadgen_pcap_filename=$PCAP_FILENAME --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT"
-  run_simulation > ${RUNDIR}/simout
+  #run_simulation > ${RUNDIR}/simout
+  run_gdb_simulation
   exit 0
 else
   if [[ -z "$PACKET_RATE" ]]; then
@@ -165,22 +168,26 @@ else
     usage
   fi
   PORT=11211
-  PCAP_FILENAME="../resources-dpdk/request-dpdk-128.pcap"
+  #PCAP_FILENAME="../resources-dpdk/request-dpdk-10k.pcap"
+  PCAP_FILENAME="../resources-dpdk/replay_trace/memcached_8_8_50000_1_get_50.pcap"
   # PCAP_FILENAME="../resources/request-dpdk-trace.pcap"
- 
   ((INCR_INTERVAL = PACKET_RATE / 10)) 
   LOADGENREPLAYMODE=${LOADGENREPLAYMODE:-"ConstThroughput"}
-  #RUNDIR=${GIT_ROOT}/rundir/mica-dpdk-findbw-cpu-type-exp/$num_nics"NIC"-$GUEST_SCRIPT-$FREQ"-ddio-enabled"-$PACKET_RATE
-  RUNDIR=${GIT_ROOT}/rundir/mica-dpdk-findbw-cpu-type-exp/$num_nics"NIC"-$num_queues"Queues"-"ckp"-$GUEST_SCRIPT-$FREQ"-ddio-enabled"-$PACKET_RATE
+  #RUNDIR=${GIT_ROOT}/rundir/memcached-dpdk-findbw-cpu-type-exp/$num_nics"NIC"-$GUEST_SCRIPT-$FREQ"-ddio-enabled"-$PACKET_RATE
+  RUNDIR=${GIT_ROOT}/rundir/memcached-dpdk-findbw-cpu-type-exp/$num_nics"NIC"-$num_queues"Queues"-"ckp"-$GUEST_SCRIPT-$FREQ"-ddio-enabled"-$PACKET_RATE
   setup_dirs
   CPUTYPE="O3_ARM_v7a_3" # just because DerivO3CPU is too slow sometimes
   GEM5TYPE="opt"
   # LOADGENREPLAYMODE=${LOADGENREPLAYMODE:-"ConstThroughput"}
-  DEBUG_FLAGS="" #""--debug-flags=LoadgenDebug"
+  DEBUG_FLAGS="" #"--debug-flags=LoadgenDebug"
   CONFIGARGS="--l2_size=$L2_SIZE $CACHE_CONFIG $CPU_CONFIG -r 2 --cpu-clock=$FREQ --loadgen-type=Pcap --loadgen-stack=DPDKStack \
-  --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=5759506464598 --packet-rate=$PACKET_RATE \
+  --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=7653557427454 --packet-rate=$PACKET_RATE \
   --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT --loadgen-increment-interva=$INCR_INTERVAL"
   #run_simulation > ${RUNDIR}/simout
   run_gdb_simulation
   exit
 fi
+
+
+# safety
+# 32263966421416

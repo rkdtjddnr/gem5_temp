@@ -47,7 +47,7 @@ function run_simulation {
   "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
-  --num-cpus=$(($num_nics)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
+  --num-cpus=$(($num_nics)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
   --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 }
@@ -157,9 +157,10 @@ else
   fi
   PORT=11211
   #PCAP_FILENAME="../resources-dpdk/request-dpdk-10k.pcap"
-  # PCAP_FILENAME="../resources/request-dpdk-trace.pcap"
+  #PCAP_FILENAME="../resources/request-dpdk-trace.pcap"
   #PCAP_FILENAME="../resources-dpdk/replay_trace/mica_16k/mica_16k_0.pcap"
-  PCAP_FILENAME="../resources-dpdk/replay_trace/mica_1_8_8_5000000_1_get_50.pcap"
+  #PCAP_FILENAME="../resources-dpdk/replay_trace/mica_1_8_8_5000000_1_get_50.pcap"
+  PCAP_FILENAME="../resources-dpdk/replay_trace/mica_1_8_8_4M_1_get_50_item_1M.pcap"
   #PCAP_FILENAME="../resources-dpdk/replay_trace/mica_1_8_8_1000000_1_get_95.pcap"
 
   ((INCR_INTERVAL = PACKET_RATE / 10)) 
@@ -170,9 +171,9 @@ else
   CPUTYPE="O3_ARM_v7a_3" # just because DerivO3CPU is too slow sometimes
   GEM5TYPE="opt"
   # LOADGENREPLAYMODE=${LOADGENREPLAYMODE:-"ConstThroughput"}
-  DEBUG_FLAGS="--debug-flags=LoadgenLatency" #"--debug-flags=EthernetDpdk"
+  DEBUG_FLAGS="--debug-flags=AddrRanges" #"--debug-flags=EthernetDpdk"
   CONFIGARGS="--l2_size=$L2_SIZE $CACHE_CONFIG $CPU_CONFIG -r 2 --cpu-clock=$FREQ --loadgen-type=Pcap --loadgen-stack=DPDKStack \
-  --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=10152341256673 --packet-rate=$PACKET_RATE \
+  --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=7557444107983 --packet-rate=$PACKET_RATE \
   --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT --loadgen-increment-interva=$INCR_INTERVAL"
   run_simulation > ${RUNDIR}/simout
   exit

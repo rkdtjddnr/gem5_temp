@@ -157,7 +157,9 @@ else
   fi
   PORT=11211
   #PCAP_FILENAME="../resources-dpdk/request-dpdk-10k.pcap"
-  PCAP_FILENAME="../resources-dpdk/replay_trace/memcached_8_8_50000_1_get_50.pcap"
+  #PCAP_FILENAME="../resources-dpdk/replay_trace/memcached_8_8_50000_1_get_50.pcap"
+  #PCAP_FILENAME="../resources-dpdk/replay_trace/mica_16k/mica_16k_0.pcap"
+  PCAP_FILENAME="../resources-dpdk/replay_trace/mica_1_8_8_4M_1_get_50_item_1M.pcap"
   # PCAP_FILENAME="../resources/request-dpdk-trace.pcap"
   ((INCR_INTERVAL = PACKET_RATE / 10)) 
   LOADGENREPLAYMODE=${LOADGENREPLAYMODE:-"ConstThroughput"}
@@ -167,9 +169,9 @@ else
   CPUTYPE="O3_ARM_v7a_3" # just because DerivO3CPU is too slow sometimes
   GEM5TYPE="opt"
   # LOADGENREPLAYMODE=${LOADGENREPLAYMODE:-"ConstThroughput"}
-  DEBUG_FLAGS="" #"--debug-flags=LoadgenDebug"
+  DEBUG_FLAGS="" #"--debug-flags=EthernetENSO" #"--debug-flags=LoadgenDebug"
   CONFIGARGS="--l2_size=$L2_SIZE $CACHE_CONFIG $CPU_CONFIG -r 2 --cpu-clock=$FREQ --loadgen-type=Pcap --loadgen-stack=DPDKStack \
-  --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=32263685686432 --packet-rate=$PACKET_RATE \
+  --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=7653650779342 --packet-rate=$PACKET_RATE \
   --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT --loadgen-increment-interva=$INCR_INTERVAL"
   run_simulation > ${RUNDIR}/simout
   exit
