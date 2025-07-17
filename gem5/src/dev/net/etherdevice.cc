@@ -117,7 +117,25 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
                 "Actual Descriptor Bytes Received by M2func"),
       ADD_STAT(txBytesM2funcBitMask, statistics::units::Byte::get(),
                 "Actual BitMask Bytes Transmitted by M2func"),
-
+    
+    #ifdef USE_ENSO
+      ADD_STAT(rxEnsoPipeFull, statistics::units::Count::get(),
+               "Number of times the host rxEnsoPipe fills up"),
+      ADD_STAT(rxNotifBufferFull, statistics::units::Count::get(),
+               "Number of times the host rxNotificationBuffer fills up"),
+      ADD_STAT(rxNotification, statistics::units::Count::get(),
+               "Number of Rx Notifications Transmitted by Rx Notif Manager"),
+      ADD_STAT(txNotification, statistics::units::Count::get(),
+               "Number of Rx Notifications Received by Tx Notif Manager"),
+      ADD_STAT(complNotification, statistics::units::Count::get(),
+               "Number of Tx Completions Transmitted by Tx Notif Manager"),
+      ADD_STAT(rxNotifDMABytes, statistics::units::Byte::get(),
+               "RxNotification Bytes DMA wr for notify host"),
+      ADD_STAT(txNotifDMABytes, statistics::units::Byte::get(),
+               "TxNotification Bytes DMA rd for fetch TX data"),
+      ADD_STAT(txComplDMABytes, statistics::units::Byte::get(),
+               "TxCompletions Bytes DMA wr for write back"),
+    #endif
       ADD_STAT(txPackets, statistics::units::Count::get(),
                "Number of Packets Transmitted"),
       ADD_STAT(rxPackets, statistics::units::Count::get(),
@@ -373,6 +391,26 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
     
     txBytesM2funcBitMask
         .prereq(txBytesM2funcBitMask);
+
+    #ifdef USE_ENSO
+    rxNotification
+        .prereq(rxNotifDMABytes);
+    
+    txNotification
+        .prereq(txNotifDMABytes);
+    
+    complNotification
+        .prereq(txComplDMABytes);
+
+    rxNotifDMABytes
+        .prereq(rxNotifDMABytes);
+
+    txNotifDMABytes
+        .prereq(txNotifDMABytes);
+
+    txComplDMABytes
+        .prereq(txComplDMABytes);
+    #endif
 
     txPackets
         .prereq(txBytes);

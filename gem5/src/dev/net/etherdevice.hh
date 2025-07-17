@@ -188,6 +188,20 @@ class EtherDevice : public PciDevice
 
         statistics::Formula coalescedTotal;
         statistics::Scalar droppedPackets;
+        #ifdef USE_ENSO
+        statistics::Scalar rxNotification; // sent by NIC
+        statistics::Scalar txNotification; // used by NIC
+        statistics::Scalar complNotification; // TX compl sent by NIC
+        
+        statistics::Scalar rxNotifDMABytes; // send
+        statistics::Scalar txNotifDMABytes; // fetch
+        statistics::Scalar txComplDMABytes; // send
+
+        statistics::Scalar rxEnsoPipeFull;
+        statistics::Scalar rxNotifBufferFull;
+        //statistics::Scalar txNotifBufferFull;
+        #endif
+
     } etherDeviceStats;
 };
 
