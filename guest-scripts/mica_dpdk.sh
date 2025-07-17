@@ -4,7 +4,7 @@ dpdk-devbind.py -b uio_pci_generic 00:02.0
 mkdir /dev/hugepages    # sometimes not requred
 dpdk-hugepages.py --setup 2M   # sometimes not requred
 #echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
-echo 8192 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
+echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 cat /proc/meminfo | grep -i huge
 # m5 checkpoint
 
