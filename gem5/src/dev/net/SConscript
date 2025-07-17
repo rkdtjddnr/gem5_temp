@@ -101,3 +101,9 @@ CompoundFlag('EthernetLoadgen', [ 'EthernetDpdk', 'LoadgenDebug',
 DebugFlag('LoadgenDebug')
 DebugFlag('LoadgenLatency')
 DebugFlag('EthernetDpdk')
+
+# Enso DEBUG FLAG
+DebugFlag('EthernetENSO')
+DebugFlag('EthernetEnsoRxPipe')
+DebugFlag('EthernetEnsoRxNotif')
+DebugFlag('EthernetEnsoTxNotif')
