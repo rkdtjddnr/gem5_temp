@@ -174,7 +174,7 @@ void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, ui
         // check addr wrap-around 
         if(addr >= end_of_buffer)
         {
-            printf("[DEBUG] addr %p limit %p \n", addr, end_of_buffer);
+            //printf("[DEBUG] addr %p limit %p \n", addr, end_of_buffer);
             break;
         }
 
@@ -190,7 +190,7 @@ void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, ui
 
     }
 
-    printf("[DEBUG] process complete, remaining %u bytes, %u pkts\n", remainingBytes, missingMessages);
+    //printf("[DEBUG] process complete, remaining %u bytes, %u pkts\n", remainingBytes, missingMessages);
 }
 
 
@@ -212,7 +212,7 @@ pkt_burst_mac_swap_enso(struct enso_stream *es)
 	uint32_t newByte = rte_eth_rx_enso_burst(ensoDevice, &buf);
 	assert(buf);
 	if(newByte == 0) return;
-	printf("======== Recieve %u bytes from Rx pipe ========\n", newByte);
+	//printf("======== Recieve %u bytes from Rx pipe ========\n", newByte);
 
 	// set up tx buffer
 	uint8_t* tx_buf = rte_eth_alloc_tx_buffer(ensoDevice, target_size);
@@ -228,7 +228,7 @@ pkt_burst_mac_swap_enso(struct enso_stream *es)
 
 	if (tx_size > 0)
 	{
-		printf("======== Send %u packets, %u bytes to Tx pipe ========\n",rxTxState.pending_tx.count, tx_size);
+		//printf("======== Send %u packets, %u bytes to Tx pipe ========\n",rxTxState.pending_tx.count, tx_size);
 		rte_eth_tx_enso_burst(ensoDevice, tx_size);
 	}
 		

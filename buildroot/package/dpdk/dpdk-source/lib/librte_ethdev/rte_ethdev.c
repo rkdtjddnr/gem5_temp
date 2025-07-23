@@ -6125,8 +6125,8 @@ uint32_t next_batch_from_pipe(RxEnsoPipe_t* rx_pipe, NotificationBufPair_t* noti
 
 	uint32_t enso_pipe_tail = notif_pair->pending_rx_pipe_tails[queue_id];
 
-	//printf("[DRV] enso_pipe_head: %u, tail: %u\n", enso_pipe_head, enso_pipe_tail);
-	//printf("[DRV] new buf addr %p\n", *buf);
+	//printf("[DRV] RX enso_pipe_head: %u, tail: %u\n", enso_pipe_head, enso_pipe_tail);
+	//printf("[DRV] New RX buf addr %p\n", *buf);
 
 	if (enso_pipe_tail == enso_pipe_head) {
 		return 0;
@@ -6228,7 +6228,7 @@ uint32_t send_to_queue(EnsoDevice_t* device, uint64_t phys_addr, uint32_t len)
 		tx_notification->length = req_length;
 		tx_notification->signal = 1;
 		tx_notification->phys_addr = transf_addr;
-		printf("[DRV] TX notification %u size, %lx addr\n", req_length, transf_addr);
+		//printf("[DRV] TX notification %u size, %lx addr\n", req_length, transf_addr);
 
 		uint64_t huge_page_offset = (transf_addr + req_length) % ENSO_BUF_SIZE;
 		transf_addr = hugepage_base_addr + huge_page_offset;
@@ -6245,7 +6245,7 @@ uint32_t send_to_queue(EnsoDevice_t* device, uint64_t phys_addr, uint32_t len)
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->update_tx_notif_tail, -ENOTSUP);
 	(*dev->dev_ops->update_tx_notif_tail)(dev, device->notif_pair->id, tx_tail);
 
-	printf("[DRV] TX notif tail update %u \n", tx_tail);
+	//printf("[DRV] TX notif tail update %u \n", tx_tail);
 
   	return len;
 
