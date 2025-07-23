@@ -167,6 +167,11 @@ portid_t fwd_ports_ids[RTE_MAX_ETHPORTS];      /**< Port ids configuration. */
 struct fwd_stream **fwd_streams; /**< For each RX queue of each port. */
 streamid_t nb_fwd_streams;       /**< Is equal to (nb_ports * nb_rxq). */
 
+#ifdef USE_ENSO
+struct enso_stream **enso_streams;
+streamid_t nb_enso_streams;       /**< Is equal to (nb_ports * nb_rxq). */
+#endif
+
 /*
  * Forwarding engines.
  */
@@ -1599,6 +1604,11 @@ init_config(void)
 
 	fwd_config_setup();
 
+	#ifdef USE_ENSO
+	if (init_enso_streams() < 0)
+		rte_exit(EXIT_FAILURE, "FAIL from init_enso_streams()\n");
+	#endif
+
 	/* create a gro context for each lcore */
 	gro_param.gro_types = RTE_GRO_TCP_IPV4;
 	gro_param.max_flow_num = GRO_MAX_FLUSH_CYCLES;
@@ -1712,6 +1722,102 @@ init_fwd_streams(void)
 
 	return 0;
 }
+
+#ifdef USE_ENSO
+int
+init_enso_streams(void)
+{
+	portid_t pid;
+    streamid_t sm_id, nb_enso_streams_new;
+    queueid_t q;
+
+    /* Validate queue counts */
+    RTE_ETH_FOREACH_DEV(pid) {
+        if (nb_rxq > ports[pid].dev_info.max_rx_queues) {
+            printf("Fail: nb_rxq(%d) > max_rx_queues(%d)\n",
+                   nb_rxq, ports[pid].dev_info.max_rx_queues);
+            return -1;
+        }
+        if (nb_txq > ports[pid].dev_info.max_tx_queues) {
+            printf("Fail: nb_txq(%d) > max_tx_queues(%d)\n",
+                   nb_txq, ports[pid].dev_info.max_tx_queues);
+            return -1;
+        }
+    }
+
+    /* Determine number of streams */
+    q = RTE_MAX(nb_rxq, nb_txq);
+    if (q == 0) {
+        printf("Fail: Cannot allocate enso streams (queue count is 0)\n");
+        return -1;
+    }
+
+    nb_enso_streams_new = (streamid_t)(nb_ports * q);
+    if (nb_enso_streams_new == nb_enso_streams)
+        return 0;
+
+    /* Free previous allocation if needed */
+    if (enso_streams != NULL) {
+        for (sm_id = 0; sm_id < nb_enso_streams; sm_id++) {
+            rte_free(enso_streams[sm_id]);
+        }
+        rte_free(enso_streams);
+        enso_streams = NULL;
+    }
+
+    nb_enso_streams = nb_enso_streams_new;
+
+    /* Allocate new enso_streams */
+    enso_streams = rte_zmalloc("testpmd: enso_streams",
+        sizeof(struct enso_stream *) * nb_enso_streams,
+        RTE_CACHE_LINE_SIZE);
+    if (enso_streams == NULL)
+        rte_exit(EXIT_FAILURE,
+                 "rte_zmalloc(%d struct enso_stream *) failed\n",
+                 nb_enso_streams);
+
+    for (sm_id = 0; sm_id < nb_enso_streams; sm_id++) {
+        enso_streams[sm_id] = rte_zmalloc("testpmd: struct enso_stream",
+            sizeof(struct enso_stream), RTE_CACHE_LINE_SIZE);
+        if (enso_streams[sm_id] == NULL)
+            rte_exit(EXIT_FAILURE,
+                     "rte_zmalloc(struct enso_stream) failed at sm_id=%d\n",
+                     sm_id);
+    }
+
+    return 0;
+}
+
+int 
+initialize_enso_stream(void)
+{
+	for (int i = 0; i < cur_fwd_config.nb_fwd_lcores; i++)
+	{
+		// assume port is always 1
+		enso_streams[i]->ensoDevice = rte_eth_enso_device_init(i, 0);
+		int notif_ret = rte_eth_notif_init(enso_streams[i]->ensoDevice);
+        int rx_enso_ret = rte_eth_rx_enso_init(enso_streams[i]->ensoDevice);
+        int tx_enso_ret = rte_eth_tx_enso_init(enso_streams[i]->ensoDevice);
+		
+		enso_streams[i]->rxTxState.pending_tx.count = 0;
+		enso_streams[i]->rxTxState.pending_tx.current_tx_buffer = NULL;
+		enso_streams[i]->rxTxState.pending_tx.start_tx_buffer = NULL;
+
+		enso_streams[i]->rx_packets = 0;
+		enso_streams[i]->tx_packets = 0;
+        
+		if(notif_ret < 0 || rx_enso_ret < 0 || tx_enso_ret < 0)
+        {
+            printf("failed to initialize ENSO\n");
+            return -1;
+        }
+        else
+        {
+            printf("======finish initializing ENSO buffer[%d]======\n",i);
+        }     
+	}
+}
+#endif
 
 static void
 pkt_burst_stats_display(const char *rx_tx, struct pkt_burst_stats *pbs)
@@ -2032,6 +2138,9 @@ static void
 run_pkt_fwd_on_lcore(struct fwd_lcore *fc, packet_fwd_t pkt_fwd)
 {
 	struct fwd_stream **fsm;
+	#ifdef USE_ENSO
+	struct enso_stream **esm;
+	#endif
 	streamid_t nb_fs;
 	streamid_t sm_id;
 #ifdef RTE_LIB_BITRATESTATS
@@ -2044,6 +2153,16 @@ run_pkt_fwd_on_lcore(struct fwd_lcore *fc, packet_fwd_t pkt_fwd)
 	tics_datum = rte_rdtsc();
 	tics_per_1sec = rte_get_timer_hz();
 #endif
+	#ifdef USE_ENSO
+	esm = &enso_streams[fc->stream_idx];
+	nb_fs = fc->stream_nb;
+	do {
+		for (sm_id = 0; sm_id < nb_fs; sm_id++)
+			(*pkt_fwd)(esm[sm_id]);
+
+
+	} while (! fc->stopped);
+	#else
 	fsm = &fwd_streams[fc->stream_idx];
 	nb_fs = fc->stream_nb;
 	do {
@@ -2069,6 +2188,8 @@ run_pkt_fwd_on_lcore(struct fwd_lcore *fc, packet_fwd_t pkt_fwd)
 #endif
 
 	} while (! fc->stopped);
+	#endif
+	
 }
 
 static int
@@ -3857,6 +3978,10 @@ main(int argc, char** argv)
 	if (!no_device_start && start_port(RTE_PORT_ALL) != 0)
 		rte_exit(EXIT_FAILURE, "Start ports failed\n");
 
+	#ifdef USE_ENSO
+	if(initialize_enso_stream() < 0)
+		rte_exit(EXIT_FAILURE, "FAIL from initialize_enso_stream()\n");
+	#endif
 	/* set all ports to promiscuous mode by default */
 	RTE_ETH_FOREACH_DEV(port_id) {
 		ret = rte_eth_promiscuous_enable(port_id);

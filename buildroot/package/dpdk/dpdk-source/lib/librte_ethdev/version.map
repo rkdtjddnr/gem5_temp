@@ -122,6 +122,18 @@ DPDK_21 {
 	rte_flow_query;
 	rte_flow_validate;
 
+	# ENSO
+	rte_eth_enso_device_init;
+	rte_eth_notif_init;
+	rte_eth_rx_enso_init;
+	rte_eth_tx_enso_init;
+	rte_eth_rx_confirm_byte;
+	rte_eth_rx_enso_next;
+	rte_eth_rx_enso_burst;
+	rte_eth_alloc_tx_buffer;
+	rte_eth_rx_enso_clear;
+	rte_eth_tx_enso_burst;
+
 	local: *;
 };
 

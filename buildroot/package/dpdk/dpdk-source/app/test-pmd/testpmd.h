@@ -144,6 +144,32 @@ struct fwd_stream {
 	struct pkt_burst_stats tx_burst_stats;
 };
 
+#ifdef USE_ENSO
+struct RXTXState 
+{
+    //EndpointId eid;
+    //enso::TxPipe* tx_pipe;
+
+    struct PendingTX {
+
+    uint8_t* start_tx_buffer;
+    uint8_t* current_tx_buffer;
+
+    uint16_t count;
+    uint64_t oldest_time;
+    } pending_tx;
+};
+
+struct enso_stream
+{
+	EnsoDevice_t* ensoDevice;
+	struct RXTXState rxTxState;
+
+	uint64_t rx_packets;  /**< received packets */
+	uint64_t tx_packets;  /**< received packets transmitted */
+};
+#endif
+
 /**
  * Age action context types, must be included inside the age action
  * context structure.
