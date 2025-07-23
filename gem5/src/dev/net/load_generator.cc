@@ -5,7 +5,10 @@
 #include "base/trace.hh"
 #include "debug/LoadgenDebug.hh"
 #include "debug/LoadgenLatency.hh"
-
+#ifdef USE_ENSO
+#include <netinet/ip.h>
+#include <net/ethernet.h>
+#endif
 
 namespace gem5
 {
@@ -66,6 +69,7 @@ namespace gem5
 
         uint16_t size = ethpacket->length;
 
+        #ifndef USE_ENSO
         if(1 != htons(1)) size = htons(size);
 
         uint8_t head[MACHeaderSize];
@@ -75,7 +79,30 @@ namespace gem5
         memcpy(ethpacket->data, head, MACHeaderSize);
         uint64_t timeStamp = gem5::curTick();
         memcpy(&(ethpacket->data[MACHeaderSize]), &timeStamp, sizeof(uint64_t));
+        #else
+        const int mac_len = 14;
+        const int ip_len = 20;
+        uint8_t* pkt = ethpacket->data;
 
+        // Ethernet Header
+        memcpy(pkt, dst_mac, 6);
+        memcpy(pkt + 6, src_mac, 6);
+        uint16_t ether_type = htons(ETHERTYPE_IP);
+        memcpy(pkt + 12, &ether_type, 2);
+
+        // IP Header (minimal)
+        uint8_t* ip_hdr = pkt + mac_len;
+        memset(ip_hdr, 0, ip_len);  // zero out IP header
+        ip_hdr[0] = 0x45;           // Version (4) + IHL (5)
+
+        // Total Length
+        uint16_t total_len = htons(ethpacket->length - mac_len);
+        memcpy(ip_hdr + 2, &total_len, 2);  // offset 2: Total Length field
+
+        // Timestamp payload
+        uint64_t timestamp = gem5::curTick();
+        memcpy(pkt + mac_len + ip_len, &timestamp, sizeof(uint64_t));
+        #endif
         ethpacket->rxMadeTick = gem5::curTick();
     }
 
@@ -90,6 +117,7 @@ namespace gem5
         EthPacketPtr txPacket = std::make_shared<EthPacketData>(packetSize);
         txPacket->length = packetSize;
         buildPacket(txPacket);
+        // need to make ip header for Enso
         interface->sendPacket(txPacket);
         
         if (curTick() < stopTick)
@@ -152,8 +180,11 @@ namespace gem5
         lastRxCount++;
 
         uint64_t sendTick;
+        #ifndef USE_ENSO
         memcpy(&sendTick, &(pkt->data[MACHeaderSize]), sizeof(uint64_t));
-        
+        #else
+        memcpy(&sendTick, (pkt->data + 14 + 20), sizeof(uint64_t));
+        #endif
         float delta = float((gem5::curTick() - sendTick))/10.0e8;
         loadGeneratorStats.latency.sample(delta);
         DPRINTF(LoadgenLatency, "Latency %f \n", delta);
