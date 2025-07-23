@@ -6526,6 +6526,7 @@ int main (int argc, char **argv) {
         return -1;
     }
     
+    #ifdef USE_ENSO
     // ENSO Initializing
     EnsoDevice_t* ensoDevice = rte_eth_enso_device_init(0, 0);
     struct RXTXState rxTxState;
@@ -6546,6 +6547,7 @@ int main (int argc, char **argv) {
     }
     else
         printf("======finish initializing ENSO buffer======\n");
+    #endif
 
 	uint16_t pckt_sent;
     struct rte_eth_dev_tx_buffer *buffer;
