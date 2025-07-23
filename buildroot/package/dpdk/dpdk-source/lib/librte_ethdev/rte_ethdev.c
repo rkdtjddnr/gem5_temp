@@ -5922,13 +5922,19 @@ int rte_eth_rx_enso_init(EnsoDevice_t* device)
 	}
 
 	// need to prevent race condition in multi-core
-	new_rx_pipe->id = find_and_allocate_pipe();
-	if(new_rx_pipe->id < 0)
-		return -1;
+	// new_rx_pipe->id = find_and_allocate_pipe();
+	// if(new_rx_pipe->id < 0)
+	// 	return -1;
+	// pipe_id is same as core_id -> assume max 1 enso pipe per core
+	new_rx_pipe->id = device->core_id;
 
 	device->rx_pipe = new_rx_pipe;
 
-	new_rx_pipe->buf = (uint32_t*)rte_zmalloc('rx_enso_pipe', ENSO_BUF_SIZE, RTE_CACHE_LINE_MIN_SIZE);
+	char name[64];
+	snprintf(name, sizeof(name), "rx_enso_pipe_%d", new_rx_pipe->id);
+
+	//new_rx_pipe->buf = (uint32_t*)rte_zmalloc('rx_enso_pipe', ENSO_BUF_SIZE, RTE_CACHE_LINE_MIN_SIZE);
+	new_rx_pipe->buf = (uint32_t*)rte_zmalloc(name, ENSO_BUF_SIZE, RTE_CACHE_LINE_MIN_SIZE);
 	if(new_rx_pipe->buf == NULL)
 	{
 		printf("Could not get huge page\n");
@@ -5958,12 +5964,19 @@ int rte_eth_tx_enso_init(EnsoDevice_t* device)
 		printf("Could not allocate TX enso buffer state in malloc\n");
 		return -1;
 	}
-	new_tx_pipe->id = global_tx_enso_id;
-	++global_tx_enso_id;
+
+	// new_tx_pipe->id = global_tx_enso_id;
+	// ++global_tx_enso_id;
+	// pipe_id is same as core_id -> assume max 1 enso pipe per core
+	new_tx_pipe->id = device->core_id;
 
 	device->tx_pipe = new_tx_pipe;
 
-	new_tx_pipe->buf = (uint8_t*)rte_zmalloc('tx_enso_pipe', ENSO_BUF_SIZE, RTE_CACHE_LINE_MIN_SIZE);
+	char name[64];
+	snprintf(name, sizeof(name), "tx_enso_pipe_%d", new_tx_pipe->id);
+
+	//new_tx_pipe->buf = (uint8_t*)rte_zmalloc('tx_enso_pipe', ENSO_BUF_SIZE, RTE_CACHE_LINE_MIN_SIZE);
+	new_tx_pipe->buf = (uint8_t*)rte_zmalloc(name, ENSO_BUF_SIZE, RTE_CACHE_LINE_MIN_SIZE);
 	if(new_tx_pipe->buf == NULL)
 	{
 		printf("Could not get huge page\n");
@@ -6112,8 +6125,8 @@ uint32_t next_batch_from_pipe(RxEnsoPipe_t* rx_pipe, NotificationBufPair_t* noti
 
 	uint32_t enso_pipe_tail = notif_pair->pending_rx_pipe_tails[queue_id];
 
-	// printf("[DRV] enso_pipe_head: %u, tail: %u\n", enso_pipe_head, enso_pipe_tail);
-	// printf("[DRV] new buf addr %p\n", *buf);
+	//printf("[DRV] enso_pipe_head: %u, tail: %u\n", enso_pipe_head, enso_pipe_tail);
+	//printf("[DRV] new buf addr %p\n", *buf);
 
 	if (enso_pipe_tail == enso_pipe_head) {
 		return 0;
@@ -6215,6 +6228,7 @@ uint32_t send_to_queue(EnsoDevice_t* device, uint64_t phys_addr, uint32_t len)
 		tx_notification->length = req_length;
 		tx_notification->signal = 1;
 		tx_notification->phys_addr = transf_addr;
+		printf("[DRV] TX notification %u size, %lx addr\n", req_length, transf_addr);
 
 		uint64_t huge_page_offset = (transf_addr + req_length) % ENSO_BUF_SIZE;
 		transf_addr = hugepage_base_addr + huge_page_offset;
@@ -6230,6 +6244,8 @@ uint32_t send_to_queue(EnsoDevice_t* device, uint64_t phys_addr, uint32_t len)
 	
 	RTE_FUNC_PTR_OR_ERR_RET(*dev->dev_ops->update_tx_notif_tail, -ENOTSUP);
 	(*dev->dev_ops->update_tx_notif_tail)(dev, device->notif_pair->id, tx_tail);
+
+	printf("[DRV] TX notif tail update %u \n", tx_tail);
 
   	return len;
 
