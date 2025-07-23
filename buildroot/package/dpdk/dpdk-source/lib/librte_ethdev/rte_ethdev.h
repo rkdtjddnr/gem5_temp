@@ -5360,10 +5360,11 @@ rte_eth_tx_buffer(uint16_t port_id, uint16_t queue_id,
 	return rte_eth_tx_buffer_flush(port_id, queue_id, buffer);
 }
 #define USE_ENSO
+
 #ifdef USE_ENSO
 #define MAX_NB_APPS 1024
 #define MAX_NB_FLOWS 8192
-#define MAX_NB_MANAGER (16 / 2)
+#define MAX_NB_MANAGER (16 / 4)
 #define ENSO_BUF_SIZE (1UL << 21) // 2MB
 #define NOTIF_BUF_SIZE ENSO_BUF_SIZE/2 // 1MB per RX, TX each
 
