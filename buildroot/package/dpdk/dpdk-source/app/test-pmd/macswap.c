@@ -127,13 +127,12 @@ uint8_t* getNextPkt(uint8_t* pkt)
     return pkt + nb_flits * 64;
 }
 
-void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, uint8_t* rx_buf, int32_t burstSize, uint32_t availByte)
+void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, uint8_t* rx_buf, uint32_t availByte)
 {
     uint8_t* addr = rx_buf;
     uint8_t* next_addr = getNextPkt(rx_buf);
     uint8_t* end_of_buffer = (uint8_t*)rx_pipe->buf + ENSO_BUF_SIZE;
 
-    int32_t missingMessages = burstSize;
     uint32_t remainingBytes = availByte;
 
     // Debugging test, read memory barrier
@@ -142,8 +141,8 @@ void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, ui
     //(void)dummy;   
     //printf("[DEBUG] end_of_buffer %p \n", end_of_buffer);
 
-    // only process max burst size
-    while((missingMessages > 0) && (remainingBytes > 0))
+    // for Enso MACSWAP, processing all packets from rx pipe
+    while(remainingBytes > 0)
     {
         // Test code
         // Copy RX to TX
@@ -174,14 +173,13 @@ void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, ui
         // check addr wrap-around 
         if(addr >= end_of_buffer)
         {
-            //printf("[DEBUG] addr %p limit %p \n", addr, end_of_buffer);
+            printf("[DEBUG] addr %p limit %p \n", addr, end_of_buffer);
             break;
         }
 
         next_addr = getNextPkt(addr);
 
         remainingBytes -= nbBytes;
-        --missingMessages;
         // maintain accumulated processed bytes??
         // NotifyProcessedBytes(nbBytes);
         // basic iterator implementation
@@ -190,7 +188,7 @@ void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, ui
 
     }
 
-    //printf("[DEBUG] process complete, remaining %u bytes, %u pkts\n", remainingBytes, missingMessages);
+    printf("[DEBUG] process complete, receive %u bytes, remaining %u bytes\n", availByte, remainingBytes);
 }
 
 
@@ -212,15 +210,15 @@ pkt_burst_mac_swap_enso(struct enso_stream *es)
 	uint32_t newByte = rte_eth_rx_enso_burst(ensoDevice, &buf);
 	assert(buf);
 	if(newByte == 0) return;
-	//printf("======== Recieve %u bytes from Rx pipe ========\n", newByte);
+	printf("======== Recieve %u bytes from Rx pipe ========\n", newByte);
 
 	// set up tx buffer
-	uint8_t* tx_buf = rte_eth_alloc_tx_buffer(ensoDevice, target_size);
+	uint8_t* tx_buf = rte_eth_alloc_tx_buffer(ensoDevice, newByte);
 	assert(tx_buf);
 	rxTxState.pending_tx.current_tx_buffer = tx_buf;
 	rxTxState.pending_tx.start_tx_buffer = tx_buf;
 
-	processBatchedPacket(ensoDevice->rx_pipe, &rxTxState, buf, 1024, newByte);
+	processBatchedPacket(ensoDevice->rx_pipe, &rxTxState, buf, newByte);
 
 	rte_eth_rx_enso_clear(ensoDevice);
 
@@ -228,7 +226,7 @@ pkt_burst_mac_swap_enso(struct enso_stream *es)
 
 	if (tx_size > 0)
 	{
-		//printf("======== Send %u packets, %u bytes to Tx pipe ========\n",rxTxState.pending_tx.count, tx_size);
+		printf("======== Send %u packets, %u bytes to Tx pipe ========\n",rxTxState.pending_tx.count, tx_size);
 		rte_eth_tx_enso_burst(ensoDevice, tx_size);
 	}
 		
