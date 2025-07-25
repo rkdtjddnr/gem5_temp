@@ -6344,6 +6344,32 @@ void update_tx_head(NotificationBufPair_t* notif_pair)
 	notif_pair->tx_head = head;
 }
 
+/* Util function for application */
+uint16_t be_to_le_16(const uint16_t le) 
+{
+  return ((le & (uint16_t)0x00ff) << 8) | ((le & (uint16_t)0xff00) >> 8);
+}
+
+uint16_t get_pkt_len(const uint8_t* addr) 
+{
+    const struct rte_ether_hdr* l2_hdr = (struct rte_ether_hdr*)addr;
+    const struct rte_ipv4_hdr* l3_hdr = (struct rte_ipv4_hdr*)(l2_hdr + 1);
+    const uint16_t total_len = be_to_le_16(l3_hdr->total_length) + sizeof(struct rte_ether_hdr);
+    //printf("[DEBUG] host get_pkt_len func total_len %u \n", total_len);
+    
+    return total_len;
+}
+
+uint8_t* get_next_pkt(uint8_t* pkt)
+{
+    uint32_t pkt_len = get_pkt_len(pkt);
+    //uint32_t pkt_len = getMemcPktLen(pkt); // for memcached
+    uint32_t nb_flits = (pkt_len - 1) / 64 + 1;
+    //printf("[DEBUG] pkt_len: %u, nb_flits: %u\n", pkt_len, nb_flits);
+
+    return pkt + nb_flits * 64;
+}
+
 /* for internal PIPE index alloc */
 static void set_pipe_status(int pipe_index, bool status) 
 {

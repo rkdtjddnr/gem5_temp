@@ -5522,6 +5522,11 @@ uint32_t get_unreported_completions(NotificationBufPair_t* notif_pair);
 void notify_completion(TxEnsoPipe_t* tx_pipe, uint32_t nb_bytes);
 void update_tx_head(NotificationBufPair_t* notif_pair);
 
+/* Util function for application */
+uint16_t be_to_le_16(const uint16_t le);
+uint16_t get_pkt_len(const uint8_t* addr);
+uint8_t* get_next_pkt(uint8_t* pkt);
+
 #endif
 
 #ifdef __cplusplus

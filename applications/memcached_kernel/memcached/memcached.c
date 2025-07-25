@@ -76,6 +76,7 @@
 #include <rte_ether.h>
 #include <rte_ip.h>
 #include <rte_byteorder.h>
+#include <rte_ethdev.h>
 
 
 #ifdef USE_ENSO
@@ -94,18 +95,6 @@ struct RXTXState
     } pending_tx;
 };
 
-uint16_t be_to_le_16(const uint16_t le) {
-  return ((le & (uint16_t)0x00ff) << 8) | ((le & (uint16_t)0xff00) >> 8);
-}
-
-uint16_t get_pkt_len(const uint8_t* addr) {
-    const struct rte_ether_hdr* l2_hdr = (struct rte_ether_hdr*)addr;
-    const struct rte_ipv4_hdr* l3_hdr = (struct rte_ipv4_hdr*)(l2_hdr + 1);
-    const uint16_t total_len = be_to_le_16(l3_hdr->total_length) + sizeof(struct rte_ether_hdr);
-    //printf("[DEBUG] host get_pkt_len func total_len %u \n", total_len);
-    
-    return total_len;
-}
 
 uint32_t getMemcPktLen(const uint8_t* addr)
 {
@@ -123,16 +112,6 @@ uint32_t getMemcPktLen(const uint8_t* addr)
     return (total_body_len_ + sizeof(struct rte_ether_hdr) + sizeof(struct MemcacheUdpHeader));
 }
 
-uint8_t* getNextPkt(uint8_t* pkt)
-{
-    uint32_t pkt_len = get_pkt_len(pkt);
-    //uint32_t pkt_len = getMemcPktLen(pkt); // for memcached
-    uint32_t nb_flits = (pkt_len - 1) / 64 + 1;
-    //printf("[DEBUG] pkt_len: %u, nb_flits: %u\n", pkt_len, nb_flits);
-
-    return pkt + nb_flits * 64;
-}
-
 void dump_packet_bytes_mem(const uint8_t* addr, size_t len) {
     printf("[DEBUG] Dumping %zu bytes from address %p:\n", len, addr);
     for (size_t i = 0; i < len; ++i) {
@@ -147,7 +126,7 @@ void dump_packet_bytes_mem(const uint8_t* addr, size_t len) {
 void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, uint8_t* rx_buf, int32_t burstSize, uint32_t availByte)
 {
     uint8_t* addr = rx_buf;
-    uint8_t* next_addr = getNextPkt(rx_buf);
+    uint8_t* next_addr = get_next_pkt(rx_buf);
     uint8_t* end_of_buffer = (uint8_t*)rx_pipe->buf + ENSO_BUF_SIZE;
 
     int32_t missingMessages = burstSize;
@@ -158,7 +137,7 @@ void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, ui
     //volatile uint8_t dummy = *addr;        // 강제 memory read
     //(void)dummy;   
     //printf("[DEBUG] end_of_buffer %p \n", end_of_buffer);
-    
+
     // only process max burst size
     while((missingMessages > 0) && (remainingBytes > 0))
     {
@@ -195,7 +174,7 @@ void processBatchedPacket(RxEnsoPipe_t* rx_pipe, struct RXTXState* rxTxState, ui
             break;
         }
 
-        next_addr = getNextPkt(addr);
+        next_addr = get_next_pkt(addr);
 
         remainingBytes -= nbBytes;
         --missingMessages;

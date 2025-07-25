@@ -13,6 +13,7 @@
 #include <rte_gso.h>
 #include <cmdline.h>
 #include <sys/queue.h>
+#include <rte_ethdev.h>
 
 #define RTE_PORT_ALL            (~(portid_t)0x0)
 
@@ -169,28 +170,6 @@ struct enso_stream
 	uint64_t tx_packets;  /**< received packets transmitted */
 };
 
-uint16_t be_to_le_16(const uint16_t le) {
-  return ((le & (uint16_t)0x00ff) << 8) | ((le & (uint16_t)0xff00) >> 8);
-}
-
-uint16_t get_pkt_len(const uint8_t* addr) {
-    const struct rte_ether_hdr* l2_hdr = (struct rte_ether_hdr*)addr;
-    const struct rte_ipv4_hdr* l3_hdr = (struct rte_ipv4_hdr*)(l2_hdr + 1);
-    const uint16_t total_len = be_to_le_16(l3_hdr->total_length) + sizeof(struct rte_ether_hdr);
-    //printf("[DEBUG] host get_pkt_len func total_len %u \n", total_len);
-    
-    return total_len;
-}
-
-uint8_t* get_next_pkt(uint8_t* pkt)
-{
-    uint32_t pkt_len = get_pkt_len(pkt);
-    //uint32_t pkt_len = getMemcPktLen(pkt); // for memcached
-    uint32_t nb_flits = (pkt_len - 1) / 64 + 1;
-    //printf("[DEBUG] pkt_len: %u, nb_flits: %u\n", pkt_len, nb_flits);
-
-    return pkt + nb_flits * 64;
-}
 
 static inline void 
 do_macswap_enso(RxEnsoPipe_t* rx_pipe, struct RXTXState* rx_tx_state, uint8_t* rx_buf, uint32_t avail_bytes)
