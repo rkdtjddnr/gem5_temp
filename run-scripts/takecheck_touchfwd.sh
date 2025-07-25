@@ -1,0 +1,1 @@
+./l2fwd-ckp-enso-touchfwd.sh --take-checkpoint --num-nics 1 --num-queues 8 --script dpdk-testpmd-touchfwd.sh --freq 3GHz

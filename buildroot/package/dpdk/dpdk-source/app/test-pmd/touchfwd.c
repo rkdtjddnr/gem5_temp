@@ -45,6 +45,7 @@
 #include "macswap.h"
 #endif
 
+#ifndef USE_ENSO
 volatile char flag_touch;
 /*
  * MAC swap forwarding mode: Swap the source and the destination Ethernet
@@ -123,3 +124,70 @@ struct fwd_engine touch_fwd_engine = {
 	.port_fwd_end   = NULL,
 	.packet_fwd     = pkt_burst_touch,
 };
+
+#else
+volatile char flag_touch;
+
+static void
+pkt_burst_touch_enso(struct enso_stream *es)
+{
+	EnsoDevice_t* enso_device = es->enso_device;
+	struct RXTXState rx_tx_state = es->rx_tx_state;
+	// ENSO running process demo
+	uint8_t* buf = NULL;
+
+	uint32_t next_rx = rte_eth_rx_enso_next(enso_device);
+	if(next_rx < 0) return;
+
+	uint32_t new_bytes = rte_eth_rx_enso_burst(enso_device, &buf);
+	assert(buf);
+	if(new_bytes == 0) return;
+	printf("======== Recieve %u bytes from Rx pipe ========\n", new_bytes);
+
+	// pkt burst touch logic for Enso 
+	// similar as Descriptor based logic,
+	// but little overhead for calculate packet_size, total_packets 
+	const int packet_size = get_pkt_len(buf);
+	const int total_packets = (new_bytes / packet_size);
+
+	for (int i = 0; i < total_packets; i++) {
+		if (likely(i < total_packets - 1)) 
+			rte_prefetch0((void*)(buf + (i + 1) * packet_size));
+		
+		char *pkt_data = (char *)(buf + i * packet_size);
+
+		for (uint j = 0; j < packet_size; j++) {
+			if (pkt_data[j] == 255)
+				flag_touch = pkt_data[j];
+		}
+	}
+
+	// set up tx buffer
+	uint8_t* tx_buf = rte_eth_alloc_tx_buffer(enso_device, new_bytes);
+	assert(tx_buf);
+	rx_tx_state.pending_tx.current_tx_buffer = tx_buf;
+	rx_tx_state.pending_tx.start_tx_buffer = tx_buf;
+
+	do_macswap_enso(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes);
+
+	rte_eth_rx_enso_clear(enso_device);
+
+	uint32_t tx_size = (rx_tx_state.pending_tx.current_tx_buffer - rx_tx_state.pending_tx.start_tx_buffer);
+
+	if (tx_size > 0)
+	{
+		printf("======== Send %u packets, %u bytes to Tx pipe ========\n",rx_tx_state.pending_tx.count, tx_size);
+		rte_eth_tx_enso_burst(enso_device, tx_size);
+	}
+		
+	rx_tx_state.pending_tx.count = 0;
+	fflush(stdout);
+}
+
+struct fwd_engine touch_fwd_engine = {
+	.fwd_mode_name  = "touchfwd",
+	.port_fwd_begin = NULL,
+	.port_fwd_end   = NULL,
+	.packet_fwd     = pkt_burst_touch_enso,
+};
+#endif

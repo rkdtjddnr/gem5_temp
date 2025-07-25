@@ -1,0 +1,1 @@
+./l2fwd-ckp-enso-touchfwd.sh --num-nics 1 --num-queues 8 --script dpdk-testpmd-touchfwd.sh --freq 3GHz --packet-size 64 --packet-rate 2097152
