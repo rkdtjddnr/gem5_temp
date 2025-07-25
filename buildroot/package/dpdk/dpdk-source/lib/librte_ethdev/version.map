@@ -133,6 +133,9 @@ DPDK_21 {
 	rte_eth_alloc_tx_buffer;
 	rte_eth_rx_enso_clear;
 	rte_eth_tx_enso_burst;
+	# ENSO util
+	get_pkt_len;
+	get_next_pkt;
 
 	local: *;
 };
