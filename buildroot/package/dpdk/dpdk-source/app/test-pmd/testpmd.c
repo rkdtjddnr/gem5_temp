@@ -1794,14 +1794,14 @@ initialize_enso_stream(void)
 	for (int i = 0; i < cur_fwd_config.nb_fwd_lcores; i++)
 	{
 		// assume port is always 1
-		enso_streams[i]->ensoDevice = rte_eth_enso_device_init(i, 0);
-		int notif_ret = rte_eth_notif_init(enso_streams[i]->ensoDevice);
-        int rx_enso_ret = rte_eth_rx_enso_init(enso_streams[i]->ensoDevice);
-        int tx_enso_ret = rte_eth_tx_enso_init(enso_streams[i]->ensoDevice);
+		enso_streams[i]->enso_device = rte_eth_enso_device_init(i, 0);
+		int notif_ret = rte_eth_notif_init(enso_streams[i]->enso_device);
+        int rx_enso_ret = rte_eth_rx_enso_init(enso_streams[i]->enso_device);
+        int tx_enso_ret = rte_eth_tx_enso_init(enso_streams[i]->enso_device);
 		
-		enso_streams[i]->rxTxState.pending_tx.count = 0;
-		enso_streams[i]->rxTxState.pending_tx.current_tx_buffer = NULL;
-		enso_streams[i]->rxTxState.pending_tx.start_tx_buffer = NULL;
+		enso_streams[i]->rx_tx_state.pending_tx.count = 0;
+		enso_streams[i]->rx_tx_state.pending_tx.current_tx_buffer = NULL;
+		enso_streams[i]->rx_tx_state.pending_tx.start_tx_buffer = NULL;
 
 		enso_streams[i]->rx_packets = 0;
 		enso_streams[i]->tx_packets = 0;

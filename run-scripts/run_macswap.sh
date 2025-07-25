@@ -1,1 +1,1 @@
-./l2fwd-ckp-enso.sh --num-nics 1 --num-queues 8 --script dpdk-testpmd.sh --freq 3GHz --packet-size 64 --packet-rate 2097152
+./l2fwd-ckp-enso-macswap.sh --num-nics 1 --num-queues 8 --script dpdk-testpmd.sh --freq 3GHz --packet-size 64 --packet-rate 2097152

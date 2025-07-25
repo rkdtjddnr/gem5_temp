@@ -118,7 +118,7 @@ while true; do
   esac
 done
 
-CKPT_DIR=${GIT_ROOT}/ckpts/"enso-"$num_nics"NIC"-$num_queues"Queues"-$GUEST_SCRIPT
+CKPT_DIR=${GIT_ROOT}/ckpts/"Enso-"$num_nics"NIC"-$num_queues"Queues"-$GUEST_SCRIPT
 if [[ -z "$num_nics" ]]; then
   echo "Error: missing argument --num-nics" >&2
   usage
@@ -152,7 +152,7 @@ else
     usage
   fi
   ((RATE = PACKET_RATE * PACKET_SIZE * 8 / 1024 / 1024 / 1024))
-  RUNDIR=${GIT_ROOT}/rundir/dpdk-testpmd-freq-droprate/$num_nics"NIC-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/dpdk-testpmd-macswap/$num_nics"NIC-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
   setup_dirs
 # /dpdk-testpmd-freq-scaling-test
   echo "Running NICs=$num_nics at $RATE GBPS" >&2
@@ -164,15 +164,15 @@ else
   # DEBUG_FLAGS="--debug-flags=O3CPUAll,Exec,CacheAll --debug-start=11339418155440 --debug-end=11340022599000"
   # DEBUG_FLAGS="--debug-flags=LoadgenDebug,EthernetDesc,EthernetDpdk" #--debug-start=33952834348" #EthernetAll,EthernetDesc,LoadgenDebug
 
-  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4512628590897 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
-  --warmup-dpdk 200000000000"
+  #CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4512628590897 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  #--warmup-dpdk 200000000000"
 
   #CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4512628590897 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   #--warmup-dpdk 20000000"
 
   # ENSO TEST, short warmup & faster loadgen start
-  #CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4312828590897 --rel-max-tick=200300000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
-  #--warmup-dpdk 20000000"
+  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4312828590897 --rel-max-tick=200300000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  --warmup-dpdk 20000000"
 
   run_simulation > ${RUNDIR}/simout
   exit

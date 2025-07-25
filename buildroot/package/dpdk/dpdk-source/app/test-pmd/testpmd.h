@@ -162,8 +162,8 @@ struct RXTXState
 
 struct enso_stream
 {
-	EnsoDevice_t* ensoDevice;
-	struct RXTXState rxTxState;
+	EnsoDevice_t* enso_device;
+	struct RXTXState rx_tx_state;
 
 	uint64_t rx_packets;  /**< received packets */
 	uint64_t tx_packets;  /**< received packets transmitted */

@@ -1,1 +1,1 @@
-./l2fwd-ckp-enso.sh --take-checkpoint --num-nics 1 --num-queues 8 --script dpdk-testpmd.sh --freq 3GHz
+./l2fwd-ckp-enso-macswap.sh --take-checkpoint --num-nics 1 --num-queues 8 --script dpdk-testpmd.sh --freq 3GHz

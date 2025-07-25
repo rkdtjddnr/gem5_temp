@@ -17,7 +17,7 @@ packet_configs=(
 FREQ=3GHz
 
 # Base command
-base_command="./l2fwd-ckp-enso.sh --num-nics 1 --num-queues 8 --script dpdk-testpmd.sh --freq 3GHz"
+base_command="./l2fwd-ckp-enso-macswap.sh --num-nics 1 --num-queues 8 --script dpdk-testpmd.sh --freq 3GHz"
 
 # Number of processors available
 nprocs=$(nproc)
