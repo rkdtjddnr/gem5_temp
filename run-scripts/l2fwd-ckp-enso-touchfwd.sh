@@ -171,7 +171,7 @@ else
   #--warmup-dpdk 20000000"
 
   # ENSO TEST, short warmup & faster loadgen start
-  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4312828590897 --rel-max-tick=200300000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=11340698366217 --rel-max-tick=400300000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   --warmup-dpdk 20000000"
 
   run_simulation > ${RUNDIR}/simout
