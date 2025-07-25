@@ -45,6 +45,8 @@
 #include "macswap.h"
 #endif
 
+#include <arm_sve.h>
+
 #ifndef USE_ENSO
 volatile char flag_touch;
 /*
@@ -126,7 +128,138 @@ struct fwd_engine touch_fwd_engine = {
 };
 
 #else
+
 volatile char flag_touch;
+/* ====================================ENSO SVE version touchfwd=================================== */
+#define DO_COMPARE 1
+volatile uint64_t matched_count = 0;
+
+static inline void
+do_touch_sve(RxEnsoPipe_t* rx_pipe, uint8_t* buf, int new_bytes, int packet_size)
+{
+	uint8_t* cur_buf = buf;
+	uint8_t* end_of_buffer = (uint8_t*)rx_pipe->buf + ENSO_BUF_SIZE;
+
+	int i;
+	int r;
+	int nb_rx;
+	uint32_t consumed_bytes;
+
+	i = 0;
+
+	// considering enso wrap-around buffer
+	if(unlikely((buf + new_bytes) > end_of_buffer))
+	{
+		r = (end_of_buffer - buf)/packet_size;
+		nb_rx = r;
+	}
+	else
+	{
+		r = new_bytes/packet_size;
+		nb_rx = r;
+	}
+
+	const uint64_t target_value = 0x12345678; // Example target value for comparison
+	svuint64_t target_sv = svdup_u64(target_value);
+	svbool_t pg = svptrue_b64();
+		
+	while (r >= 4) {
+		if (r >= 8) {
+			rte_prefetch0((void*)(cur_buf + (i + 4) * packet_size));
+			rte_prefetch0((void*)(cur_buf + (i + 5) * packet_size));
+			rte_prefetch0((void*)(cur_buf + (i + 6) * packet_size));
+			rte_prefetch0((void*)(cur_buf + (i + 7) * packet_size));
+		}
+
+		uint8_t* pkt_data0 = cur_buf + (i++) * packet_size;
+
+		uint8_t* pkt_data1 = cur_buf + (i++) * packet_size;
+
+		uint8_t* pkt_data2 = cur_buf + (i++) * packet_size;
+
+		uint8_t* pkt_data3 = cur_buf + (i++) * packet_size;
+
+		#if DO_COMPARE == 0
+		// Touch data
+		for (uint32_t l = 0; l < ((packet_size + 63) / 64); l++) {
+			volatile uint32_t d = *(uint32_t *)(pkt_data0 + l * 64);
+			(void)d; // Prevent unused variable warning
+		}
+		for (uint32_t l = 0; l < ((packet_size + 63) / 64); l++) {
+			volatile uint32_t d = *(uint32_t *)(pkt_data1 + l * 64);
+			(void)d; // Prevent unused variable warning
+		}
+		for (uint32_t l = 0; l < ((packet_size + 63) / 64); l++) {
+			volatile uint32_t d = *(uint32_t *)(pkt_data2 + l * 64);
+			(void)d; // Prevent unused variable warning
+		}
+		for (uint32_t l = 0; l < ((packet_size + 63) / 64); l++) {
+			volatile uint32_t d = *(uint32_t *)(pkt_data3 + l * 64);
+			(void)d; // Prevent unused variable warning
+		}
+		#elif DO_COMPARE == 1
+		uint64_t matched_count_0 = 0;
+		uint64_t matched_count_1 = 0;
+		uint64_t matched_count_2 = 0;
+		uint64_t matched_count_3 = 0;
+
+		// Touch & compare data
+		for (uint32_t l = 0; l < ((packet_size + 63) / 64); l++) {
+			svuint64_t data_sv = svld1(pg, (const uint64_t *)(pkt_data0 + l * 64));
+			svbool_t match_pg = svcmpeq_u64(pg, data_sv, target_sv);
+			matched_count_0 += svcntp_b64(pg, match_pg);
+		}
+		for (uint32_t l = 0; l < ((packet_size + 63) / 64); l++) {
+			svuint64_t data_sv = svld1(pg, (const uint64_t *)(pkt_data1 + l * 64));
+			svbool_t match_pg = svcmpeq_u64(pg, data_sv, target_sv);
+			matched_count_1 += svcntp_b64(pg, match_pg);
+		}
+		for (uint32_t l = 0; l < ((packet_size + 63) / 64); l++) {
+			svuint64_t data_sv = svld1(pg, (const uint64_t *)(pkt_data2 + l * 64));
+			svbool_t match_pg = svcmpeq_u64(pg, data_sv, target_sv);
+			matched_count_2 += svcntp_b64(pg, match_pg);
+		}
+		for (uint32_t l = 0; l < ((packet_size + 63) / 64); l++) {
+			svuint64_t data_sv = svld1(pg, (const uint64_t *)(pkt_data3 + l * 64));
+			svbool_t match_pg = svcmpeq_u64(pg, data_sv, target_sv);
+			matched_count_3 += svcntp_b64(pg, match_pg);
+		}
+		matched_count += matched_count_0 + matched_count_1 + matched_count_2 + matched_count_3;
+		#endif
+
+		r -= 4;
+		
+		// additional logic for enso
+		consumed_bytes = 4 * packet_size;
+
+		// move buffer to next packet
+		cur_buf += consumed_bytes;
+	}
+
+	for ( ; i < nb_rx; i++) {
+		if (i < nb_rx - 1)
+			rte_prefetch0((void*)(cur_buf + (i + 1) * packet_size));
+		uint8_t* pkt_data = cur_buf;
+
+		#if DO_COMPARE == 0
+		for (uint32_t l = 0; l < ((packet_size + 63) / 64); l++) {
+			volatile uint32_t d = *(uint32_t *)(pkt_data + l * 64);
+			(void)d; // Prevent unused variable warning
+		}
+		#elif DO_COMPARE == 1
+		uint64_t matched_count_0 = 0;
+		// Touch & compare data
+		for (uint32_t l = 0; l < ((packet_size + 63) / 64); l++) {
+			svuint64_t data_sv = svld1(pg, (const uint64_t *)(pkt_data + l * 64));
+			svbool_t match_pg = svcmpeq_u64(pg, data_sv, target_sv);
+			matched_count_0 += svcntp_b64(pg, match_pg);
+		}
+		matched_count += matched_count_0;
+		#endif
+		// move buffer to next packet
+		cur_buf += packet_size;
+	}
+}
 
 static void
 pkt_burst_touch_enso(struct enso_stream *es)
@@ -148,8 +281,11 @@ pkt_burst_touch_enso(struct enso_stream *es)
 	// similar as Descriptor based logic,
 	// but little overhead for calculate packet_size, total_packets 
 	const int packet_size = get_pkt_len(buf);
-	const int total_packets = (new_bytes / packet_size);
 
+	#if defined(__ARM_NEON)
+	do_touch_sve(enso_device->rx_pipe, buf, new_bytes, packet_size);
+	#else	
+	const int total_packets = (new_bytes / packet_size);
 	for (int i = 0; i < total_packets; i++) {
 		if (likely(i < total_packets - 1)) 
 			rte_prefetch0((void*)(buf + (i + 1) * packet_size));
@@ -161,6 +297,7 @@ pkt_burst_touch_enso(struct enso_stream *es)
 				flag_touch = pkt_data[j];
 		}
 	}
+	#endif
 
 	// set up tx buffer
 	uint8_t* tx_buf = rte_eth_alloc_tx_buffer(enso_device, new_bytes);
@@ -168,7 +305,11 @@ pkt_burst_touch_enso(struct enso_stream *es)
 	rx_tx_state.pending_tx.current_tx_buffer = tx_buf;
 	rx_tx_state.pending_tx.start_tx_buffer = tx_buf;
 
+	#if defined(__ARM_NEON)
+	do_macswap_enso_neon(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes, packet_size);
+	#else
 	do_macswap_enso(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes);
+	#endif
 
 	rte_eth_rx_enso_clear(enso_device);
 

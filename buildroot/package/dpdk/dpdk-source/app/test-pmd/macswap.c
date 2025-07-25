@@ -134,7 +134,13 @@ pkt_burst_mac_swap_enso(struct enso_stream *es)
 	rx_tx_state.pending_tx.current_tx_buffer = tx_buf;
 	rx_tx_state.pending_tx.start_tx_buffer = tx_buf;
 
+	#if defined(__ARM_NEON)
+	const int packet_size = get_pkt_len(buf);
+	do_macswap_enso_neon(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes, packet_size);
+	#else
 	do_macswap_enso(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes);
+	#endif
+	
 
 	rte_eth_rx_enso_clear(enso_device);
 
