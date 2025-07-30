@@ -126,7 +126,7 @@ pkt_burst_mac_swap_enso(struct enso_stream *es)
 	uint32_t new_bytes = rte_eth_rx_enso_burst(enso_device, &buf);
 	assert(buf);
 	if(new_bytes == 0) return;
-	printf("======== Recieve %u bytes from Rx pipe ========\n", new_bytes);
+	//printf("======== Recieve %u bytes from Rx pipe ========\n", new_bytes);
 
 	// set up tx buffer
 	uint8_t* tx_buf = rte_eth_alloc_tx_buffer(enso_device, new_bytes);
@@ -136,7 +136,7 @@ pkt_burst_mac_swap_enso(struct enso_stream *es)
 
 	#if defined(__ARM_NEON)
 	const int packet_size = get_pkt_len(buf);
-	do_macswap_enso_neon(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes, packet_size);
+	do_macswap_enso_neon(enso_device, &rx_tx_state, buf, new_bytes, packet_size);
 	#else
 	do_macswap_enso(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes);
 	#endif
@@ -144,11 +144,11 @@ pkt_burst_mac_swap_enso(struct enso_stream *es)
 
 	rte_eth_rx_enso_clear(enso_device);
 
-	uint32_t tx_size = (rx_tx_state.pending_tx.current_tx_buffer - rx_tx_state.pending_tx.start_tx_buffer);
+	uint32_t tx_size = cal_tx_size(rx_tx_state.pending_tx.start_tx_buffer, rx_tx_state.pending_tx.current_tx_buffer);
 
-	if (tx_size > 0)
+	if (likely(tx_size > 0))
 	{
-		printf("======== Send %u packets, %u bytes to Tx pipe ========\n",rx_tx_state.pending_tx.count, tx_size);
+		//printf("======== Send %u packets, %u bytes to Tx pipe ========\n",rx_tx_state.pending_tx.count, tx_size);
 		rte_eth_tx_enso_burst(enso_device, tx_size);
 	}
 		

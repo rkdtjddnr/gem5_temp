@@ -135,10 +135,9 @@ volatile char flag_touch;
 volatile uint64_t matched_count = 0;
 
 static inline void
-do_touch_sve(RxEnsoPipe_t* rx_pipe, uint8_t* buf, int new_bytes, int packet_size)
+touch_sve_core(uint8_t* buf, int pkts, int packet_size)
 {
 	uint8_t* cur_buf = buf;
-	uint8_t* end_of_buffer = (uint8_t*)rx_pipe->buf + ENSO_BUF_SIZE;
 
 	int i;
 	int r;
@@ -146,18 +145,7 @@ do_touch_sve(RxEnsoPipe_t* rx_pipe, uint8_t* buf, int new_bytes, int packet_size
 	uint32_t consumed_bytes;
 
 	i = 0;
-
-	// considering enso wrap-around buffer
-	if(unlikely((buf + new_bytes) > end_of_buffer))
-	{
-		r = (end_of_buffer - buf)/packet_size;
-		nb_rx = r;
-	}
-	else
-	{
-		r = new_bytes/packet_size;
-		nb_rx = r;
-	}
+	r = pkts;
 
 	const uint64_t target_value = 0x12345678; // Example target value for comparison
 	svuint64_t target_sv = svdup_u64(target_value);
@@ -261,6 +249,25 @@ do_touch_sve(RxEnsoPipe_t* rx_pipe, uint8_t* buf, int new_bytes, int packet_size
 	}
 }
 
+static inline void
+do_touch_sve(RxEnsoPipe_t* rx_pipe, uint8_t* buf, int new_bytes, int packet_size)
+{
+	uint8_t* end_of_buffer = (uint8_t*)rx_pipe->buf + ENSO_BUF_SIZE;
+    int total_pkts = new_bytes / packet_size;
+    int first_part_bytes = end_of_buffer - buf;
+    int first_part_pkts = (new_bytes <= first_part_bytes) ? total_pkts : first_part_bytes / packet_size;
+    int remaining_pkts = total_pkts - first_part_pkts;
+
+    if (likely(first_part_pkts > 0)) {
+        touch_sve_core(buf, first_part_pkts, packet_size);
+    }
+
+    if (remaining_pkts > 0) {
+		// wrap-around for TX 
+        touch_sve_core((uint8_t*)rx_pipe->buf, remaining_pkts, packet_size);
+    }
+}
+
 static void
 pkt_burst_touch_enso(struct enso_stream *es)
 {
@@ -275,7 +282,7 @@ pkt_burst_touch_enso(struct enso_stream *es)
 	uint32_t new_bytes = rte_eth_rx_enso_burst(enso_device, &buf);
 	assert(buf);
 	if(new_bytes == 0) return;
-	printf("======== Recieve %u bytes from Rx pipe ========\n", new_bytes);
+	//printf("======== Recieve %u bytes from Rx pipe ========\n", new_bytes);
 
 	// pkt burst touch logic for Enso 
 	// similar as Descriptor based logic,
@@ -306,18 +313,18 @@ pkt_burst_touch_enso(struct enso_stream *es)
 	rx_tx_state.pending_tx.start_tx_buffer = tx_buf;
 
 	#if defined(__ARM_NEON)
-	do_macswap_enso_neon(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes, packet_size);
+	do_macswap_enso_neon(enso_device, &rx_tx_state, buf, new_bytes, packet_size);
 	#else
 	do_macswap_enso(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes);
 	#endif
 
 	rte_eth_rx_enso_clear(enso_device);
 
-	uint32_t tx_size = (rx_tx_state.pending_tx.current_tx_buffer - rx_tx_state.pending_tx.start_tx_buffer);
+	uint32_t tx_size = cal_tx_size(rx_tx_state.pending_tx.start_tx_buffer, rx_tx_state.pending_tx.current_tx_buffer);
 
-	if (tx_size > 0)
+	if (likely(tx_size > 0))
 	{
-		printf("======== Send %u packets, %u bytes to Tx pipe ========\n",rx_tx_state.pending_tx.count, tx_size);
+		//printf("======== Send %u packets, %u bytes to Tx pipe ========\n",rx_tx_state.pending_tx.count, tx_size);
 		rte_eth_tx_enso_burst(enso_device, tx_size);
 	}
 		

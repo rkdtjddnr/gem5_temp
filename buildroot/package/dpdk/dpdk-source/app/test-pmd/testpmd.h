@@ -216,7 +216,7 @@ do_macswap_enso(RxEnsoPipe_t* rx_pipe, struct RXTXState* rx_tx_state, uint8_t* r
         addr = next_addr;
 
         // check addr wrap-around 
-        if(unlikely(addr >= end_of_buffer))
+        if(addr >= end_of_buffer)
         {
             printf("[DEBUG] addr %p limit %p \n", addr, end_of_buffer);
             break;
