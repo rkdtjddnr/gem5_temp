@@ -138,7 +138,7 @@ pkt_burst_mac_swap_enso(struct enso_stream *es)
 	const int packet_size = get_pkt_len(buf);
 	do_macswap_enso_neon(enso_device, &rx_tx_state, buf, new_bytes, packet_size);
 	#else
-	do_macswap_enso(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes);
+	do_macswap_enso(enso_device, &rx_tx_state, buf, new_bytes);
 	#endif
 	
 
