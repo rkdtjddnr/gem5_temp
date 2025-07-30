@@ -126,7 +126,7 @@ EtherDevice::EtherDeviceStats::EtherDeviceStats(statistics::Group *parent)
       ADD_STAT(rxNotification, statistics::units::Count::get(),
                "Number of Rx Notifications Transmitted by Rx Notif Manager"),
       ADD_STAT(txNotification, statistics::units::Count::get(),
-               "Number of Rx Notifications Received by Tx Notif Manager"),
+               "Number of Tx Notifications Received by Tx Notif Manager"),
       ADD_STAT(complNotification, statistics::units::Count::get(),
                "Number of Tx Completions Transmitted by Tx Notif Manager"),
       ADD_STAT(rxNotifDMABytes, statistics::units::Byte::get(),
