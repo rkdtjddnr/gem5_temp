@@ -41,14 +41,14 @@ function run_simulation {
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
   --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
-  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
+  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=192 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 
   "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
   --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
-  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
+  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=192 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 }
 
@@ -160,18 +160,19 @@ else
   GEM5TYPE="opt"
   # GEM5TYPE="debug"
   LOADGENMODE=${LOADGENMODE:-"Static"}
-  # DEBUG_FLAGS="--debug-flags=EthernetDesc"
+  DEBUG_FLAGS="--debug-flags=EthernetEnsoRxNotif"
+  #DEBUG_FLAGS="--debug-flags=EthernetEnsoMulti --debug-start=11340752719476 --debug-end=11341752719476"
   # DEBUG_FLAGS="--debug-flags=O3CPUAll,Exec,CacheAll --debug-start=11339418155440 --debug-end=11340022599000"
   # DEBUG_FLAGS="--debug-flags=LoadgenDebug,EthernetDesc,EthernetDpdk" #--debug-start=33952834348" #EthernetAll,EthernetDesc,LoadgenDebug
 
-  #CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4512628590897 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  #CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=11540552719476 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   #--warmup-dpdk 200000000000"
 
   #CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4512628590897 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   #--warmup-dpdk 20000000"
 
   # ENSO TEST, short warmup & faster loadgen start
-  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=11340752722140 --rel-max-tick=400300000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=5324820587562 --rel-max-tick=400300000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
   --warmup-dpdk 20000000"
 
   run_simulation > ${RUNDIR}/simout
@@ -187,3 +188,5 @@ fi
 #4512628590897
 
 #4312828590897
+
+#5324520587562
