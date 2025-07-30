@@ -94,8 +94,14 @@ IGbE::IGbE(const Params &p)
     // generate of Manager class of ENSO
       ,EnsoRxFifo(p.rx_fifo_size, true)
       ,rxEnsoPipeManager(this, name()+".RxEnsoPipeManager", ENSO_PIPE_SIZE)
+#ifndef ENSO_MULTI_DMA
       ,rxNotifBufManager(this, name()+".RxNotifBufManager", NOTIF_BUF_SIZE)
       ,txNotifBufManager(this, name()+".TxNotifBufManager", NOTIF_BUF_SIZE)
+#else
+      ,rxNotifManagerGlobal(this, name()+".RxNotifManagerGlobal", NOTIF_BUF_SIZE, 0, p.num_dma_engines)
+      ,txNotifBufManager(this, name()+".TxNotifBufManager", NOTIF_BUF_SIZE, 0)
+#endif
+      
 #endif
 {
     //   rxDescCache(this, name()+".RxDesc", p.rx_desc_cache_size),
@@ -121,7 +127,7 @@ IGbE::IGbE(const Params &p)
     }
     printf("Communication Type: %s\n", commType == CommunicationType::RING ? "RING" : "M2FUNC");
     printf("Enable DTA: %s\n", enableDTA ? "true" : "false");
-
+#ifndef USE_ENSO
     // Initialize rxDescCacheArray and txDescCacheArray
     for (int i = 0; i < numQueues; i++) {
         if (commType == CommunicationType::RING) {
@@ -140,6 +146,7 @@ IGbE::IGbE(const Params &p)
             panic("Invalid communication type\n");
         }
     }
+#endif
 
     if (p.is_dpdk_setup_step) {
         is_dpdk_setup_step = true;
@@ -428,11 +435,13 @@ IGbE::read(PacketPtr pkt)
       case REG_RDTR:
         pkt->setLE<uint32_t>(regs.rdtr());
         if (regs.rdtr.fpd()) {
+#ifndef USE_ENSO
             if (commType == CommunicationType::RING) {
                 for (int i = 0; i < numQueues; i++) {
                     rxDescCacheArray[i]->writebackGlobal(0);
                 }
             }
+#endif
             DPRINTF(EthernetIntr,
                     "Posting interrupt because of RDTR.FPD write\n");
             postInterrupt(IT_RXT);
@@ -831,11 +840,13 @@ IGbE::write(PacketPtr pkt)
         oldrctl = regs.rctl;
         regs.rctl = val;
         if (regs.rctl.rst()) {
+#ifndef USE_ENSO
             if (commType == CommunicationType::RING) {
                 for (int i = 0; i < numQueues; i++) {
                     rxDescCacheArray[i]->reset();
                 }
             }
+#endif
             // rxDescCache.reset();
             DPRINTF(EthernetSM, "RXS: Got RESET!\n");
             rxFifo.clear();
@@ -856,10 +867,12 @@ IGbE::write(PacketPtr pkt)
             txTick = true;
         restartClock();
         if (regs.tctl.en() && !oldtctl.en()) {
+#ifndef USE_ENSO
             for (int i = 0; i < numQueues; i++) {
                 if (commType == CommunicationType::RING)
                     txDescCacheArray[i]->reset();
             }
+#endif
             // txDescCache.reset();
         }
         break;
@@ -975,7 +988,9 @@ IGbE::write(PacketPtr pkt)
             }
             else // target RX notification buffer
             {
+                #ifndef ENSO_MULTI_DMA
                 rxNotifBufManager.setRxNotifState(queueid);
+                #endif
                 //printf("Write RX NOTIF RDBAH[%d]: %#x\n", queueid, rdbah);
                 DPRINTF(EthernetENSO, "Write RX NOTIF RDBAH[%d]: %#x\n", queueid, rdbah);
             }
@@ -985,8 +1000,10 @@ IGbE::write(PacketPtr pkt)
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.rdlen_array[queueid] = val & ~mask(7);
+            #ifndef USE_ENSO
             if (commType == CommunicationType::RING) 
                 rxDescCacheArray[queueid]->areaChanged();
+            #endif
             uint32_t rdlen = regs.rdlen_array[queueid]();
             DPRINTF(EthernetDpdk, "Write RDLEN[%d]: %#x\n", queueid, rdlen);
         } else if (isRegisterAddress<E1000_SRRCTL>(daddr, queueid, numQueues)) {
@@ -1009,7 +1026,7 @@ IGbE::write(PacketPtr pkt)
             #endif
 
             regs.rdh_array[queueid] = val;
-            
+      
             DPRINTF(EthernetDpdk, "Write RDH[%d]: %d\n", queueid, regs.rdh_array[queueid]());
             DPRINTF(EthernetENSO, "Write RDH[%d]: %d\n", queueid, regs.rdh_array[queueid]());
             // printf("[LOG], %lu Write RDH[%d]: %d\n", curTick(), queueid, val);
@@ -1068,8 +1085,6 @@ IGbE::write(PacketPtr pkt)
             #ifndef USE_ENSO
             if (commType == CommunicationType::RING)
                 txDescCacheArray[queueid]->areaChanged();
-            #else
-            txNotifBufManager.setTxNotifState(queueid);
             #endif
             DPRINTF(EthernetDpdk, "Write TDBAH[%d]: %#x\n", queueid, regs.tdba_array[queueid].tdbah());
             DPRINTF(EthernetENSO, "Write TX NOTIF TDBAH[%d]: %#x\n", queueid, regs.tdba_array[queueid].tdbah());
@@ -1077,8 +1092,10 @@ IGbE::write(PacketPtr pkt)
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.tdlen_array[queueid] = val & ~mask(7);
+            #ifndef USE_ENSO
             if (commType == CommunicationType::RING)
                 txDescCacheArray[queueid]->areaChanged();
+            #endif
             DPRINTF(EthernetDpdk, "Write TDLEN[%d]: %#x\n", queueid, regs.tdlen_array[queueid]());
         } else if (isRegisterAddress<E1000_TDH>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
@@ -1158,19 +1175,23 @@ IGbE::write(PacketPtr pkt)
             assert(queueid >= 0);
             regs.tdwba_array[queueid] &= ~mask(32);
             regs.tdwba_array[queueid] |= val;
+            #ifndef USE_ENSO
             if (commType == CommunicationType::RING) {
                 txDescCacheArray[queueid]->completionWriteback(regs.tdwba_array[queueid] & ~mask(1),
                                                             regs.tdwba_array[queueid] & mask(1));
             }
+            #endif
         } else if (isRegisterAddress<E1000_TDWBAH>(daddr, queueid, numQueues)) {
             assert(queueid < numQueues);
             assert(queueid >= 0);
             regs.tdwba_array[queueid] &= mask(32);
             regs.tdwba_array[queueid] |= (uint64_t)val << 32;
+            #ifndef USE_ENSO
             if (commType == CommunicationType::RING) {
                 txDescCacheArray[queueid]->completionWriteback(regs.tdwba_array[queueid] & ~mask(1),
                                                             regs.tdwba_array[queueid] & mask(1));
             }
+            #endif
         } else if (isRETAAddress(daddr, retaIndex)) {
             assert(retaIndex < (RETA_SIZE / 4));
             union e1000_reta {
@@ -4648,9 +4669,13 @@ IGbE::drain()
         }
     }
     #else
+    #ifndef ENSO_MULTI_DMA
     if(rxNotifBufManager.hasOutstandingEvents() || txNotifBufManager.hasOutstandingEvents())
         count++;
-
+    #else
+    if(rxNotifManagerGlobal.hasOutstandingEvents() || txNotifBufManager.hasOutstandingEvents())
+        count++;
+    #endif    
     #endif
 
     txFifoTick = false;
@@ -4714,11 +4739,19 @@ IGbE::checkDrain()
         }
     }
     #else
+    #ifndef ENSO_MULTI_DMA
     if(!rxNotifBufManager.hasOutstandingEvents() && !txNotifBufManager.hasOutstandingEvents())
     {
         DPRINTF(Drain, "IGbE done draining, processing drain event\n");
         signalDrainDone();
     }
+    #else
+    if(!rxNotifManagerGlobal.hasOutstandingEvents() && !txNotifBufManager.hasOutstandingEvents())
+    {
+        DPRINTF(Drain, "IGbE done draining, processing drain event\n");
+        signalDrainDone();
+    }
+    #endif
     #endif
 }
 
@@ -6352,6 +6385,7 @@ IGbE::serialize(CheckpointOut &cp) const
     // txDescCache.serializeSection(cp, "TxDescCache");
     // rxDescCache.serializeSection(cp, "RxDescCache");
     //Serialize rxDescCacheArray and txDescCacheArray
+#ifndef USE_ENSO
     for (int i = 0; i < numQueues; i++) {
         if (commType == CommunicationType::RING) {
             txDescCacheArray[i]->serializeSection(cp, csprintf("TxDescCache%d", i));
@@ -6363,10 +6397,15 @@ IGbE::serialize(CheckpointOut &cp) const
             panic("Communication type not supported - serialize\n");
         }
     }
+#endif
 
     #ifdef USE_ENSO
     rxEnsoPipeManager.serializeSection(cp, "RxEnsoPipeManager");
+    #ifndef ENSO_MULTI_DMA
     rxNotifBufManager.serializeSection(cp, "RxNotifBufManager");
+    #else
+    rxNotifManagerGlobal.serializeSection(cp, "RxNotifManagerGlobal");
+    #endif
     txNotifBufManager.serializeSection(cp, "TxNotifBufManager");
     #endif
 }
@@ -6466,6 +6505,7 @@ IGbE::unserialize(CheckpointIn &cp)
     // txDescCache.unserializeSection(cp, "TxDescCache");
     // rxDescCache.unserializeSection(cp, "RxDescCache");
     //Unserialize rxDescCacheArray and txDescCacheArray
+#ifndef USE_ENSO
     for (int i = 0; i < numQueues; i++) {
         if (commType == CommunicationType::RING) {
             txDescCacheArray[i]->unserializeSection(cp, csprintf("TxDescCache%d", i));
@@ -6475,10 +6515,15 @@ IGbE::unserialize(CheckpointIn &cp)
             rxM2funcContextArray[i]->unserializeSection(cp, csprintf("RxM2funcContext%d", i));
         }
     }
+#endif
 
     #ifdef USE_ENSO
     rxEnsoPipeManager.unserializeSection(cp, "RxEnsoPipeManager");
+    #ifndef ENSO_MULTI_DMA
     rxNotifBufManager.unserializeSection(cp, "RxNotifBufManager");
+    #else
+    rxNotifManagerGlobal.unserializeSection(cp, "RxNotifManagerGlobal");
+    #endif
     txNotifBufManager.unserializeSection(cp, "TxNotifBufManager");
 
     #endif
@@ -6744,12 +6789,6 @@ IGbE::RXEnsoPipeManager::onRxUpdate(EnsoRxPtr pkt)
         pkt->pipe->pipeStatus = false;
 }
 
-PipeState*
-IGbE::RXEnsoPipeManager::relinkDataFifoPipes(int queueId)
-{
-    return &pipeStates[queueId];
-}
-
 
 void
 IGbE::RXEnsoPipeManager::serialize(CheckpointOut &cp) const
@@ -6784,7 +6823,7 @@ IGbE::RXEnsoPipeManager::unserialize(CheckpointIn &cp)
 
 
 /********************* Notification Buffer Manager *******************/
-#ifndef ENSO_MULTI
+#ifndef ENSO_MULTI_DMA
 template<class T>
 IGbE::NotifBufManager<T>::NotifBufManager(IGbE *i, const std::string n, int s)
 : igbe(i), _name(n), size(s)
@@ -6816,7 +6855,7 @@ IGbE::NotifBufManager<T>::unserialize(CheckpointIn &cp)
 
 
 /********************* RX Notification Buffer Manager *******************/
-#ifndef ENSO_MULTI
+#ifndef ENSO_MULTI_DMA
 IGbE::RXNotifBufManager::RXNotifBufManager(IGbE *i, const std::string n, int s)
 : NotifBufManager<igbreg::RxNotification>(i, n, s), pktDone(false), pktSplitDone(0), pktPtr(nullptr),
     dmaNotifId(0), dmaQueueId(0), dmaTail(0), notifDone(false),
@@ -6842,15 +6881,7 @@ IGbE::RXNotifBufManager::RXNotifBufManager(IGbE *i, const std::string n, int s, 
     pktNotifEvent([this]{ notifComplete(); }, n),
     pktFirstEvent([this]{ pktSplitComplete(); }, n),
     pktSecondEvent([this]{ pktSplitComplete(); }, n)
-{
-    for(int i = 0; i < MAX_NB_NOTIF; i++)
-    {
-        RXNotifStates[i].physAddr = 0;
-        RXNotifStates[i].head = 0;
-        RXNotifStates[i].tail = 0;
-    }
-
-}
+{}
 #endif
 
 
@@ -6861,7 +6892,7 @@ IGbE::RXNotifBufManager::writePacket(EnsoRxPtr pkt)
 
     pktPtr = pkt;
     pktDone = false;
-    #ifdef ENSO_MULTI
+    #ifdef ENSO_MULTI_QUEUE
     pktWaiting = true;
     #endif
 
@@ -6882,7 +6913,7 @@ IGbE::RXNotifBufManager::writePacket(EnsoRxPtr pkt)
 
     // update RX enso pipe tail
     pkt->pipe->tail = (pipeTail + flits) & ENSO_PIPE_MASK;
-    //DPRINTF(EthernetEnsoRxNotif, "RxNotif : RX enso pipe base addr %lx, tail offset %u \n", pkt->pipe->physAddr, tailOffset);
+    DPRINTF(EthernetEnsoRxNotif, "RxNotif : RX enso pipe base addr %lx, tail offset %u \n", pkt->pipe->physAddr, tailOffset);
 
 
     if(pkt->meta.isNotify)
@@ -6894,9 +6925,14 @@ IGbE::RXNotifBufManager::writePacket(EnsoRxPtr pkt)
     if (pipeTail + flits < pipeSize) 
     {
         
-        igbe->dmaWrite(pciToDma(pkt->pipe->physAddr + tailOffset),
-                        dmaLen, &pktEvent, dmaData,
-                        igbe->rxWriteDelay);
+        // igbe->dmaWrite(pciToDma(pkt->pipe->physAddr + tailOffset),
+        //                 dmaLen, &pktEvent, dmaData,
+        //                 igbe->rxWriteDelay);
+
+
+        igbe->IdioWrite(pciToDma(pkt->pipe->physAddr + tailOffset),
+                               dmaLen, &pktEvent, dmaData, 
+                               igbe->rxWriteDelay, 0, igbe->adq);
 
     }
     else 
@@ -6907,16 +6943,29 @@ IGbE::RXNotifBufManager::writePacket(EnsoRxPtr pkt)
 
         uint32_t secondFlitBytes = dmaLen - firstFlitBytes;
 
-        igbe->dmaWrite(pciToDma(pkt->pipe->physAddr + tailOffset),
-                       firstFlitBytes, &pktFirstEvent, dmaData,
-                       igbe->rxWriteDelay);
+        // igbe->dmaWrite(pciToDma(pkt->pipe->physAddr + tailOffset),
+        //                firstFlitBytes, &pktFirstEvent, dmaData,
+        //                igbe->rxWriteDelay);
+        
+        igbe->IdioWrite(pciToDma(pkt->pipe->physAddr + tailOffset),
+                               firstFlitBytes, &pktFirstEvent, dmaData, 
+                               igbe->rxWriteDelay, 0, igbe->adq);
 
-        igbe->dmaWrite(pciToDma(pkt->pipe->physAddr),  // pipe base addr -> wrap-around
-                        secondFlitBytes, &pktSecondEvent, dmaData + firstFlitBytes,
-                        igbe->rxWriteDelay);
+        // igbe->dmaWrite(pciToDma(pkt->pipe->physAddr),  // pipe base addr -> wrap-around
+        //                 secondFlitBytes, &pktSecondEvent, dmaData + firstFlitBytes,
+        //                 igbe->rxWriteDelay);
 
+        igbe->IdioWrite(pciToDma(pkt->pipe->physAddr),
+                               secondFlitBytes, &pktSecondEvent, 
+                               dmaData + firstFlitBytes, 
+                               igbe->rxWriteDelay, 0, igbe->adq);
 
     }
+
+    #ifdef ENSO_MULTI_DMA
+    DPRINTF(EthernetEnsoMulti, "RxNotif DMA[%d] : Rx Enso Pipe tail update old_tail=%u, flits=%u, new_tail=%u\n",
+            dmaEngineIdx, pipeTail, flits, pkt->pipe->tail);
+    #endif
 
     DPRINTF(EthernetEnsoRxNotif, "RxNotif :DMA packet %u bytes\n", dmaLen);
     // pipe tail ptr update
@@ -6931,7 +6980,9 @@ IGbE::RXNotifBufManager::writeNotification()
 {
 
     notifDone = false;
-    struct RXNotifState* rxNotifState = &RXNotifStates[dmaNotifId];
+    //struct RXNotifState* rxNotifState = &RXNotifStates[dmaNotifId];
+    Addr physAddr = notifBufBase(dmaNotifId);
+    uint32_t curTail = notifBufTail(dmaNotifId);
     // prepare RX Notification
     notifRxBuf = new igbreg::RxNotification;
     assert(notifRxBuf);
@@ -6941,15 +6992,32 @@ IGbE::RXNotifBufManager::writeNotification()
     notifRxBuf->tail = dmaTail;
 
     // DMA notification
-    igbe->dmaWrite(pciToDma(rxNotifState->physAddr + NOTIF_SIZE*rxNotifState->tail),
-                NOTIF_SIZE, &pktNotifEvent, (uint8_t*)notifRxBuf,
-                igbe->rxWriteDelay);
+    // igbe->dmaWrite(pciToDma(physAddr + sizeof(igbreg::RxNotification)*curTail),
+    //             NOTIF_SIZE, &pktNotifEvent, (uint8_t*)notifRxBuf,
+    //             igbe->rxWriteDelay);
+
+    igbe->IdioWrite(pciToDma(physAddr + sizeof(igbreg::RxNotification)*curTail),
+                               NOTIF_SIZE, &pktNotifEvent, (uint8_t*)notifRxBuf, 
+                               igbe->rxWriteDelay, 0, igbe->adq);
 
     // increment notification buffer tailPtr
-    rxNotifState->tail = (rxNotifState->tail + 1) & NOTIF_BUF_MASK;
-    updateNotifTail(rxNotifState->tail, dmaNotifId);
+    //rxNotifState->tail = (rxNotifState->tail + 1) & NOTIF_BUF_MASK;
+    curTail = (curTail + 1) & NOTIF_BUF_MASK;
+    //updateNotifTail(rxNotifState->tail, dmaNotifId);
+    //updateNotifTail(curTail, dmaNotifId);
+    #ifndef ENSO_MULTI_DMA
+    updateTail(curTail, dmaNotifId);
+    #else
+    parent->updateNotifTail(curTail, dmaNotifId);
+    #endif
 
+    #ifdef ENSO_MULTI_DMA
+    DPRINTF(EthernetEnsoMulti, "RxNotif DMA[%d] : Rx Notif tail update new_tail=%u, dma_pipe_tail=%u\n",
+            dmaEngineIdx, curTail, dmaTail);
+    
+    #else
     DPRINTF(EthernetEnsoRxNotif, "RxNotif : Rx Notif tail update: pipe_id=%u, new_tail=%u\n", dmaNotifId, rxNotifState->tail);
+    #endif 
 }
 
 
@@ -6974,12 +7042,17 @@ IGbE::RXNotifBufManager::pktComplete()
     igbe->etherDeviceStats.rxDMABytes += pktPtr->length;
 
     pktPtr = NULL;
-    #ifdef ENSO_MULTI
+    #ifdef ENSO_MULTI_QUEUE
     pktWaiting = false;
     #endif
+    pktDone = true;
+    #ifndef ENSO_MULTI_DMA
     igbe->checkDrain();
     enableSm();
-    pktDone = true;
+    #else
+    parent->onDMAComplete(dmaEngineIdx);
+    #endif
+    
 }
 
 void
@@ -6990,10 +7063,14 @@ IGbE::RXNotifBufManager::notifComplete()
 
     delete notifRxBuf;
     notifRxBuf = nullptr;
+    notifDone = true;
     clearDmaNotifVar();
+    #ifndef ENSO_MULTI_DMA
     igbe->checkDrain();
     enableSm();
-    notifDone = true;
+    #else
+    parent->onNotifComplete(dmaEngineIdx);
+    #endif
 }
 
 bool
@@ -7046,13 +7123,13 @@ IGbE::RXNotifBufManager::serialize(CheckpointOut &cp) const {
     SERIALIZE_SCALAR(dmaQueueId);
     SERIALIZE_SCALAR(dmaNotifId);
 
+#ifndef ENSO_MULTI_DMA
     for (uint64_t i = 0; i < MAX_NB_NOTIF; i++) {
         paramOut(cp, csprintf("RXNotifStates[%d].physAddr", i), RXNotifStates[i].physAddr);
         paramOut(cp, csprintf("RXNotifStates[%d].head", i), RXNotifStates[i].head);
         paramOut(cp, csprintf("RXNotifStates[%d].tail", i), RXNotifStates[i].tail);
     }
-
-
+#endif
 }
 
 void 
@@ -7067,16 +7144,17 @@ IGbE::RXNotifBufManager::unserialize(CheckpointIn &cp) {
     UNSERIALIZE_SCALAR(dmaNotifId);
 
     // Unserialize RXNotifStates array
-
+#ifndef ENSO_MULTI_DMA
     for (uint64_t i = 0; i < MAX_NB_NOTIF; i++) {
         paramIn(cp, csprintf("RXNotifStates[%d].physAddr", i), RXNotifStates[i].physAddr);
         paramIn(cp, csprintf("RXNotifStates[%d].head", i), RXNotifStates[i].head);
         paramIn(cp, csprintf("RXNotifStates[%d].tail", i), RXNotifStates[i].tail);
     }
+#endif
 }
 
 /********************* TX Notification Buffer Manager *******************/
-#ifndef ENSO_MULTI
+#ifndef ENSO_MULTI_DMA
 IGbE::TXNotifBufManager::TXNotifBufManager(IGbE *i, const std::string n, int s)
 : NotifBufManager<igbreg::TxNotification>(i, n, s), pktDone(false), pktWaiting(false), pktPtr(NULL),
 curFetching(0), curQueueId(0), wbOut(0), wbQueueId(0), moreToWb(false), awaitingContinuation(false),
@@ -7093,9 +7171,6 @@ pktEvent([this]{ pktComplete(); }, n)
     assert(fetchBuf);
     wbBuf = new igbreg::TxNotification;
     assert(wbBuf);
-
-    for(int i = 0; i < MAX_NB_NOTIF; i++)
-        TXNotifBaseAddr[i] = 0;
 
 }
 
@@ -7117,9 +7192,6 @@ pktEvent([this]{ pktComplete(); }, n)
     assert(fetchBuf);
     wbBuf = new igbreg::TxNotification;
     assert(wbBuf);
-
-    for(int i = 0; i < MAX_NB_NOTIF; i++)
-        TXNotifBaseAddr[i] = 0;
 
 }
 #endif
@@ -7318,7 +7390,7 @@ IGbE::TXNotifBufManager::fetchNotification1()
                   igbe->fetchCompDelay);
 
     DPRINTF(EthernetEnsoTxNotif, "TxNotif : fetch %d notification from %lx\n", curFetching, dmaAddr);
-                  
+
 }
 
 void
@@ -7343,8 +7415,11 @@ IGbE::TXNotifBufManager::fetchComplete()
     // update notification head with the number of fetched notification
     // need to accumulate 
     // updateHead(curQueueId, curFetching);
-    updateHead(curQueueId, notifBufHead(curQueueId) + curFetching);
-    DPRINTF(EthernetEnsoTxNotif, "TxNotif : Tx Notif head update: pipe_id=%u, new_tail=%u\n", curQueueId, curFetching);
+    // need to considering wrap-around
+    int newHead = (notifBufHead(curQueueId) + curFetching) % NOTIF_BUF_SIZE;
+    updateHead(curQueueId, newHead);
+
+    DPRINTF(EthernetEnsoTxNotif, "TxNotif : Tx Notif head update: pipe_id=%u, new_head=%u\n", curQueueId, newHead);
 
     curFetching = 0;
     curQueueId = 0;
@@ -7397,9 +7472,13 @@ IGbE::TXNotifBufManager::wbNotification1()
     memcpy(wbBuf, txComplBuf.front()->txNotif, sizeof(igbreg::TxNotification));
     
 
-    igbe->dmaWrite(pciToDma(dmaAddr),
-                   wbOut * sizeof(igbreg::TxNotification), &wbEvent, (uint8_t*)wbBuf,
-                   igbe->wbCompDelay);
+    // igbe->dmaWrite(pciToDma(dmaAddr),
+    //                wbOut * sizeof(igbreg::TxNotification), &wbEvent, (uint8_t*)wbBuf,
+    //                igbe->wbCompDelay);
+
+    igbe->IdioWrite(pciToDma(dmaAddr), wbOut * sizeof(igbreg::TxNotification), 
+                               &wbEvent, (uint8_t*)wbBuf, 
+                               igbe->wbCompDelay, 0, igbe->adq);
 
     DPRINTF(EthernetEnsoTxNotif, "TxNotif : Write back TX Completion to %lx \n", dmaAddr);
 
@@ -7447,35 +7526,6 @@ IGbE::TXNotifBufManager::serialize(CheckpointOut &cp) const
     SERIALIZE_SCALAR(pktDone);
     SERIALIZE_SCALAR(pktWaiting);
     SERIALIZE_SCALAR(awaitingContinuation);
-    /*
-    // Serialize notifTxBuf
-    uint64_t notifTxBufSize = notifTxBuf.size();
-    SERIALIZE_SCALAR(notifTxBufSize);
-    for (uint64_t i = 0; i < notifTxBufSize; i++) {
-        const struct TxCompletion* entry_n = notifTxBuf[i];
-        const struct igbreg::TxNotification* entry_n_ = entry_n->txNotif;
-        paramOut(cp, csprintf("notifTxBuf[%d]->queueId", i), entry_n->queueId);
-        paramOut(cp, csprintf("notifTxBuf[%d]->wbHead", i), entry_n->wbHead);
-
-        paramOut(cp, csprintf("notifTxBuf[%d]->txNotif->length", i), (uint64_t&)entry_n_->length);
-        paramOut(cp, csprintf("notifTxBuf[%d]->txNotif->phys_addr", i), (uint64_t&)entry_n_->phys_addr);
-        paramOut(cp, csprintf("notifTxBuf[%d]->txNotif->signal", i), (uint64_t&)entry_n_->signal);
-    }
-
-    // Serialize txComplBuf
-    uint64_t txComplBufSize = txComplBuf.size();
-    SERIALIZE_SCALAR(txComplBufSize);
-    for (uint64_t i = 0; i < txComplBufSize; i++) {
-        const struct TxCompletion* entry_t = txComplBuf[i];
-        const struct igbreg::TxNotification* entry_t_ = entry_t->txNotif;
-        paramOut(cp, csprintf("txComplBuf[%d]->queueId", i), entry_t->queueId);
-        paramOut(cp, csprintf("txComplBuf[%d]->wbHead", i), entry_t->wbHead);
-
-        paramOut(cp, csprintf("txComplBuf[%d]->txNotif->length", i), (uint64_t&)entry_t_->length);
-        paramOut(cp, csprintf("txComplBuf[%d]->txNotif->phys_addr", i), (uint64_t&)entry_t_->phys_addr);
-        paramOut(cp, csprintf("txComplBuf[%d]->txNotif->signal", i), (uint64_t&)entry_t_->signal);
-    }
-    */
 }
 
 void
@@ -7491,57 +7541,12 @@ IGbE::TXNotifBufManager::unserialize(CheckpointIn &cp)
     UNSERIALIZE_SCALAR(pktWaiting);
     UNSERIALIZE_SCALAR(awaitingContinuation);
 
-    /*
-    // Unserialize notifTxBuf
-    uint64_t notifTxBufSize = 0;
-    UNSERIALIZE_SCALAR(notifTxBufSize);
-    notifTxBuf.resize(notifTxBufSize);  // Resize the deque to match the serialized size
-
-    for (uint64_t i = 0; i < notifTxBufSize; i++) {
-        struct TxCompletion *entry_n = new struct TxCompletion;  // Allocate memory for TxCompletion
-        notifTxBuf[i] = entry_n;  // Assign the newly allocated TxCompletion object
-
-        // Unserialize individual fields
-        paramIn(cp, csprintf("notifTxBuf[%d]->queueId", i), entry_n->queueId);
-        paramIn(cp, csprintf("notifTxBuf[%d]->wbHead", i), entry_n->wbHead);
-
-        // Unserialize the TxNotification structure
-        struct igbreg::TxNotification *entry_txNotif = new igbreg::TxNotification;  // Allocate memory for TxNotification
-        entry_n->txNotif = entry_txNotif;  // Assign the TxNotification object to txNotif pointer
-
-        paramIn(cp, csprintf("notifTxBuf[%d]->txNotif->length", i), (uint64_t&)entry_txNotif->length);
-        paramIn(cp, csprintf("notifTxBuf[%d]->txNotif->phys_addr", i), (uint64_t&)entry_txNotif->phys_addr);
-        paramIn(cp, csprintf("notifTxBuf[%d]->txNotif->signal", i), (uint64_t&)entry_txNotif->signal);
-    }
-
-    // Unserialize notifTxBuf
-    uint64_t txComplBufSize = 0;
-    UNSERIALIZE_SCALAR(txComplBufSize);
-    notifTxBuf.resize(txComplBufSize);  // Resize the deque to match the serialized size
-
-    for (uint64_t i = 0; i < txComplBufSize; i++) {
-        struct TxCompletion *entry_t = new struct TxCompletion;  // Allocate memory for TxCompletion
-        txComplBuf[i] = entry_t;  // Assign the newly allocated TxCompletion object
-
-        // Unserialize individual fields
-        paramIn(cp, csprintf("txComplBuf[%d]->queueId", i), entry_t->queueId);
-        paramIn(cp, csprintf("txComplBuf[%d]->wbHead", i), entry_t->wbHead);
-
-        // Unserialize the TxNotification structure
-        struct igbreg::TxNotification *entry_txNotif = new igbreg::TxNotification;  // Allocate memory for TxNotification
-        entry_t->txNotif = entry_txNotif;  // Assign the TxNotification object to txNotif pointer
-
-        paramIn(cp, csprintf("txComplBuf[%d]->txNotif->length", i), (uint64_t&)entry_txNotif->length);
-        paramIn(cp, csprintf("txComplBuf[%d]->txNotif->phys_addr", i), (uint64_t&)entry_txNotif->phys_addr);
-        paramIn(cp, csprintf("txComplBuf[%d]->txNotif->signal", i), (uint64_t&)entry_txNotif->signal);
-    }
-    */
 }
 
 // rxStateMachine, txStateMachine, ethRxPkt, txWire function for ENSO
 // demo version of ethRxPkt() function, will be erased
 
-
+#ifndef ENSO_MULTI_DMA
 void IGbE::rxEnsoStateMachine()
 {
     if (!regs.rctl.en()) {
@@ -7660,6 +7665,101 @@ void IGbE::rxEnsoStateMachine()
     return;
 }
 
+#else
+void IGbE::rxEnsoStateMachine()
+{
+    if (!regs.rctl.en()) {
+        rxTick = false;
+        DPRINTF(EthernetENSO, "RXS: RX disabled, stopping ticking\n");
+        return;
+    }
+
+    // If the packet is done check for sending notification
+    int readyDMAEngineIdx = rxNotifManagerGlobal.hasReadyEthPacket();
+    if (readyDMAEngineIdx != -1) {
+        rxNotifManagerGlobal.clearDoneEthPacket(readyDMAEngineIdx);
+        DPRINTF(EthernetEnsoMulti, "RXS[%d]: Packet completed DMA to memory\n", readyDMAEngineIdx);
+
+        // if DMA packet complete & have to notfy, doing DMA notification
+        // with same DMAEngineIdx
+        if(rxNotifManagerGlobal.needToDmaNotif(readyDMAEngineIdx))
+        {
+            DPRINTF(EthernetEnsoRxNotif, "RXS[%d]: Writing notification into memory!!\n", readyDMAEngineIdx);
+            rxNotifManagerGlobal.writeNotificationGlobal(readyDMAEngineIdx);    
+        }
+
+        rxTick = true; // Because other DMA engine can be used
+        return;
+    }
+
+    if(!rxNotifManagerGlobal.hasFreeDMAEngine())
+    {
+        DPRINTF(EthernetENSO, "RXS: stopping ticking until packet DMA completes. No free DMA engines\n");
+        rxTick = false;
+        return;
+    }
+
+
+    if (EnsoRxFifo.empty()) {
+        DPRINTF(EthernetENSO, "RXS: RxFIFO empty, stopping ticking\n");
+    
+        rxTick = false;
+        return;
+    }
+
+    EnsoRxPtr pkt = EnsoRxFifo.front();
+    
+
+    if (rxEnsoPipeManager.isEnsoPipeFull(pkt->length, pkt->meta.pktQueueId)) {
+        // Host enso pipe is full, drop packet
+        etherDeviceStats.rxEnsoPipeFull++;
+        DPRINTF(EthernetENSO, "RXS: Host RX enso pipe is full, stop ticking...\n");
+        // need to drop packet?
+        EnsoRxFifo.pop();
+
+        rxEnsoPipeManager.setFull(1);
+        int rxFifoFull = 0; // no matter what it is
+        updateDropFSMEnso(rxFifoFull, rxEnsoPipeManager.isFull());
+        rxTick = false;
+        return;
+    }
+    rxEnsoPipeManager.setFull(0);
+
+    // notify logic when host update SWhead, considering multi-enso pipe
+    if(pipeHeadUpdated[pkt->meta.pktQueueId])
+    {
+        rxEnsoPipeManager.onRxUpdate(pkt);
+        pipeHeadUpdated[pkt->meta.pktQueueId] = false;
+    }
+
+    // need to check notification buffer is full??
+    // change to pending??
+    if( pkt->meta.isNotify && rxNotifManagerGlobal.isNotifBufFull(pkt->meta.pktQueueId))
+    {   
+        etherDeviceStats.rxNotifBufferFull++;
+        DPRINTF(EthernetENSO, "RXS: Host RX notification buffer is full, stop ticking...\n");
+        // etherDeviceStats.rxNotifBufFull++;
+        rxTick = false;
+        return;
+    }
+    
+
+    // DMA packet (+ Notification)
+    rxNotifManagerGlobal.writePacketGlobal(pkt);
+    // update RxEnsoPipe Tail register value
+    // timing is right?
+    rxEnsoPipeManager.updateRxPipeTail(pkt->pipe->tail, pkt->meta.pktQueueId);
+    // data pop from DataFIFO
+    //dataPop();
+    //EnsoRxFifo.pop_front();
+    EnsoRxFifo.pop();
+
+    rxTick = true; // Because new DMA engine can be started
+
+    return;
+}
+#endif
+
 // Todo : need to check TX process
 void IGbE::txEnsoStateMachine()
 {
@@ -7726,7 +7826,7 @@ void IGbE::txEnsoStateMachine()
             txNotifBufManager.getPacketData(txPacket);
         } else if (size == 0) {
             // pop notification?? writeback notification?
-            DPRINTF(EthernetENSO, "TXS: Data %d bytes in FIFO \n", size);
+            //DPRINTF(EthernetENSO, "TXS: Data %d bytes in FIFO \n", size);
         } else {
             DPRINTF(EthernetENSO, "TXS: TX fifo full, stop ticking...\n");
             etherDeviceStats.txFifoFullCount++;
@@ -7757,7 +7857,7 @@ void IGbE::txEnsoStateMachine()
     txTick = false;
 }
 
-#ifdef ENSO_MULTI
+#ifdef ENSO_MULTI_DMA
 template <class T>
 IGbE::NotifbufManagerGlobal<T>::NotifbufManagerGlobal(IGbE *i, const std::string n, int s, bool _isRx, int _numDMAEngines)
     : igbe(i), _name(n), size(s), isRx(_isRx), numDMAEngines(_numDMAEngines)
@@ -7771,36 +7871,46 @@ template <class T>
 void
 IGbE::NotifbufManagerGlobal<T>::serialize(CheckpointOut &cp) const
 {
-
+    SERIALIZE_SCALAR(size);
+    SERIALIZE_SCALAR(isRx);
 }
 
 template <class T>
 void
 IGbE::NotifbufManagerGlobal<T>::unserialize(CheckpointIn &cp)
 {
-
+    UNSERIALIZE_SCALAR(size);
+    UNSERIALIZE_SCALAR(isRx);
+    
 }
 
 
 IGbE::RxNotifBufManagerGlobal::RxNotifBufManagerGlobal(IGbE *i, const std::string n, int s, int qid, int _numDMAEngines)
     :NotifbufManagerGlobal<igbreg::RxNotification>(i, n, s, true, _numDMAEngines), queueID(qid)
 {
-    for (int idx = 0; idx < MAX_DMA_ENGINE_SIZE; idx++) 
-    {
-        processingPktArray[idx] = NULL;
-    }
-
     for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
         // Treat original RxDescCache as the DMA engine
         std::string dmaEngineName = n + ".DMAEngine" + std::to_string(engine_idx);
         // need to change RXNotfiBufManager for Multi-queue
-        dmaEngineArray[engine_idx] = new RXNotifBufManager(i, dmaEngineName, qid, engine_idx, this);
+        dmaEngineArray[engine_idx] = new RXNotifBufManager(i, dmaEngineName, s, qid, engine_idx, this);
         // processingPktOffsetArray[engine_idx] = 0; // no need?
         processingPktDoneArray[engine_idx] = false;
+        processingPktArray[engine_idx] = NULL;
+        dmaNotifArray[engine_idx] = false;
+        isNotifyArray[engine_idx] = false;
     }
 }
 
-bool
+void
+IGbE::RxNotifBufManagerGlobal::enableSm()
+{
+    if (igbe->drainState() != DrainState::Draining) {
+        igbe->txTick = true;
+        igbe->restartClock();
+    }
+}
+
+void
 IGbE::RxNotifBufManagerGlobal::writePacketGlobal(EnsoRxPtr packet)
 {
     assert(hasFreeDMAEngine());
@@ -7810,12 +7920,23 @@ IGbE::RxNotifBufManagerGlobal::writePacketGlobal(EnsoRxPtr packet)
     assert(processingPktDoneArray[idx] == false);
     processingPktArray[idx] = packet;
 
+    isNotifyArray[idx] = packet->meta.isNotify;
+
 
     dmaEngineArray[idx]->writePacket(packet);
-    DPRINTF(EthernetEnsoRxNotif, "RXNotif[%d]: Writing packet into memory\n", queueID);
-
-    return true;
+    DPRINTF(EthernetEnsoMulti, "RXNotif DMA[%d]: Writing packet into memory\n", idx);
 }
+
+void
+IGbE::RxNotifBufManagerGlobal::writeNotificationGlobal(int engineIdx)
+{
+    assert(dmaNotifArray[engineIdx] == false);
+    dmaNotifArray[engineIdx] = true;
+
+    dmaEngineArray[engineIdx]->writeNotification();
+    DPRINTF(EthernetEnsoMulti, "RXNotif DMA[%d]: Writing notification into memory\n", engineIdx);
+}
+
 
 // calling after pkt complete
 // For descriptor?? no need
@@ -7826,10 +7947,72 @@ IGbE::RxNotifBufManagerGlobal::onDMAComplete(int engineIdx)
 
     processingPktDoneArray[engineIdx] = true;
     processingPktArray[engineIdx] = NULL;
+
+
+    igbe->checkDrain();
+    enableSm();
 }
 
+void
+IGbE::RxNotifBufManagerGlobal::onNotifComplete(int engineIdx)
+{
+    assert(engineIdx < numDMAEngines);
+    dmaNotifArray[engineIdx] = false;
+    isNotifyArray[engineIdx] = false;
 
+    igbe->checkDrain();
+    enableSm();
+}
 
+bool
+IGbE::RxNotifBufManagerGlobal::hasOutstandingEvents()
+{
+    bool descCacheGlobalOutstanding = false;
+    // Have to check all DMA engines
+    for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
+        descCacheGlobalOutstanding |= dmaEngineArray[engine_idx]->hasOutstandingEvents();
+    }
+
+    return descCacheGlobalOutstanding;
+}
+
+void
+IGbE::RxNotifBufManagerGlobal::serialize(CheckpointOut &cp) const
+{
+    NotifbufManagerGlobal<igbreg::RxNotification>::serialize(cp);
+    SERIALIZE_SCALAR(queueID);
+    // for (int i = 0; i < numDMAEngines; i++) {
+    //     paramOut(cp, csprintf("processingPktDoneArray%d", i), processingPktDoneArray[i]);
+    // }
+    // for (int i = 0; i < numDMAEngines; i++) {
+    //     paramOut(cp, csprintf("dmaNotifArray%d", i), dmaNotifArray[i]);
+    // }
+    // for (int i = 0; i < numDMAEngines; i++) {
+    //     paramOut(cp, csprintf("isNotifyArray%d", i), isNotifyArray[i]);
+    // }
+    
+    
+}
+
+void
+IGbE::RxNotifBufManagerGlobal::unserialize(CheckpointIn &cp)
+{
+    NotifbufManagerGlobal<igbreg::RxNotification>::unserialize(cp);
+    UNSERIALIZE_SCALAR(queueID);
+    // for (int i = 0; i < numDMAEngines; i++) {
+    //     paramIn(cp, csprintf("processingPktDoneArray%d", i), processingPktDoneArray[i]);
+    // }
+    // for (int i = 0; i < numDMAEngines; i++) {
+    //     paramIn(cp, csprintf("dmaNotifArray%d", i), dmaNotifArray[i]);
+    // }
+    // for (int i = 0; i < numDMAEngines; i++) {
+    //     paramIn(cp, csprintf("isNotifyArray%d", i), isNotifyArray[i]);
+    // }
+}
+
+#endif
+
+#ifdef ENSO_MULTI_QUEUE
 /*====================== State Machine =======================*/
 // Multi-core version
 bool

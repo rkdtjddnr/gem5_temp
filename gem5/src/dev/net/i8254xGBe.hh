@@ -119,7 +119,7 @@ namespace gem5
 
     #ifdef USE_ENSO
 
-    #ifdef ENSO_MULTI
+    #ifdef ENSO_MULTI_QUEUE
     EnsoRxPtr rxEnsoPacketArray[MAX_QUEUE_SIZE];
     EthPacketPtr txEnsoPacketArray[MAX_QUEUE_SIZE];
     #endif
@@ -1338,8 +1338,6 @@ namespace gem5
       void updateRxPipeHead(uint32_t h, int queueId){ updateHead(queueId, h); }
       void updateRxPipeTail(uint32_t t, int queueId){ updateTail(queueId, t); }
 
-      PipeState* relinkDataFifoPipes(int queueId);
-
       // for DropFSM
       void setFull(int full){
         if(full)
@@ -1377,12 +1375,12 @@ namespace gem5
       int size;
 
       
-      #ifdef ENSO_MULTI
+      #ifdef ENSO_MULTI_DMA
       int queueID; // qid for multi-queue
       #endif
 
     public:
-      #ifndef ENSO_MULTI
+      #ifndef ENSO_MULTI_DMA
       NotifBufManager(IGbE *i, const std::string n, int s);
       #else
       NotifBufManager(IGbE *i, const std::string n, int s, int qid);
@@ -1426,7 +1424,7 @@ namespace gem5
       void unserialize(CheckpointIn &cp) override;
     };
     
-    #ifdef ENSO_MULTI
+    #ifdef ENSO_MULTI_DMA
     class RxNotifBufManagerGlobal;
     #endif
     class RXNotifBufManager : public NotifBufManager<igbreg::RxNotification>
@@ -1440,7 +1438,7 @@ namespace gem5
 
       void enableSm() override;
 
-
+#ifndef ENSO_MULTI_DMA
       struct RXNotifState
       {
         uint64_t physAddr;
@@ -1448,6 +1446,7 @@ namespace gem5
         uint64_t tail;
       };
       RXNotifState RXNotifStates[MAX_NB_NOTIF];
+#endif
 
       EnsoRxPtr pktPtr;
 
@@ -1468,14 +1467,14 @@ namespace gem5
       // for DMA engine manage function
       bool pktWaiting;
 
-      #ifdef ENSO_MULTI
+      #ifdef ENSO_MULTI_DMA
       bool isRx;
       int dmaEngineIdx;
       RxNotifBufManagerGlobal* parent;
       #endif
 
     public:
-      #ifndef ENSO_MULTI
+      #ifndef ENSO_MULTI_DMA
       RXNotifBufManager(IGbE *i, const std::string n, int s);
       #else
       RXNotifBufManager(IGbE *i, std::string n, int s, int qid, int engineIdx, RxNotifBufManagerGlobal *_parent);
@@ -1509,7 +1508,9 @@ namespace gem5
       bool hasOutstandingEvents() override;
 
       // when host setup Notification buffer, need to update status
+      #ifndef ENSO_MULTI_DMA
       void setRxNotifState(int queueId) { RXNotifStates[queueId].physAddr = notifBufBase(queueId); }
+      #endif
 
       void setDmaNotifVar(uint32_t notifId, uint32_t queueId, uint32_t tail)
       {
@@ -1525,7 +1526,7 @@ namespace gem5
         dmaTail = 0;
       }
 
-      #ifdef ENSO_MULTI
+      #ifdef ENSO_MULTI_DMA
       bool packetWaiting() { return pktWaiting; }
       #endif
       void serialize(CheckpointOut &cp) const override;
@@ -1533,7 +1534,9 @@ namespace gem5
     };
 
     friend RXNotifBufManager;
+    #ifndef ENSO_MULTI_DMA
     RXNotifBufManager rxNotifBufManager;
+    #endif
 
     class TXNotifBufManager : public NotifBufManager<igbreg::TxNotification>
     {
@@ -1561,7 +1564,7 @@ namespace gem5
       std::deque<struct TxCompletion*> txComplBuf;
 
       // Host notification buffer addr array
-      uint64_t TXNotifBaseAddr[MAX_NB_NOTIF];
+      //uint64_t TXNotifBaseAddr[MAX_NB_NOTIF];
 
       // How many descriptors we are currently fetching
       int curFetching;
@@ -1592,7 +1595,7 @@ namespace gem5
       
 
     public:
-      #ifndef ENSO_MULTI
+      #ifndef ENSO_MULTI_DMA
       TXNotifBufManager(IGbE *i, const std::string n, int s);
       #else
       TXNotifBufManager(IGbE *i, const std::string n, int s, int qid);
@@ -1600,7 +1603,7 @@ namespace gem5
       ~TXNotifBufManager();
 
       // when host setup Notification buffer, need to update status
-      void setTxNotifState(int queueId){ TXNotifBaseAddr[queueId] = notifBufBase(queueId); }
+      //void setTxNotifState(int queueId){ TXNotifBaseAddr[queueId] = notifBufBase(queueId); }
       uint16_t getPktLen(uint8_t* currentPkt);
       void splitPacketToFifo(EthPacketPtr pkts);
 
@@ -1663,14 +1666,14 @@ namespace gem5
 
     };
     friend TXNotifBufManager;
-    #ifndef ENSO_MULTI
+    #ifndef ENSO_MULTI_QUEUE
     TXNotifBufManager txNotifBufManager;
     // multi-core
     #else
     TXNotifBufManager* txNotifManagerArray[MAX_QUEUE_SIZE];
     #endif
 
-    #ifdef ENSO_MULTI
+    #ifdef ENSO_MULTI_DMA
     template <class T>
     class NotifbufManagerGlobal : public Serializable
     {
@@ -1709,10 +1712,7 @@ namespace gem5
       void serialize(CheckpointOut &cp) const override;
       void unserialize(CheckpointIn &cp) override;
 
-      virtual bool hasOutstandingEvents()
-      {
-        return false;
-      }
+      virtual bool hasOutstandingEvents() = 0;
     };
 
     class RxNotifBufManagerGlobal : public NotifbufManagerGlobal<igbreg::RxNotification>
@@ -1726,15 +1726,6 @@ namespace gem5
 
       void enableSm() override;
 
-      // Pointer to the device
-      IGbE *igbe;
-
-      // Name of this
-      std::string _name;
-
-      // The size of the notification buffer in NIC
-      int size;
-
       int queueID; // Queue ID for this cache
       RXNotifBufManager *dmaEngineArray[MAX_DMA_ENGINE_SIZE];
       
@@ -1744,25 +1735,42 @@ namespace gem5
 
       EnsoRxPtr processingPktArray[MAX_DMA_ENGINE_SIZE]; // Packet that is currently being DMAing data to memory by DMA engines.
 
+      bool dmaNotifArray[MAX_DMA_ENGINE_SIZE];       // Flag to indicate if the notification is done for each DMA engine, true = busy, false = idle
+
+      bool isNotifyArray[MAX_DMA_ENGINE_SIZE];
+
     public:
       RxNotifBufManagerGlobal(IGbE *i, const std::string n, int s, int qid, int _numDMAEngines);
-      virtual ~RxNotifBufManagerGlobal();
-
-      /** Shortcut for DMA address translation */
-      Addr pciToDma(Addr a) { return igbe->pciToDma(a); }
-
-      std::string name() { return _name; }
 
       // manage reg value
       void updateNotifHead(uint32_t h, int queueId){ updateHead(queueId, h); }
       void updateNotifTail(uint32_t t, int queueId){ updateTail(queueId, t); }
 
-      bool writePacketGlobal(EnsoRxPtr packet);
+      void writePacketGlobal(EnsoRxPtr packet);
+      void writeNotificationGlobal(int engineIdx);
 
       // This function will get the information from the DMA engine & get the RX descriptor to write the descriptor back
       void onDMAComplete(int engineIdx);
-      int hasReadyEthPacket();
-      void clearDoneEthPacket(int engineIdx);
+      void onNotifComplete(int engineIdx);
+
+      int hasReadyEthPacket()
+      {
+          // Check each DMA engine has ready packet
+          // Ready packet: processingPktDoneArray[engineIdx] == true
+          for (int engine_idx = 0; engine_idx < numDMAEngines; engine_idx++) {
+              if (processingPktDoneArray[engine_idx]) {
+                  return engine_idx;
+              }
+          }
+          return -1;
+      }
+      void clearDoneEthPacket(int engineIdx)
+      {   
+          processingPktDoneArray[engineIdx] = false;
+          assert(processingPktArray[engineIdx] == NULL);
+      }
+
+      bool needToDmaNotif(int engineIdx){ return isNotifyArray[engineIdx]; }
 
       bool packetWaitingGlobal()
       {
@@ -1778,9 +1786,10 @@ namespace gem5
       bool hasFreeDMAEngine()
       {
         // Return true if any of the DMA engines has a free DMA engine
+        // add Notification condition
         for (int i = 0; i < numDMAEngines; i++)
         {
-          if (!dmaEngineArray[i]->packetWaiting() && processingPktDoneArray[i] == false && processingPktArray[i] == NULL)
+          if (!dmaEngineArray[i]->packetWaiting() && processingPktDoneArray[i] == false && processingPktArray[i] == NULL && dmaNotifArray[i] == false)
           {
             // free DMA engine: no packet waiting and also, no packet available (if packet is available & not waiting, it is waiting for push to the txFifo)
             return true;
@@ -1793,12 +1802,38 @@ namespace gem5
       {
         for (int i = 0; i < numDMAEngines; i++)
         {
-          if (!dmaEngineArray[i]->packetWaiting() && processingPktDoneArray[i] == false && processingPktArray[i] == NULL)
+          if (!dmaEngineArray[i]->packetWaiting() && processingPktDoneArray[i] == false && processingPktArray[i] == NULL && dmaNotifArray[i] == false)
           {
             return i;
           }
         }
         return -1;
+      }
+
+      bool isNotifBufFull(int queueId)
+      {
+        // Read head and tail positions from MMIO
+        uint32_t head = notifBufHead(queueId) & NOTIF_BUF_MASK;
+        uint32_t tail = notifBufTail(queueId) & NOTIF_BUF_MASK;
+
+        // Compute used space in ring buffer
+        uint32_t used = (tail - head) & NOTIF_BUF_MASK;
+
+        // Compute free space in ring buffer
+        uint32_t freeSpace = NOTIF_BUF_SIZE - used - 1; // -1 to distinguish full vs empty
+
+        // compute space current pkt need, 64B flit gran
+        // need to modify, there can be multiple notification ???
+        uint32_t neededSpace = 1;
+
+        if(tail > 16380 || tail < 5)
+        {
+          printf("[DEBUG] RxNotifGlobal head=%u, tail=%u\n", head, tail);
+          printf("[DEBUG] free space %u\n", freeSpace);
+        }
+
+        // Return true if packet does not fit
+        return neededSpace >= freeSpace;
       }
 
       bool hasOutstandingEvents() override;
@@ -1807,9 +1842,15 @@ namespace gem5
       void unserialize(CheckpointIn &cp) override;
     };
     friend class RxNotifBufManagerGlobal;
-
+    
+    #ifdef ENSO_MULTI_QUEUE
     RxNotifBufManagerGlobal* rxNotifManagerArray[MAX_QUEUE_SIZE];
+    #else
+    RxNotifBufManagerGlobal rxNotifManagerGlobal;
+    #endif
 
+    #endif
+    #ifdef ENSO_MULTI_QUEUE
     class TxNotifBufManagerGlobal : public NotifbufManagerGlobal<igbreg::TxNotification>
     {
     protected:

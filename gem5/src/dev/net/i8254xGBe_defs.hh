@@ -361,6 +361,9 @@ struct TxDesc
 };
 
 #define USE_ENSO
+//#define ENSO_MULTI
+#define ENSO_MULTI_DMA
+//#define ENSO_MULTI_QUEUE
 #ifdef USE_ENSO
 // RX/TX Notification struct
 // 64B cacheline size
