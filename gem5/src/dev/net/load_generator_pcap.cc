@@ -192,8 +192,18 @@ void LoadGeneratorPcap::sendPacket() {
   }
 
   // Create packet depending on the stack type.
+  // Modify packet length for flit-aligned size
+  #ifdef USE_ENSO
+  const u_int enso_flit_size = 64;
+  u_int pkt_len = pcap_header->len;
+  pkt_len = ((pkt_len + enso_flit_size - 1) / enso_flit_size) * enso_flit_size;
+  EthPacketPtr txPacket = std::make_shared<EthPacketData>(pkt_len);
+  txPacket->length = pkt_len;
+  #else
   EthPacketPtr txPacket = std::make_shared<EthPacketData>(pcap_header->len);
   txPacket->length = pcap_header->len;
+  #endif
+  
   if (stackMode == StackMode::Kernel) {
     // Check it is an IPv4 packet.
     const ether_header *eth_hdr =
