@@ -6056,7 +6056,7 @@ uint16_t get_new_tails(NotificationBufPair_t* notif_pair, uint16_t port_id)
 	uint32_t notification_buf_head = notif_pair->rx_head;
 	uint16_t nb_consumed_notifications = 0;
 	// volatile because NIC update notification by DMA
-	volatile struct RxNotification* cur_notification = notif_buf + notification_buf_head;
+	// volatile struct RxNotification* cur_notification = notif_buf + notification_buf_head;
 
 	uint64_t cur_signal;
 	uint64_t cur_tail;
@@ -6066,6 +6066,7 @@ uint16_t get_new_tails(NotificationBufPair_t* notif_pair, uint16_t port_id)
 
 	for (uint16_t i = 0; i < NOTIF_MAX_BATCH; ++i) {
 		// rte_io_rmb();
+		struct RxNotification* cur_notification = notif_buf + notification_buf_head;
 
 		cur_signal = cur_notification->signal;
 		cur_tail = cur_notification->tail;
@@ -6076,7 +6077,7 @@ uint16_t get_new_tails(NotificationBufPair_t* notif_pair, uint16_t port_id)
 			break;
 		}
 
-		// printf("[DRV] cur notification signal %lu, tail %lu, id %lu\n", cur_signal, cur_tail, cur_queue);
+		//printf("[DRV] cur notification signal %lu, tail %lu, \n", cur_signal, cur_tail);		
 
 		cur_notification->signal = 0;
 		notification_buf_head = (notification_buf_head + 1) % NOTIFICATION_BUF_SIZE;
@@ -6087,7 +6088,7 @@ uint16_t get_new_tails(NotificationBufPair_t* notif_pair, uint16_t port_id)
 		notif_pair->next_rx_pipe_ids[next_rx_ids_tail] = enso_pipe_id;
 		next_rx_ids_tail = (next_rx_ids_tail + 1) % NOTIFICATION_BUF_SIZE;
 
-		cur_notification += 1;
+		//cur_notification += 1;
 		++nb_consumed_notifications;
 		
 		
@@ -6342,6 +6343,18 @@ void update_tx_head(NotificationBufPair_t* notif_pair)
 	}
 
 	notif_pair->tx_head = head;
+}
+
+uint32_t cal_tx_size(const uint8_t* tx_start, const uint8_t* tx_end)
+{
+	assert(tx_start);
+	assert(tx_end);
+
+    if (likely(tx_end >= tx_start)) {
+        return (uint32_t)(tx_end - tx_start);
+    } else {
+        return (uint32_t)(ENSO_BUF_SIZE - (tx_start - tx_end));
+    }
 }
 
 /* Util function for application */

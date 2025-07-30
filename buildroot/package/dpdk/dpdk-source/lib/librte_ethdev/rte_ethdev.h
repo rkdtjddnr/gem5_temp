@@ -5521,6 +5521,7 @@ void process_completions(EnsoDevice_t* device);
 uint32_t get_unreported_completions(NotificationBufPair_t* notif_pair);
 void notify_completion(TxEnsoPipe_t* tx_pipe, uint32_t nb_bytes);
 void update_tx_head(NotificationBufPair_t* notif_pair);
+uint32_t cal_tx_size(const uint8_t* tx_start, const uint8_t* tx_end);
 
 /* Util function for application */
 uint16_t be_to_le_16(const uint16_t le);

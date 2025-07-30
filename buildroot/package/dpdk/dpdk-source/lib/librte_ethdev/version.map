@@ -136,6 +136,7 @@ DPDK_21 {
 	# ENSO util
 	get_pkt_len;
 	get_next_pkt;
+	cal_tx_size;
 
 	local: *;
 };
