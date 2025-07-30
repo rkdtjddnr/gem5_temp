@@ -171,9 +171,9 @@ else
   CPUTYPE="O3_ARM_v7a_3" # just because DerivO3CPU is too slow sometimes
   GEM5TYPE="opt"
   # LOADGENREPLAYMODE=${LOADGENREPLAYMODE:-"ConstThroughput"}
-  DEBUG_FLAGS="--debug-flags=AddrRanges" #"--debug-flags=EthernetDpdk"
+  DEBUG_FLAGS="" #"--debug-flags=AddrRanges" #"--debug-flags=EthernetDpdk"
   CONFIGARGS="--l2_size=$L2_SIZE $CACHE_CONFIG $CPU_CONFIG -r 2 --cpu-clock=$FREQ --loadgen-type=Pcap --loadgen-stack=DPDKStack \
-  --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=7557444107983 --packet-rate=$PACKET_RATE \
+  --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=7379630413669 --packet-rate=$PACKET_RATE \
   --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT --loadgen-increment-interva=$INCR_INTERVAL"
   run_simulation > ${RUNDIR}/simout
   exit
