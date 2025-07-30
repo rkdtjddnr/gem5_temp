@@ -172,11 +172,11 @@ struct enso_stream
 
 
 static inline void 
-do_macswap_enso(RxEnsoPipe_t* rx_pipe, struct RXTXState* rx_tx_state, uint8_t* rx_buf, uint32_t avail_bytes)
+do_macswap_enso(EnsoDevice_t* device, struct RXTXState* rx_tx_state, uint8_t* rx_buf, uint32_t avail_bytes)
 {
     uint8_t* addr = rx_buf;
     uint8_t* next_addr = get_next_pkt(rx_buf);
-    uint8_t* end_of_buffer = (uint8_t*)rx_pipe->buf + ENSO_BUF_SIZE;
+    uint8_t* end_of_buffer = (uint8_t*)device->rx_pipe->buf + ENSO_BUF_SIZE;
 
     uint32_t remaining_bytes = avail_bytes;
 
@@ -197,7 +197,7 @@ do_macswap_enso(RxEnsoPipe_t* rx_pipe, struct RXTXState* rx_tx_state, uint8_t* r
 
         // Test code : copy memory RX pipe -> TX pipe
         memcpy(rx_tx_state->pending_tx.current_tx_buffer, addr, consumed_bytes);
-        
+
         // macswap operation
         
         struct rte_ether_hdr* l2_hdr = (struct rte_ether_hdr*)rx_tx_state->pending_tx.current_tx_buffer;
@@ -209,7 +209,7 @@ do_macswap_enso(RxEnsoPipe_t* rx_pipe, struct RXTXState* rx_tx_state, uint8_t* r
         rx_tx_state->pending_tx.count++;
 
         // confirm rx byte
-        rte_eth_rx_confirm_byte(rx_pipe, consumed_bytes);
+        rte_eth_rx_confirm_byte(device->rx_pipe, consumed_bytes);
         // Todo: update rx pipe state
         // onAdvanceMessage(consumed_bytes);
 
@@ -218,8 +218,10 @@ do_macswap_enso(RxEnsoPipe_t* rx_pipe, struct RXTXState* rx_tx_state, uint8_t* r
         // check addr wrap-around 
         if(addr >= end_of_buffer)
         {
-            printf("[DEBUG] addr %p limit %p \n", addr, end_of_buffer);
-            break;
+            // printf("[DEBUG] addr %p limit %p \n", addr, end_of_buffer);
+            // break;
+			addr = (uint8_t*)device->rx_pipe->buf;
+			rx_tx_state->pending_tx.current_tx_buffer = device->tx_pipe->buf;
         }
 
         next_addr = get_next_pkt(addr);
@@ -229,11 +231,7 @@ do_macswap_enso(RxEnsoPipe_t* rx_pipe, struct RXTXState* rx_tx_state, uint8_t* r
         // NotifyProcessedBytes(consumed_bytes);
         // basic iterator implementation
         // add TX ??
-
-
     }
-
-    printf("[DEBUG] process complete, receive %u bytes, remaining %u bytes\n", avail_bytes, remaining_bytes);
 }
 
 #endif

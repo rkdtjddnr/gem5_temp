@@ -289,7 +289,7 @@ pkt_burst_touch_enso(struct enso_stream *es)
 	// but little overhead for calculate packet_size, total_packets 
 	const int packet_size = get_pkt_len(buf);
 
-	#if defined(__ARM_NEON)
+	#if not defined(__ARM_NEON)
 	do_touch_sve(enso_device->rx_pipe, buf, new_bytes, packet_size);
 	#else	
 	const int total_packets = (new_bytes / packet_size);
@@ -312,10 +312,10 @@ pkt_burst_touch_enso(struct enso_stream *es)
 	rx_tx_state.pending_tx.current_tx_buffer = tx_buf;
 	rx_tx_state.pending_tx.start_tx_buffer = tx_buf;
 
-	#if defined(__ARM_NEON)
+	#if not defined(__ARM_NEON)
 	do_macswap_enso_neon(enso_device, &rx_tx_state, buf, new_bytes, packet_size);
 	#else
-	do_macswap_enso(enso_device->rx_pipe, &rx_tx_state, buf, new_bytes);
+	do_macswap_enso(enso_device, &rx_tx_state, buf, new_bytes);
 	#endif
 
 	rte_eth_rx_enso_clear(enso_device);
