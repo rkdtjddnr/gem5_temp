@@ -40,14 +40,14 @@ function run_simulation {
   echo "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
-  --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
+  --num-cpus=$(($num_nics)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
   --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 
   "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
-  --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
+  --num-cpus=$(($num_nics)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
   --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 }
@@ -56,7 +56,7 @@ function run_gdb_simulation {
   gdb --args "$GEM5_DIR/build/ARM/gem5.opt" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
-  --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
+  --num-cpus=$(($num_nics)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=65536MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
   --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 }

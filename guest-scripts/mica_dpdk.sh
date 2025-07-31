@@ -7,6 +7,6 @@ dpdk-hugepages.py --setup 2M   # sometimes not requred
 echo 2048 > /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages
 cat /proc/meminfo | grep -i huge
 # m5 checkpoint
-
+# { sleep 30; m5 checkpoint; } &
 echo "Starting mica server in DPDK mode"
 netbench_server 0 0

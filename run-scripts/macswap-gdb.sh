@@ -40,14 +40,23 @@ function run_simulation {
   echo "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
-  --num-cpus=$(($num_nics)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
+  --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
   --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 
   "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
   "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
   --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
-  --num-cpus=$(($num_nics)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
+  --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
+  --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
+  --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
+}
+
+function run_gdb_simulation {
+  gdb --args "$GEM5_DIR/build/ARM/gem5.$GEM5TYPE" $DEBUG_FLAGS --outdir="$RUNDIR" \
+  "$GEM5_DIR"/configs/example/fs.py --cpu-type=$CPUTYPE \
+  --kernel="$RESOURCES/vmlinux" --disk="$RESOURCES/rootfs.ext2" --bootloader="$RESOURCES/boot.arm64" --root=/dev/sda \
+  --num-cpus=$(($num_nics+1)) --mem-type=DDR4_2400_16x4 --mem-channels=4 --mem-size=8192MB --script="$GUEST_SCRIPT_DIR/$GUEST_SCRIPT" \
   --num-nics="$num_nics" --num-loadgens="$num_nics" --num-queues="$num_queues" --num-dma-engines=128 --num-desc-dma-engines=32 \
   --checkpoint-dir="$CKPT_DIR" $CONFIGARGS
 }
@@ -58,12 +67,12 @@ if [[ -z "${GIT_ROOT}" ]]; then
 fi
 
 GEM5_DIR=${GIT_ROOT}/gem5
-# RESOURCES=${GIT_ROOT}/resources
 RESOURCES=${GIT_ROOT}/resources-dpdk
+#RESOURCES=${GIT_ROOT}/resources-dpdk-sve-16RXD-fastfree-B64-tbl-lcore
 GUEST_SCRIPT_DIR=${GIT_ROOT}/guest-scripts
 
 # parse command line arguments
-TEMP=$(getopt -o 'h' --long freq:,take-checkpoint,num-nics:,cpu-types:,l2-size:,script:,packet-rate:,num-queues:,loadgen-find-bw,help -n 'dpdk-loadgen' -- "$@")
+TEMP=$(getopt -o 'h' --long take-checkpoint,num-nics:,script:,packet-rate:,packet-size:,loadgen-find-bw,freq:,num-queues:,help -n 'dpdk-loadgen' -- "$@")
 
 # check for parsing errors
 if [ $? != 0 ]; then
@@ -83,18 +92,6 @@ while true; do
     num_queues="$2"
     shift 2
     ;;
-  --l2-size)
-    L2_SIZE="$2"
-    shift 2
-    ;;
-  --cpu-types)
-    CPUTYPE="$2"
-    shift 2
-    ;;
-  --freq)
-    FREQ="$2"
-    shift 2
-    ;;
   --take-checkpoint)
     checkpoint=1
     shift 1
@@ -103,13 +100,21 @@ while true; do
     GUEST_SCRIPT="$2"
     shift 2
     ;;
+  --packet-size)
+    PACKET_SIZE="$2"
+    shift 2
+    ;;
   --packet-rate)
     PACKET_RATE="$2"
     shift 2
     ;;
   --loadgen-find-bw)
-    LOADGENREPLAYMODE="ReplayAndAdjustThroughput"
+    LOADGENMODE="Increment"
     shift 1
+    ;;
+  --freq)
+    Freq=$2
+    shift 2
     ;;
   -h | --help)
     usage
@@ -122,8 +127,7 @@ while true; do
   esac
 done
 
-# CKPT_DIR=${GIT_ROOT}/ckpts/$num_nics"NIC"-$GUEST_SCRIPT
-CKPT_DIR=${GIT_ROOT}/ckpts/ckpts-with-new-vmlinux/$num_nics"NIC"-$num_queues"Queues"-$GUEST_SCRIPT
+CKPT_DIR=${GIT_ROOT}/ckpts/"Enso-"$num_nics"NIC"-$num_queues"Queues"-$GUEST_SCRIPT
 if [[ -z "$num_nics" ]]; then
   echo "Error: missing argument --num-nics" >&2
   usage
@@ -134,55 +138,63 @@ if [[ -z "$num_queues" ]]; then
 fi
 
 if [[ -n "$checkpoint" ]]; then
-  # RUNDIR=${GIT_ROOT}/rundir/$num_nics"NIC-ckp-"$GUEST_SCRIPT
-  RUNDIR=${GIT_ROOT}/rundir/ISPASS-2024-mica-exps/$num_nics"NIC"-$num_queues"Queues"-"ckp"-$GUEST_SCRIPT
+  # RUNDIR=${GIT_ROOT}/rundir/$num_nics"NIC-ckp"-$GUEST_SCRIPT
+  RUNDIR=${GIT_ROOT}/rundir/ISPASS-2024-macswap-enso/$num_nics"NIC-"$num_queues"Queues-"$GUEST_SCRIPT
   setup_dirs
-  echo "Taking Checkpoint for NICs=$num_nics Queues=$num_queues">&2
+  echo "Taking Checkpoint for NICs=$num_nics Queues=$num_queues" >&2
   GEM5TYPE="fast"
-  # DEBUG_FLAGS="--debug-flags=LoadgenDebug"
-  PORT=11211
+  # packet-size = 0 leads to segfault
+  PACKET_SIZE=48
   CPUTYPE="AtomicSimpleCPU"
-  PACKET_RATE=5000
-  LOADGENREPLAYMODE=ConstThroughput
-  #PCAP_FILENAME="../resources-dpdk/warmup-dpdk-5k.pcap"
-   PCAP_FILENAME="../resources-dpdk/warm_up/mica_1_8_8_16384_1_get_50.pcap"
-  #CONFIGARGS="-r 2 --max-checkpoints 1 --checkpoint-at-end --cpu-clock=$FREQ --l2_size=$L2_SIZE $CACHE_CONFIG $CPU_CONFIG --loadgen-start=6654416674681 --loadgen-type=Pcap --loadgen-stack=DPDKStack --loadgen_pcap_filename=$PCAP_FILENAME --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT"
-  CONFIGARGS="--max-checkpoints 2 --cpu-clock=$FREQ --l2_size=$L2_SIZE $CACHE_CONFIG --loadgen-start=600011771117451658 --loadgen-type=Pcap --loadgen-stack=DPDKStack --loadgen_pcap_filename=$PCAP_FILENAME --packet-rate=$PACKET_RATE --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT"
-  run_simulation > ${RUNDIR}/simout
+  CONFIGARGS="--max-checkpoints 3 --cpu-clock=$Freq --loadgen-start=2628842328231400"
+  # CONFIGARGS="--max-checkpoints 1 -r 1 --cpu-clock=$Freq --loadgen-start=2628842328231400"
+  run_simulation > $RUNDIR/simout
   exit 0
 else
+  if [[ -z "$PACKET_SIZE" ]]; then
+    echo "Error: missing argument --packet_size" >&2
+    usage
+  fi
+
   if [[ -z "$PACKET_RATE" ]]; then
     echo "Error: missing argument --packet_rate" >&2
     usage
   fi
-  PORT=11211
-  #PCAP_FILENAME="../resources-dpdk/request-dpdk-10k.pcap"
-  #PCAP_FILENAME="../resources/request-dpdk-trace.pcap"
-  #PCAP_FILENAME="../resources-dpdk/replay_trace/mica_16k/mica_16k_0.pcap"
-  #PCAP_FILENAME="../resources-dpdk/replay_trace/mica_1_8_8_5000000_1_get_50.pcap"
-  PCAP_FILENAME="../resources-dpdk/replay_trace/mica_1_8_8_4M_1_get_50_item_1M.pcap"
-  #PCAP_FILENAME="../resources-dpdk/replay_trace/mica_1_8_8_1000000_1_get_95.pcap"
-
-  ((INCR_INTERVAL = PACKET_RATE / 10)) 
-  LOADGENREPLAYMODE=${LOADGENREPLAYMODE:-"ConstThroughput"}
-  #RUNDIR=${GIT_ROOT}/rundir/mica-dpdk-findbw-cpu-type-exp/$num_nics"NIC"-$GUEST_SCRIPT-$FREQ"-ddio-enabled"-$PACKET_RATE
-  RUNDIR=${GIT_ROOT}/rundir/mica-dpdk-findbw-cpu-type-exp/$num_nics"NIC"-$num_queues"Queues"-"ckp"-$GUEST_SCRIPT-$FREQ"-ddio-enabled"-$PACKET_RATE
+  ((RATE = PACKET_RATE * PACKET_SIZE * 8 / 1024 / 1024 / 1024))
+  RUNDIR=${GIT_ROOT}/rundir/dpdk-testpmd-macswap/$num_nics"NIC-"$PACKET_SIZE"SIZE-"$PACKET_RATE"RATE-"$RATE"Gbps-ddio-enabled"-$GUEST_SCRIPT
   setup_dirs
-  CPUTYPE="O3_ARM_v7a_3" # just because DerivO3CPU is too slow sometimes
+# /dpdk-testpmd-freq-scaling-test
+  echo "Running NICs=$num_nics at $RATE GBPS" >&2
+  CPUTYPE="O3_ARM_v7a_3"
   GEM5TYPE="opt"
-  # LOADGENREPLAYMODE=${LOADGENREPLAYMODE:-"ConstThroughput"}
-  DEBUG_FLAGS="" #"--debug-flags=AddrRanges" #"--debug-flags=EthernetDpdk"
-  CONFIGARGS="--l2_size=$L2_SIZE $CACHE_CONFIG $CPU_CONFIG -r 2 --cpu-clock=$FREQ --loadgen-type=Pcap --loadgen-stack=DPDKStack \
-  --loadgen_pcap_filename=$PCAP_FILENAME --loadgen-start=7379626576843 --packet-rate=$PACKET_RATE \
-  --loadgen-replymode=$LOADGENREPLAYMODE --loadgen-port-filter=$PORT --loadgen-increment-interva=$INCR_INTERVAL"
-  run_simulation > ${RUNDIR}/simout
+  # GEM5TYPE="debug"
+  LOADGENMODE=${LOADGENMODE:-"Static"}
+  DEBUG_FLAGS="--debug-flags=EthernetENSO"
+  #DEBUG_FLAGS="--debug-flags=EthernetEnsoMulti --debug-start=11340752719476 --debug-end=11341752719476"
+  # DEBUG_FLAGS="--debug-flags=O3CPUAll,Exec,CacheAll --debug-start=11339418155440 --debug-end=11340022599000"
+  # DEBUG_FLAGS="--debug-flags=LoadgenDebug,EthernetDesc,EthernetDpdk" #--debug-start=33952834348" #EthernetAll,EthernetDesc,LoadgenDebug
+
+  #CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=11540552719476 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  #--warmup-dpdk 200000000000"
+
+  #CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=4512628590897 --rel-max-tick=400010000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  #--warmup-dpdk 20000000"
+
+  # ENSO TEST, short warmup & faster loadgen start
+  CONFIGARGS="$CACHE_CONFIG $CPU_CONFIG  --cpu-clock=$Freq -r 3 --loadgen-start=11340752719476 --rel-max-tick=400300000000 --packet-rate=$PACKET_RATE --packet-size=$PACKET_SIZE --loadgen-mode=$LOADGENMODE \
+  --warmup-dpdk 20000000"
+
+  #run_simulation > ${RUNDIR}/simout
+  run_gdb_simulation
   exit
 fi
+#loadgen-start=26488422623982
 
+# + 200100000000
+#11528944932249
+#11729044932249
 
-# base
-# 5928618076371
-# after 10^8 tick
-# 5928628076371
-# after 10^9 tick
-# 5928718076371
+#4312528590897
+#4512628590897
+
+#4312828590897
